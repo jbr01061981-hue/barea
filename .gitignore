@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Environment and Local Data
+.env
+.env.local
+*.sqlite
+*.sqlite3
+*.db
+data/
+
+# OS and IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

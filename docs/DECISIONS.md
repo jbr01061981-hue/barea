@@ -11,6 +11,7 @@ This document tracks architectural principles, established decisions, and open t
 - [ADR-003: Participant Access and Authentication Direction](#adr-003-participant-access-and-authentication-direction)
 - [ADR-004: Server-Authoritative State and Scoring Engine](#adr-004-server-authoritative-state-and-scoring-engine)
 - [ADR-005: Separate Viewport Presentation Roles](#adr-005-separate-viewport-presentation-roles)
+- [ADR-006: Question Bank Durable Storage & Organizational Isolation](#adr-006-question-bank-durable-storage--organizational-isolation)
 - [Open Technical Decisions](#open-technical-decisions)
 
 ---
@@ -106,11 +107,30 @@ Establish three dedicated presentation experiences:
 
 ---
 
+## ADR-006: Question Bank Durable Storage & Organizational Isolation
+
+### Status
+**ACCEPTED (BAREA-002)**
+
+### Context
+BAREA-002 requires durable persistence for the Question Bank with strict organizational isolation so that questions from one church or context do not leak into another. To keep the project lightweight, dependency-free, and cross-platform without imposing complex external database server setups during early milestones, we evaluated built-in persistence options.
+
+### Decision
+1. Implement durable storage using Node.js built-in synchronous SQLite (`node:sqlite` via `DatabaseSync`), requiring zero external dependencies or native compilation steps.
+2. Establish strict tenant/organizational isolation using mandatory `organizationId` on all domain operations, queries, and composite indices (`idx_questions_org`, `idx_questions_org_status`, `idx_questions_org_topic`, `idx_questions_org_diff`).
+3. Domain validation and repository contracts encapsulate SQL details, allowing the storage engine to be substituted or evolved into client-server databases in future scaling phases without domain layer breakage.
+
+### Consequences
+- **Positive**: Zero external dependencies; instant local testability in memory (`:memory:`) or file; ACID transactions; strict organizational boundary enforcement.
+- **Negative**: SQLite is file-based/single-instance; migration to client-server RDBMS (e.g., PostgreSQL) will be needed if distributed multi-region server clusters are introduced.
+
+---
+
 ## Open Technical Decisions
 
 The following technical selections are intentionally deferred to future milestones:
 
 1. **Application Runtime & Framework**: Choice of backend and frontend frameworks.
 2. **Real-Time Communication Transport**: Specific protocol implementation for low-latency state synchronization.
-3. **Database & Data Layer**: Relational database engine, schema management, and live session state storage.
+3. **Database & Data Layer**: Relational database engine, schema management, and live session state storage for distributed multi-server environments.
 4. **AI LLM Gateway**: Specific model provider and API integration for question generation.

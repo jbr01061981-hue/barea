@@ -10,8 +10,8 @@ Milestones must be executed in order. No milestone may proceed into application 
 
 | Milestone ID | Title | Scope Summary | Status |
 |---|---|---|---|
-| **BAREA-001** | **Foundation** | Documentation, architecture, agent guidelines, ADRs | **IN PROGRESS** |
-| **BAREA-002** | **Question Bank** | Domain models, storage, tagging, difficulty, search/filter | NOT STARTED |
+| **BAREA-001** | **Foundation** | Documentation, architecture, agent guidelines, ADRs | **COMPLETED** |
+| **BAREA-002** | **Question Bank** | Domain models, storage, tagging, difficulty, search/filter | **IN PROGRESS** |
 | **BAREA-003** | **AI Quiz Generation** | Structured LLM prompt pipeline, parameter inputs, structural validation | NOT STARTED |
 | **BAREA-004** | **Teacher Review/Approval**| Staging UI, editing, scripture check, approval gate | NOT STARTED |
 | **BAREA-005** | **Quiz Authoring** | Quiz playlist composition, timer & scoring configurations, publishing | NOT STARTED |
@@ -46,19 +46,20 @@ AI Generation
 
 ## Detailed Milestone Descriptions
 
-### BAREA-001: Foundation (Current Milestone)
+### BAREA-001: Foundation
 - Establish repository documentation (README.md, AGENTS.md, docs/*).
 - Define product requirements, architectural contracts, and ADRs.
 - Initialize clean Git workflow without legacy baggage.
-- **Status**: IN PROGRESS.
+- **Status**: COMPLETED.
 - **Deliverable**: Architectural blueprint and repository baseline.
 
-### BAREA-002: Question Bank
+### BAREA-002: Question Bank (Current Milestone)
 - Database schema and persistence layer for stored, approved questions.
 - Question attributes: stem text, answer options, correct indicator, explanation, scripture reference, topic, difficulty (Easy, Medium, Hard), and language.
 - CRUD APIs, search, and filtering mechanisms.
 - Supports manual question authoring and serves as the destination for approved questions.
-- **Status**: NOT STARTED.
+- **Status**: IN PROGRESS.
+- **Deliverable**: Question persistence layer, schema validation, and Question Bank domain service.
 
 ### BAREA-003: AI Quiz Generation
 - Core MVP AI generation pipeline with structured output enforcement.
