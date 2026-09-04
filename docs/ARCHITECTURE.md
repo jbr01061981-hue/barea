@@ -1,67 +1,64 @@
-﻿# BAREA System Architecture
+# BAREA Conceptual System Architecture
 
-## 1. High-Level System Architecture
+## 1. High-Level Architecture Overview
 
-BAREA follows a modern, decoupled web architecture optimized for real-time synchronization, low-latency client updates, and strict server-authoritative state management.
+BAREA is designed as a decoupled, multi-surface real-time web platform centered on a server-authoritative state machine.
 
-`	ext
+```text
                                ┌───────────────────────────┐
                                │     Teacher / Host UI     │ (Desktop / Tablet Web)
                                └─────────────┬─────────────┘
-                                             │ HTTP / WS
+                                             │ Control & State Sync
                                              ▼
-┌───────────────────────────┐  HTTP / WS   ┌───────────────────────────┐   WS / HTTP    ┌───────────────────────────┐
-│ Mobile Participant Client ├─────────────►│     BAREA Core Server     │◄───────────────┤  Projector / Screen View  │
-│      (Smartphone Web)     │              │ (API & Live State Machine)│                │     (1080p / 4K Web)      │
-└───────────────────────────┘              └─────────────┬─────────────┘                └───────────────────────────┘
-                                                         │
-                                    ┌────────────────────┼────────────────────┐
-                                    │                    │                    │
-                                    ▼                    ▼                    ▼
-                           ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-                           │   AI Pipeline   │  │ Persistent DB   │  │ Live Cache & Pub│
-                           │(LLM + Validation│  │ (Question Bank, │  │ (Room States,   │
-                           │    Gateways)    │  │  Quizzes, Users)│  │  Timers, Scores)│
-                           └─────────────────┘  └─────────────────┘  └─────────────────┘
-`
+┌───────────────────────────┐   Event Sync  ┌───────────────────────────┐   Display Sync ┌───────────────────────────┐
+│ Mobile Participant Client ├──────────────►│     BAREA Core Server     │◄───────────────┤  Projector / Screen View  │
+│      (Smartphone Web)     │               │(API & Live State Machine) │                │    (Big Screen Display)   │
+└───────────────────────────┘               └─────────────┬─────────────┘                └───────────────────────────┘
+                                                          │
+                                    ┌─────────────────────┼─────────────────────┐
+                                    │                     │                     │
+                                    ▼                     ▼                     ▼
+                           ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+                           │   AI Pipeline   │   │ Persistent Data │   │ Live Session    │
+                           │ (Generation &   │   │ (Question Bank, │   │ State & Sync    │
+                           │ Schema Validate)│   │  Quizzes, Users)│   │ (Rooms, Timers) │
+                           └─────────────────┘   └─────────────────┘   └─────────────────┘
+```
 
 ---
 
-## 2. Architecture Layers
+## 2. Architectural Layers
 
-### 2.1 Presentation Layer (Multi-Client Interfaces)
-The client layer provides three distinct surfaces served from a unified or shared frontend codebase:
+### 2.1 Presentation Layer (Role-Dedicated Surfaces)
+The system exposes three distinct user experiences:
 1. **Teacher / Host Console**:
-   - Question bank curation, AI generation prompt console, quiz builder.
-   - Live session control room (Next, Pause, Reveal, Score Adjustment).
-2. **Mobile Participant App**:
-   - Lightweight, mobile-first responsive web app (PWA-ready).
-   - Minimalist answer selection interface (color-coded large tap blocks).
-   - Instant optimistic feedback and sync-resumed state.
-3. **Projector / Auditorium Display**:
-   - Ultra-clean presentation view with auto-scaling fonts for long-distance viewing.
-   - Animations for countdown timers, live response counts, and celebratory podiums.
+   - Question bank management, AI prompt generation interface, and quiz authoring.
+   - Live session control room (start, advance, pause, and participant monitoring).
+2. **Mobile Participant Client**:
+   - Mobile-optimized responsive web client requiring no app store installation.
+   - Clear, accessible answer buttons with immediate local submission acknowledgment.
+   - Reconnection and session state synchronization.
+3. **Projector / Presentation View**:
+   - Large-screen display tailored for sanctuary, auditorium, and classroom visibility.
+   - Synchronized countdown timer, active question stem, answer breakdown chart, and celebratory leaderboard.
 
-### 2.2 Application & Real-Time Engine Layer
-- **REST / tRPC / GraphQL API**:
-  - Handles authentication, question CRUD, AI generation jobs, and quiz authoring.
+### 2.2 Application & State Management Layer
+- **Core Application Service**:
+  - Handles authentication, question curation, AI generation requests, and quiz configuration.
 - **Authoritative Live Quiz Engine**:
-  - Implements a deterministic finite state machine (FSM) for quiz sessions.
-  - Manages room creation, participant socket bindings, timer ticks, and event broadcasts.
-  - Controls information flow: answers are stored securely and never leaked before expiry.
+  - Implements a deterministic finite state machine (FSM) governing game progression.
+  - Enforces synchronized timers and coordinates real-time event broadcasting.
+  - Protects answer secrets: correct choices are withheld from participants until the answer reveal state.
 
-### 2.3 AI Generation & Review Pipeline
-- Secure LLM gateway with structured outputs (JSON schema enforcement).
-- Generates questions with scripture references, multiple choices, and explanations.
-- Places results into a staging buffer (PENDING_REVIEW) until the teacher approves.
+### 2.3 AI Generation & Content Review Pipeline
+- Generates structured draft questions based on teacher-selected topics, scriptures, question types, and difficulty levels.
+- Executes structural validation to ensure response integrity before placing items into pending review.
+- Distinguishes structural system validation from human theological review: content is not approved until a teacher reviews and confirms biblical faithfulness.
 
-### 2.4 Data & Persistence Layer
-- Relational database storing:
-  - Users / Teachers / Organizations.
-  - Question Bank (tagged by scripture, topic, difficulty, language).
-  - Quizzes and Quiz Question snapshots.
-  - Historical Sessions and aggregate analytics.
-- Real-time in-memory data store for live room state, ephemeral scores, and socket connection tracking.
+### 2.4 Data Persistence & Session State
+- Persistent storage for user accounts, question bank items, quizzes, and session history.
+- Live session state store managing active room memberships, connection mappings, and live timer ticks.
+- Specific database engines, ORMs, and caching technologies remain open decisions deferred to future milestones.
 
 ---
 
@@ -69,60 +66,58 @@ The client layer provides three distinct surfaces served from a unified or share
 
 Each live quiz room operates under a server-authoritative state machine:
 
-`	ext
+```text
        ┌──────────────┐
-       │    LOBBY     │ ◄──── Room opened, participants join via QR/PIN
+       │    LOBBY     │ <---- Room opened, participants join via QR/Code
        └──────┬───────┘
               │ Host initiates start
               ▼
     ┌────────────────────┐
-    │  QUESTION_PREVIEW  │ ◄──── 3-2-1 Countdown & Question title display
+    │  QUESTION_PREVIEW  │ <---- Countdown cue & Question introduction
     └─────────┬──────────┘
-              │ Timer ticks to 0
+              │ Countdown reaches 0
               ▼
     ┌────────────────────┐
-    │  QUESTION_ACTIVE   │ ◄──── Answers open; countdown active; live answer count
+    │  QUESTION_ACTIVE   │ <---- Answering active; server timer ticking; answer progress
     └─────────┬──────────┘
-              │ Timer ends OR host triggers early close
+              │ Timer expires OR host closes early
               ▼
     ┌────────────────────┐
-    │  QUESTION_RESULT   │ ◄──── Answers locked; correct option revealed; scripture shown
+    │  QUESTION_RESULT   │ <---- Answering locked; correct answer revealed; scripture shown
     └─────────┬──────────┘
               │ Host advances
               ▼
     ┌────────────────────┐
-    │    LEADERBOARD     │ ◄──── Top scores and rank deltas displayed
+    │    LEADERBOARD     │ <---- Scores and rank standings displayed
     └─────────┬──────────┘
               │ Next question available?
         ┌─────┴────────────────┐
-     [YES]                    [NO]
+      [YES]                   [NO]
         │                      │
         ▼                      ▼
 [QUESTION_PREVIEW]      ┌──────────────┐
-                        │ FINAL_PODIUM │ ◄──── 1st, 2nd, 3rd place awards
+                        │ FINAL_PODIUM │ <---- Final 1st, 2nd, 3rd place awards
                         └──────────────┘
-`
+```
 
 ---
 
 ## 4. Server-Authoritative Scoring Model
 
-To prevent cheating, replay attacks, and clock drift skew:
-1. When entering QUESTION_ACTIVE, the server records 	_start and calculates 	_expiry = t_start + question_duration.
-2. Mobile clients receive the question text, option choices, and duration, but **never** the correct answer index.
-3. When a participant taps an option, client sends { session_id, room_id, question_id, chosen_index, client_timestamp }.
-4. The server validates:
-   - Does 	_server <= t_expiry + grace_period (e.g., 500ms network buffer)?
-   - Has this participant already submitted for this question?
-5. The server calculates points:
-   \text{Points} = \begin{cases} 0 & \text{if incorrect or late} \\ \text{BasePoints} + \text{SpeedBonus}(t_{\text{server}} - t_{\text{start}}) & \text{if correct} \end{cases}
-6. Updated scores and leaderboards are calculated server-side and broadcasted only upon state transitions.
+To ensure fairness, tamper resistance, and timing accuracy:
+1. When entering QUESTION_ACTIVE, the server records the start timestamp and determines the expiration timestamp.
+2. Mobile clients receive question text and choices, but never the correct answer index.
+3. Participant submits answer payload: { session_id, room_id, question_id, chosen_option }.
+4. Server validates submission timeliness against server question expiration and confirms the participant has not already answered.
+5. Server computes score points based on answer correctness and configured quiz scoring rules.
+6. Aggregated scores and leaderboard ranks are computed server-side and broadcast upon state progression.
 
 ---
 
-## 5. Security & Isolation Boundaries
+## 5. Security & Boundary Principles
 
-- **Secret Isolation**: LLM API keys and database credentials reside strictly on the server; zero exposure to client runtimes.
-- **Participant Privacy**: Mobile participants do not need email, phone numbers, or passwords. Data is scoped only to display nicknames and temporary session tokens.
-- **Content Tampering Prevention**: Live quiz sessions run from immutable frozen snapshots of quizzes, insulating active games from mid-session edits.
-- **Input Sanitization**: Nicknames and teacher inputs pass through sanitizers to prevent XSS and inappropriate display on church screens.
+- **Secret Isolation**: AI provider credentials and backend secrets remain strictly on the server.
+- **Answer Secrecy**: Correct answers are never sent to participants during the answering window.
+- **Participant Simplicity**: Participants join with a room code and nickname; no personal account registration required for casual participation.
+- **Quiz Snapshot Integrity**: Live quiz sessions run from immutable frozen snapshots to prevent unexpected behavior during active gameplay.
+- **Input Sanitization**: Display names and user-authored content are sanitized against injection and inappropriate language.

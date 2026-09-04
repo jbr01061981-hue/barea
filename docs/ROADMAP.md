@@ -1,4 +1,4 @@
-﻿# BAREA Milestone Roadmap
+# BAREA Milestone Roadmap
 
 This document outlines the sequential development phases of the **BAREA** platform.
 
@@ -12,23 +12,23 @@ Milestones must be executed in order. No milestone may proceed into application 
 |---|---|---|---|
 | **BAREA-001** | **Foundation** | Documentation, architecture, agent guidelines, ADRs | **IN PROGRESS** |
 | **BAREA-002** | **Question Bank** | Domain models, storage, tagging, difficulty, search/filter | NOT STARTED |
-| **BAREA-003** | **AI Quiz Generation** | Structured LLM prompt pipeline, parameter inputs, validation schema | NOT STARTED |
+| **BAREA-003** | **AI Quiz Generation** | Structured LLM prompt pipeline, parameter inputs, structural validation | NOT STARTED |
 | **BAREA-004** | **Teacher Review/Approval**| Staging UI, editing, scripture check, approval gate | NOT STARTED |
 | **BAREA-005** | **Quiz Authoring** | Quiz playlist composition, timer & scoring configurations, publishing | NOT STARTED |
 | **BAREA-006** | **Share/Join** | QR generation, room access codes, URL routing, participant onboarding | NOT STARTED |
-| **BAREA-007** | **Live Quiz** | Authoritative state machine, timer sync, real-time socket transport | NOT STARTED |
+| **BAREA-007** | **Live Quiz** | Authoritative state machine, timer sync, real-time transport | NOT STARTED |
 | **BAREA-008** | **Host/Participant UI** | Dual-interface UX: host control console & responsive mobile participant app | NOT STARTED |
 | **BAREA-009** | **Scoring** | Server-side validation, timestamp verification, score algorithm | NOT STARTED |
 | **BAREA-010** | **Results/Leaderboard** | Intermediate standings, final podium, celebration animations | NOT STARTED |
 | **BAREA-011** | **Presentation** | Dedicated big-screen projector view, high-contrast layouts | NOT STARTED |
-| **BAREA-012** | **Church Validation** | Theological accuracy checks, profanity filters, fellowship usability | NOT STARTED |
+| **BAREA-012** | **Church Validation** | Theological accuracy review, inappropriate content filters, fellowship usability | NOT STARTED |
 | **BAREA-013** | **Pilot** | End-to-end dry run with live congregation / Sunday school group | NOT STARTED |
 
 ---
 
 ## Detailed Milestone Descriptions
 
-### BAREA-001: Foundation (Current)
+### BAREA-001: Foundation (Current Milestone)
 - Establish repository documentation (README.md, AGENTS.md, docs/*).
 - Define product requirements, architectural contracts, and ADRs.
 - Initialize clean Git workflow without legacy baggage.
@@ -36,73 +36,73 @@ Milestones must be executed in order. No milestone may proceed into application 
 
 ### BAREA-002: Question Bank
 - Database schema and persistence layer for questions.
-- Question attributes: stem, options, correct indices, explanation, scripture reference, topic, difficulty (Easy, Medium, Hard), and language.
+- Question attributes: stem, options, correct indicator, explanation, scripture reference, topic, difficulty (Easy, Medium, Hard), and language.
 - CRUD APIs and filtering mechanisms.
-- **Deliverable**: Robust, tested question store.
+- **Status**: NOT STARTED.
 
 ### BAREA-003: AI Quiz Generation
-- Integration with LLM providers with structured output enforcement (JSON schema).
-- Support teacher prompts: Topic, scripture passage, difficulty distribution, question types, language.
-- Automatic verification of schema structure before teacher handoff.
-- Staging questions in PENDING_REVIEW state.
-- **Deliverable**: Automated question generation pipeline.
+- LLM prompt pipeline with structured output enforcement.
+- Support teacher prompts: topic/passage, difficulty (Easy, Medium, Hard), question count, question type, language.
+- Automatic structural schema validation before teacher handoff.
+- Staging questions in pending review state.
+- **Status**: NOT STARTED.
 
 ### BAREA-004: Teacher Review/Approval
 - Interface for teachers to review generated questions before they become part of the library.
 - Inline editing of stems, choices, and biblical explanations.
-- Single-question and batch approval to APPROVED status.
+- Single-question and batch approval into Question Bank.
 - Regeneration triggers for unsatisfactory questions.
-- **Deliverable**: Human-in-the-loop review workbench.
+- **Status**: NOT STARTED.
 
 ### BAREA-005: Quiz Authoring
 - Compiling approved questions into structured quizzes.
 - Configurable settings: per-question countdowns, scoring styles, question ordering.
 - Publishing workflow that snapshots quizzes for active sessions.
-- **Deliverable**: Complete quiz creation and publishing engine.
+- **Status**: NOT STARTED.
 
 ### BAREA-006: Share/Join
-- Session creation with 6-character room codes.
-- Dynamic QR code generation for projector and printout.
+- Session creation with room access codes.
+- Dynamic QR code generation for projector and mobile devices.
 - Mobile landing flow: nickname entry, duplicate name handling, session resumption.
-- **Deliverable**: Frictionless onboarding for church members.
+- **Status**: NOT STARTED.
 
 ### BAREA-007: Live Quiz
 - Server-authoritative state machine (LOBBY, PREVIEW, ACTIVE, RESULT, LEADERBOARD, PODIUM).
-- Real-time transport implementation (WebSockets / real-time channels).
+- Real-time transport implementation.
 - Synchronized question timers and event broadcasts.
-- **Deliverable**: Low-latency live session orchestrator.
+- **Status**: NOT STARTED.
 
 ### BAREA-008: Host/Participant UI
 - Host console: start, pause, advance, and player roster view.
 - Participant mobile web UI: high-contrast, large touch targets, optimistic submission feedback.
-- **Deliverable**: Fully functional host and player frontends.
+- **Status**: NOT STARTED.
 
 ### BAREA-009: Scoring
 - Server-side answer validation and anti-tampering logic.
-- Time-based decay scoring calculation with latency grace buffer.
+- Timely scoring calculation based on server expiration rules.
 - Participant score accumulation and tracking.
-- **Deliverable**: Tamper-proof scoring service.
+- **Status**: NOT STARTED.
 
 ### BAREA-010: Results/Leaderboard
-- Live calculation of top players and rank movements.
-- Question-by-question answer distribution graphs.
+- Live calculation of standings.
+- Question-by-question answer distribution overview.
 - Final celebratory podium (1st, 2nd, 3rd place).
-- **Deliverable**: Engaging gamified outcome screens.
+- **Status**: NOT STARTED.
 
 ### BAREA-011: Presentation
 - Dedicated auditorium projector view designed for big screens.
-- Distance-readable typography and ambient contrast tuning.
-- Responsive layout adapting to standard 16:9 1080p and 4K displays.
-- **Deliverable**: Audience-facing visual presentation experience.
+- Distance-readable typography and high-contrast styling.
+- Responsive layout adapting to standard wide displays.
+- **Status**: NOT STARTED.
 
 ### BAREA-012: Church Validation
-- Community validation for theological consistency across Bible translations (ESV, NIV, KJV, etc.).
-- Profanity / inappropriate name filtering tailored for church settings.
-- Accessibility review for elderly and young children.
-- **Deliverable**: Church-readiness audit and compliance check.
+- Community validation for theological consistency across Bible translations.
+- Inappropriate name filtering tailored for church settings.
+- Accessibility review across diverse age groups.
+- **Status**: NOT STARTED.
 
 ### BAREA-013: Pilot
 - Full end-to-end dry run with a live church group or Sunday school class.
-- Performance and connection stress testing under typical church Wi-Fi conditions.
+- Performance and connection testing under typical church Wi-Fi conditions.
 - User feedback collection and prioritization for production readiness.
-- **Deliverable**: Successful live pilot demonstration.
+- **Status**: NOT STARTED.

@@ -1,78 +1,78 @@
-﻿# BAREA System Requirements
+# BAREA System Requirements
 
 ## 1. Functional Requirements
 
 ### 1.1 Question Bank Management
-- **FR-QB-001**: System shall store questions with attributes: id, stem, options, correct_option_indices, explanation, scripture_reference, 	opic, difficulty, language, created_by, status.
+- **FR-QB-001**: System shall store questions with attributes: identifier, stem text, answer options, correct option indicator, explanation, scripture reference, topic/category, difficulty, language, and approval status.
 - **FR-QB-002**: Difficulty level must be tracked on the individual question level, with values: Easy, Medium, Hard.
-- **FR-QB-003**: System shall allow teachers to search, filter (by topic, difficulty, scripture book, language), update, and soft-delete questions in the bank.
-- **FR-QB-004**: System shall prevent questions with status DRAFT or PENDING_REVIEW from being added to active quizzes.
+- **FR-QB-003**: System shall allow teachers to search, filter (by topic, difficulty, scripture reference, language), edit, and manage questions in the bank.
+- **FR-QB-004**: System shall prevent unapproved draft questions from being added to active quizzes.
 
 ### 1.2 AI Quiz Generation & Human Approval Gate
-- **FR-AI-001**: System shall accept generation parameters from teachers: topic/passage, difficulty target (Easy, Medium, Hard, or mixed), question count (1 to 20 per request), question type, and language.
-- **FR-AI-002**: Generated questions must be structured strictly to the Question schema, including scripture references and biblical context explanations.
-- **FR-AI-003**: All AI-generated questions must initially be stored in PENDING_REVIEW state.
+- **FR-AI-001**: System shall accept generation parameters from teachers: topic/passage, difficulty (Easy, Medium, Hard), number of questions, question type, and language.
+- **FR-AI-002**: System shall perform structural validation on raw AI output to verify schema conformance, required fields, and option formats. Structural validation verifies format only and does not certify biblical accuracy.
+- **FR-AI-003**: All AI-generated questions must initially be stored in a pending review state.
 - **FR-AI-004**: System shall provide an interactive review interface allowing teachers to:
-  - Edit question text, options, and explanations.
-  - Reclassify question difficulty.
-  - Re-verify scripture references against standard Bible translations.
-  - Discard undesirable questions or request targeted regeneration.
-  - Explicitly approve individual questions or batches into the Question Bank (APPROVED).
-- **FR-AI-005**: AI questions must **NEVER** bypass teacher approval or be directly published to a live session.
+  - Verify scriptural accuracy and theological appropriateness.
+  - Edit question stem, answer options, correct answer, and explanations.
+  - Adjust question-level difficulty.
+  - Discard undesirable questions or request regeneration.
+  - Explicitly approve individual questions or batches into the Question Bank.
+- **FR-AI-005**: AI questions must NEVER bypass teacher approval or be directly published to a live session.
 
 ### 1.3 Quiz Authoring & Configuration
-- **FR-QZ-001**: Teachers can compile a quiz by selecting approved questions from the Question Bank or assembling a new set.
-- **FR-QZ-002**: Teacher can configure per-quiz settings:
-  - Per-question timer (10s, 20s, 30s, 60s, or custom).
-  - Scoring rules (flat score vs. time-decay bonus).
-  - Shuffle questions and/or shuffle answer options.
-  - Reveal answer explanation toggle.
-- **FR-QZ-003**: Published quizzes generate an immutable snapshot for active game sessions to avoid unintended edits during a live game.
+- **FR-QZ-001**: Teachers can compile a quiz by selecting approved questions from the Question Bank.
+- **FR-QZ-002**: Teacher can configure quiz settings:
+  - Per-question timer limit.
+  - Scoring scheme.
+  - Question ordering and option shuffling.
+  - Answer explanation reveal.
+- **FR-QZ-003**: Published quizzes produce a stable snapshot for live sessions to prevent unintended mid-session edits.
 
 ### 1.4 Session Management & Joining
-- **FR-SES-001**: Host can start a live session from a published quiz, generating a unique 6-character room access code and a corresponding join URL/QR code.
-- **FR-SES-002**: Participants can join via QR code scan, direct URL, or room PIN entry.
-- **FR-SES-003**: Participants provide a nickname/display name; system shall validate length (2–20 characters) and sanitize against inappropriate language.
-- **FR-SES-004**: System issues a persistent session token (e.g., cookie or local storage JWT) allowing participants to automatically resume if connection drops or page refreshes.
+- **FR-SES-001**: Host can start a live session from a published quiz, generating a unique room access code and corresponding join URL / QR code.
+- **FR-SES-002**: Participants can join via QR code scan, direct URL, or room access code entry.
+- **FR-SES-003**: Participants provide a display name; system shall validate length and sanitize against inappropriate language.
+- **FR-SES-004**: System maintains a participant session token to enable automatic session resumption upon page refresh or temporary network disconnect.
 
 ### 1.5 Synchronized Live Quiz Engine
 - **FR-LIVE-001**: The game state machine must transition through:
-  LOBBY ➔ QUESTION_PREVIEW ➔ QUESTION_ACTIVE ➔ QUESTION_RESULT ➔ INTERMEDIATE_LEADERBOARD ➔ FINAL_PODIUM.
-- **FR-LIVE-002**: Host possesses authoritative controls to Start Game, Advance to Next Question, Pause/Resume, Re-open Answering, or End Game.
+  LOBBY -> QUESTION_PREVIEW -> QUESTION_ACTIVE -> QUESTION_RESULT -> LEADERBOARD -> FINAL_PODIUM.
+- **FR-LIVE-002**: Host possesses authoritative controls to start game, advance to next step, pause, or end game.
 - **FR-LIVE-003**: Projector view displays:
-  - In Lobby: Room PIN, QR code, join count, participant avatar/name stream.
-  - In Question Active: Large question text, answer option cards, synchronized circular timer, live answer count indicator.
-  - In Question Result: Bar chart of participant answer distribution, highlighted correct answer, scripture reference, and explanation.
-  - In Leaderboard: Top 5/10 players, podium standings, score differentials.
+  - In Lobby: Room code, QR code, participant join count, and participant names.
+  - In Question Active: Question text, answer option cards, countdown timer, and live response progress.
+  - In Question Result: Distribution of participant answers, highlighted correct answer, scripture reference, and explanation.
+  - In Leaderboard: Standings and score differentials.
+  - In Podium: Final celebratory standings.
 - **FR-LIVE-004**: Participant mobile view displays:
-  - In Lobby: Connection confirmation and waiting banner.
-  - In Question Active: High-contrast touch buttons matching answer options (A/B/C/D or text cards), remaining time bar.
-  - On Answer Selected: Immediate optimistic acknowledgment (Answer Received! Waiting for time up...).
-  - In Question Result: Correct/incorrect indicator, points awarded, scripture note.
+  - In Lobby: Connection confirmation and waiting state.
+  - In Question Active: Responsive touch buttons corresponding to answer options and remaining time indicator.
+  - On Answer Selected: Immediate acknowledgment that the response was submitted.
+  - In Question Result: Outcome indicator, points awarded, and scripture context.
 
 ### 1.6 Server-Authoritative Scoring & Leaderboards
-- **FR-SC-001**: Answers submitted by mobile participants must be validated and scored strictly on the backend.
-- **FR-SC-002**: Submission timestamp must be verified against the server's question start and expiry timestamps; submissions arriving after question expiry (	ime_limit + grace_period) are marked LATE and awarded 0 points.
-- **FR-SC-003**: Leaderboard ranks must be calculated server-side based on accumulated points and tiebreaker criteria (e.g., total response time).
+- **FR-SC-001**: Participant answers must be validated and scored strictly by the server.
+- **FR-SC-002**: Answers submitted after the server-recorded question expiration are marked late and awarded zero points.
+- **FR-SC-003**: Leaderboard standings must be calculated server-side based on accumulated scores.
 
 ---
 
-## 2. Non-Functional Requirements
+## 2. Non-Functional & Quality Requirements
 
-### 2.1 Performance & Latency
-- **NFR-PERF-001**: WebSocket/Real-time state broadcast from Host action to all client screens must complete within 300ms under standard network conditions.
-- **NFR-PERF-002**: System must support at least 250 concurrent mobile participants per single live room without frame drops or message backlog.
-- **NFR-PERF-003**: Mobile client initial load bundle must be under 300KB gzipped to ensure rapid load on constrained mobile network connections.
+### 2.1 Latency & Synchronization
+- **NFR-SYNC-001**: Live state transitions from host action must synchronize across projector and participant screens in a timely manner.
+- **NFR-SYNC-002**: The client interface must provide immediate local interaction feedback upon answer selection.
 
-### 2.2 Reliability & Fault Tolerance
-- **NFR-REL-001**: If a mobile participant experiences network interruption or browser refresh, the client must reconnect and restore current question state within 2 seconds.
-- **NFR-REL-002**: Host disconnect should not crash the game room; room state remains paused in current step until host reconnects or timeout expires.
+### 2.2 Network Resilience
+- **NFR-RES-001**: System must support automatic reconnection and state restoration if participant mobile connectivity drops intermittently during a live session.
+- **NFR-RES-002**: Temporary host disconnection must not terminate the room state; session remains stable pending host reconnect.
 
-### 2.3 Usability & Accessibility
-- **NFR-UX-001**: Mobile participant UI must require zero onboarding instructions and feature touch targets of at least 48x48 pixels.
-- **NFR-UX-002**: Projector view must be legible at 1080p and 4K resolutions from a distance of 30+ feet in ambient church lighting (high contrast ratio >= 4.5:1).
+### 2.3 Usability & Presentation
+- **NFR-UX-001**: Mobile participant interface must be intuitive, requiring zero onboarding or training.
+- **NFR-UX-002**: Projector display must feature high-contrast, large typography suitable for viewing across classrooms, youth halls, and church sanctuaries.
 
-### 2.4 Security & Data Integrity
-- **NFR-SEC-001**: Question correct answers must **NEVER** be sent over the wire to mobile participants while a question is active. Correct answers are only broadcast during the QUESTION_RESULT state.
-- **NFR-SEC-002**: Host endpoints must require authentication; participant endpoints require valid room tokens.
-- **NFR-SEC-003**: Rate limiting must be enforced on join endpoints and answer submission endpoints to prevent spamming or DoS.
+### 2.4 Security & Content Integrity
+- **NFR-SEC-001**: Correct answer indicators must NEVER be transmitted to participant devices during the active answering window. Correct answers are disclosed only during the result state.
+- **NFR-SEC-002**: Host control actions must be authenticated and restricted to authorized session hosts.
+- **NFR-SEC-003**: Input validation and sanitization must prevent malformed payloads, injection, and inappropriate screen display.
