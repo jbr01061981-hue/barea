@@ -6,7 +6,8 @@ const {
   QuestionStatus,
   QuestionDifficulty,
   QuestionType,
-  DomainValidationError
+  DomainValidationError,
+  ApprovedQuestionModificationError
 } = require('../domain/question');
 
 class SqliteQuestionRepository {
@@ -110,6 +111,18 @@ class SqliteQuestionRepository {
     const existing = this.findById(organizationId, id);
     if (!existing) {
       return null;
+    }
+
+    const isStatusOnlyChange = Object.keys(updates).every((k) => k === 'status' || k === 'organizationId' || k === 'id');
+
+    // Domain-safe rule for APPROVED question content modification:
+    // Approved questions cannot silently have their content modified while retaining APPROVED status.
+    // Any content change on an APPROVED question automatically resets status to PENDING_REVIEW
+    // (unless an explicit valid status transition such as ARCHIVED was specified).
+    if (existing.status === QuestionStatus.APPROVED && !isStatusOnlyChange) {
+      if (updates.status === undefined || updates.status === QuestionStatus.APPROVED) {
+        updates.status = QuestionStatus.PENDING_REVIEW;
+      }
     }
 
     if (updates.status !== undefined && updates.status !== existing.status) {

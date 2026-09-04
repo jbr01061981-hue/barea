@@ -7,6 +7,7 @@ const {
   QuestionStatus,
   DomainValidationError,
   InvalidLifecycleTransitionError,
+  ApprovedQuestionModificationError,
   validateQuestionPayload,
   assertValidStatusTransition,
   SqliteQuestionRepository,
@@ -136,24 +137,75 @@ test('Question Domain & Validation', async (t) => {
     };
     assert.throws(() => validateQuestionPayload(payload, false), /out of bounds/);
   });
+
+  await t.test('rejects duplicate correctOptionIndices in MULTI_SELECT', () => {
+    const payload1 = {
+      organizationId: 'church-1',
+      stem: 'Test stem duplicate zeros',
+      type: QuestionType.MULTI_SELECT,
+      options: ['A', 'B', 'C'],
+      correctOptionIndices: [0, 0],
+      scriptureReference: 'Genesis 1:1',
+      topic: 'Creation',
+      difficulty: QuestionDifficulty.MEDIUM,
+      language: 'en'
+    };
+    assert.throws(() => validateQuestionPayload(payload1, false), /Duplicate correct option index/);
+
+    const payload2 = {
+      organizationId: 'church-1',
+      stem: 'Test stem duplicate ones',
+      type: QuestionType.MULTI_SELECT,
+      options: ['A', 'B', 'C', 'D'],
+      correctOptionIndices: [1, 1, 2],
+      scriptureReference: 'Genesis 1:1',
+      topic: 'Creation',
+      difficulty: QuestionDifficulty.MEDIUM,
+      language: 'en'
+    };
+    assert.throws(() => validateQuestionPayload(payload2, false), /Duplicate correct option index/);
+  });
 });
 
 test('Question Lifecycle State Transitions', async (t) => {
   await t.test('valid transitions succeed', () => {
+    // DRAFT transitions
     assert.doesNotThrow(() => assertValidStatusTransition(QuestionStatus.DRAFT, QuestionStatus.PENDING_REVIEW));
+    assert.doesNotThrow(() => assertValidStatusTransition(QuestionStatus.DRAFT, QuestionStatus.ARCHIVED));
+
+    // PENDING_REVIEW transitions
     assert.doesNotThrow(() => assertValidStatusTransition(QuestionStatus.PENDING_REVIEW, QuestionStatus.APPROVED));
     assert.doesNotThrow(() => assertValidStatusTransition(QuestionStatus.PENDING_REVIEW, QuestionStatus.DRAFT));
+    assert.doesNotThrow(() => assertValidStatusTransition(QuestionStatus.PENDING_REVIEW, QuestionStatus.ARCHIVED));
+
+    // APPROVED transitions (cannot bypass review to DRAFT; can be demoted for edit or archived)
+    assert.doesNotThrow(() => assertValidStatusTransition(QuestionStatus.APPROVED, QuestionStatus.PENDING_REVIEW));
     assert.doesNotThrow(() => assertValidStatusTransition(QuestionStatus.APPROVED, QuestionStatus.ARCHIVED));
+
+    // ARCHIVED transitions
     assert.doesNotThrow(() => assertValidStatusTransition(QuestionStatus.ARCHIVED, QuestionStatus.DRAFT));
   });
 
   await t.test('invalid transitions are rejected', () => {
+    // DRAFT cannot jump directly to APPROVED (must pass review gate)
     assert.throws(
       () => assertValidStatusTransition(QuestionStatus.DRAFT, QuestionStatus.APPROVED),
       InvalidLifecycleTransitionError
     );
+
+    // APPROVED cannot transition directly to DRAFT (must be demoted to PENDING_REVIEW or ARCHIVED)
     assert.throws(
-      () => assertValidStatusTransition(QuestionStatus.APPROVED, QuestionStatus.PENDING_REVIEW),
+      () => assertValidStatusTransition(QuestionStatus.APPROVED, QuestionStatus.DRAFT),
+      InvalidLifecycleTransitionError
+    );
+
+    // ARCHIVED cannot jump directly to APPROVED or PENDING_REVIEW
+    assert.throws(
+      () => assertValidStatusTransition(QuestionStatus.ARCHIVED, QuestionStatus.APPROVED),
+      InvalidLifecycleTransitionError
+    );
+    assert.throws(
+      () => assertValidStatusTransition(QuestionStatus.ARCHIVED, QuestionStatus.PENDING_REVIEW),
       InvalidLifecycleTransitionError
     );
   });
@@ -341,4 +393,149 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
     assert.equal(churchBList.length, 1);
     assert.equal(churchBList[0].id, qB.id);
   });
+
+  await t.test('modifying approved question content cannot leave it silently approved (demotes to PENDING_REVIEW)', () => {
+    const created = service.createQuestion({
+      organizationId: 'church-review-safe',
+      stem: 'Original approved stem question',
+      type: QuestionType.MULTIPLE_CHOICE,
+      options: ['Alpha', 'Beta'],
+      correctOptionIndices: [0],
+      scriptureReference: 'Acts 1:1',
+      topic: 'Acts',
+      difficulty: QuestionDifficulty.EASY,
+      language: 'en',
+      status: QuestionStatus.APPROVED
+    });
+
+    assert.equal(created.status, QuestionStatus.APPROVED);
+
+    // Editing question content without explicit status resets status to PENDING_REVIEW
+    const updatedContent = service.updateQuestion('church-review-safe', created.id, {
+      stem: 'Modified stem text requiring fresh review'
+    });
+
+    assert.equal(updatedContent.stem, 'Modified stem text requiring fresh review');
+    assert.equal(updatedContent.status, QuestionStatus.PENDING_REVIEW);
+
+    // Verify it is no longer returned in listApprovedQuestions
+    const approvedList = service.listApprovedQuestions('church-review-safe');
+    assert.equal(approvedList.some((q) => q.id === created.id), false);
+
+    // Attempting to edit content while explicitly requesting to remain APPROVED also forces PENDING_REVIEW
+    const approvedAgain = service.transitionStatus('church-review-safe', created.id, QuestionStatus.APPROVED);
+    assert.equal(approvedAgain.status, QuestionStatus.APPROVED);
+
+    const modifiedAgain = service.updateQuestion('church-review-safe', created.id, {
+      explanation: 'Updated theological explanation note',
+      status: QuestionStatus.APPROVED
+    });
+    assert.equal(modifiedAgain.status, QuestionStatus.PENDING_REVIEW);
+
+    // Pure status-only transition (e.g. archiving) does not trigger content demotion
+    const reApproved = service.transitionStatus('church-review-safe', created.id, QuestionStatus.APPROVED);
+    assert.equal(reApproved.status, QuestionStatus.APPROVED);
+
+    const archived = service.updateQuestion('church-review-safe', created.id, {
+      status: QuestionStatus.ARCHIVED
+    });
+    assert.equal(archived.status, QuestionStatus.ARCHIVED);
+  });
+
+  await t.test('archiveQuestion soft-deletes question to ARCHIVED status', () => {
+    const created = service.createQuestion({
+      organizationId: 'church-archive-test',
+      stem: 'Question to be archived',
+      type: QuestionType.TRUE_FALSE,
+      options: ['True', 'False'],
+      correctOptionIndices: [0],
+      scriptureReference: 'Genesis 1:1',
+      topic: 'Creation',
+      difficulty: QuestionDifficulty.EASY,
+      language: 'en',
+      status: QuestionStatus.APPROVED
+    });
+
+    assert.equal(created.status, QuestionStatus.APPROVED);
+
+    const archived = service.archiveQuestion('church-archive-test', created.id);
+    assert.equal(archived.status, QuestionStatus.ARCHIVED);
+
+    // Archived question is excluded from listApprovedQuestions
+    const approvedList = service.listApprovedQuestions('church-archive-test');
+    assert.equal(approvedList.some((q) => q.id === created.id), false);
+
+    // Can still be retrieved by id and transitioned to DRAFT if unarchived
+    const retrieved = service.getQuestion('church-archive-test', created.id);
+    assert.equal(retrieved.status, QuestionStatus.ARCHIVED);
+
+    const unarchived = service.transitionStatus('church-archive-test', created.id, QuestionStatus.DRAFT);
+    assert.equal(unarchived.status, QuestionStatus.DRAFT);
+  });
+});
+
+test('Question Bank Durable Persistence Across File Reopen', async (t) => {
+  const fs = require('fs');
+  const path = require('path');
+  const os = require('os');
+
+  const tmpDbPath = path.join(os.tmpdir(), `barea_test_durable_${Date.now()}_${Math.random().toString(36).slice(2)}.sqlite`);
+
+  try {
+    // 1. Create repository against temporary database file
+    const repo1 = new SqliteQuestionRepository(tmpDbPath);
+    const service1 = new QuestionBankService(repo1);
+
+    // 2. Create question
+    const created = service1.createQuestion({
+      organizationId: 'church-durable-org',
+      stem: 'Is God eternal?',
+      type: QuestionType.TRUE_FALSE,
+      options: ['True', 'False'],
+      correctOptionIndices: [0],
+      explanation: 'From everlasting to everlasting You are God.',
+      scriptureReference: 'Psalm 90:2',
+      topic: 'Theology',
+      difficulty: QuestionDifficulty.EASY,
+      language: 'en',
+      status: QuestionStatus.APPROVED
+    });
+    assert.ok(created.id);
+    assert.equal(created.stem, 'Is God eternal?');
+
+    // 3. Close repository
+    repo1.close();
+
+    // 4. Reopen repository against same database file
+    const repo2 = new SqliteQuestionRepository(tmpDbPath);
+    const service2 = new QuestionBankService(repo2);
+
+    // 5. Retrieve question
+    const retrieved = service2.getQuestion('church-durable-org', created.id);
+
+    // 6. Verify data is still present and matches
+    assert.ok(retrieved);
+    assert.equal(retrieved.id, created.id);
+    assert.equal(retrieved.organizationId, 'church-durable-org');
+    assert.equal(retrieved.stem, 'Is God eternal?');
+    assert.equal(retrieved.status, QuestionStatus.APPROVED);
+    assert.equal(retrieved.difficulty, QuestionDifficulty.EASY);
+    assert.deepEqual(retrieved.options, ['True', 'False']);
+    assert.deepEqual(retrieved.correctOptionIndices, [0]);
+    assert.equal(retrieved.scriptureReference, 'Psalm 90:2');
+
+    repo2.close();
+  } finally {
+    // 7. Clean up temporary database file and journal/wal files if created
+    for (const suffix of ['', '-wal', '-shm', '-journal']) {
+      const fileToClean = tmpDbPath + suffix;
+      if (fs.existsSync(fileToClean)) {
+        try {
+          fs.unlinkSync(fileToClean);
+        } catch {
+          // ignore cleanup lock error if any
+        }
+      }
+    }
+  }
 });

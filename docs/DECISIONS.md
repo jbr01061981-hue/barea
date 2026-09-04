@@ -12,6 +12,7 @@ This document tracks architectural principles, established decisions, and open t
 - [ADR-004: Server-Authoritative State and Scoring Engine](#adr-004-server-authoritative-state-and-scoring-engine)
 - [ADR-005: Separate Viewport Presentation Roles](#adr-005-separate-viewport-presentation-roles)
 - [ADR-006: Question Bank Durable Storage & Organizational Isolation](#adr-006-question-bank-durable-storage--organizational-isolation)
+- [ADR-007: Approved Question Immutability & Content Modification Invariants](#adr-007-approved-question-immutability--content-modification-invariants)
 - [Open Technical Decisions](#open-technical-decisions)
 
 ---
@@ -123,6 +124,25 @@ BAREA-002 requires durable persistence for the Question Bank with strict organiz
 ### Consequences
 - **Positive**: Zero external dependencies; instant local testability in memory (`:memory:`) or file; ACID transactions; strict organizational boundary enforcement.
 - **Negative**: SQLite is file-based/single-instance; migration to client-server RDBMS (e.g., PostgreSQL) will be needed if distributed multi-region server clusters are introduced.
+
+---
+
+## ADR-007: Approved Question Immutability & Content Modification Invariants
+
+### Status
+**ACCEPTED (BAREA-002)**
+
+### Context
+In BAREA, approved questions represent vetted, theologically accurate, and age-appropriate content ready for live quiz sessions. If an APPROVED question's stem, options, correct answer indices, scripture references, explanation, difficulty, or topic could be silently updated while retaining APPROVED status, modified and unvetted content would leak into live quizzes, defeating the teacher-approval gate.
+
+### Decision
+1. **Content Modification Demotion**: Modifying any content attribute (stem, options, correct indices, scripture reference, explanation, topic, difficulty, type, language) on an `APPROVED` question automatically resets the question status to `PENDING_REVIEW` unless an explicit valid status transition (such as `ARCHIVED`) is specified.
+2. **Review Gate Preservation**: Content-modified questions cannot silently remain `APPROVED`. They re-enter the review queue and must be re-verified and re-approved by a human teacher before they can be retrieved as approved Question Bank content or added to active quizzes.
+3. **Soft Deletion**: Questions are soft-deleted by transitioning to `ARCHIVED`. Archived questions can be restored to `DRAFT` for re-editing, but cannot jump directly to `APPROVED`.
+
+### Consequences
+- **Positive**: Guarantees theological fidelity; prevents unreviewed edits from appearing in live quizzes; enforces consistent lifecycle state transitions.
+- **Negative**: Teachers editing an existing approved question must re-approve it before using it in quizzes.
 
 ---
 

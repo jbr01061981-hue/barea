@@ -28,6 +28,10 @@ class QuestionBankService {
   transitionStatus(organizationId, id, nextStatus) {
     return this.repo.transitionStatus(organizationId, id, nextStatus);
   }
+
+  archiveQuestion(organizationId, id) {
+    return this.repo.transitionStatus(organizationId, id, QuestionStatus.ARCHIVED);
+  }
 }
 
 module.exports = {

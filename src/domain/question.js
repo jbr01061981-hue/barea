@@ -17,7 +17,7 @@ const QuestionStatus = Object.freeze({
 const VALID_STATUS_TRANSITIONS = Object.freeze({
   [QuestionStatus.DRAFT]: new Set([QuestionStatus.PENDING_REVIEW, QuestionStatus.ARCHIVED]),
   [QuestionStatus.PENDING_REVIEW]: new Set([QuestionStatus.APPROVED, QuestionStatus.DRAFT, QuestionStatus.ARCHIVED]),
-  [QuestionStatus.APPROVED]: new Set([QuestionStatus.ARCHIVED]),
+  [QuestionStatus.APPROVED]: new Set([QuestionStatus.PENDING_REVIEW, QuestionStatus.ARCHIVED]),
   [QuestionStatus.ARCHIVED]: new Set([QuestionStatus.DRAFT])
 });
 class DomainValidationError extends Error {
@@ -27,6 +27,12 @@ class InvalidLifecycleTransitionError extends Error {
   constructor(curr, next) {
     super('Cannot transition question from status ' + curr + ' to ' + next + '.');
     this.name = 'InvalidLifecycleTransitionError';
+  }
+}
+class ApprovedQuestionModificationError extends Error {
+  constructor(msg) {
+    super(msg || 'Approved question content cannot be modified directly while remaining APPROVED. Must transition through PENDING_REVIEW or ARCHIVED.');
+    this.name = 'ApprovedQuestionModificationError';
   }
 }
 function normalizeString(v) { return typeof v === 'string' ? v.trim() : ''; }
@@ -100,10 +106,15 @@ function validateOptionsAndAnswers(data, type) {
     if (!Array.isArray(data.correctOptionIndices) || data.correctOptionIndices.length < 1) {
       throw new DomainValidationError('MULTI_SELECT requires at least 1 correct option index.');
     }
+    const seenIndices = new Set();
     for (const idx of data.correctOptionIndices) {
       if (!Number.isInteger(idx) || idx < 0 || idx >= data.options.length) {
         throw new DomainValidationError('Correct option index ' + idx + ' is out of bounds.');
       }
+      if (seenIndices.has(idx)) {
+        throw new DomainValidationError('Duplicate correct option index in MULTI_SELECT: ' + idx);
+      }
+      seenIndices.add(idx);
     }
   }
 }
@@ -119,6 +130,7 @@ module.exports = {
   VALID_STATUS_TRANSITIONS,
   DomainValidationError,
   InvalidLifecycleTransitionError,
+  ApprovedQuestionModificationError,
   validateQuestionPayload,
   assertValidStatusTransition
 };
