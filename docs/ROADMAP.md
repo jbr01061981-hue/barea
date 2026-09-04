@@ -26,44 +26,67 @@ Milestones must be executed in order. No milestone may proceed into application 
 
 ---
 
+## Core AI Workflow Lifecycle
+
+The platform follows a strict canonical lifecycle that governs how AI-generated content enters the platform:
+
+```text
+AI Generation
+-> Structural/Schema Validation
+-> Teacher Review & Edit
+-> Teacher Approval
+-> Question Bank
+-> Quiz Authoring
+```
+- **Structural validation** is strictly an automated schema check for syntax, required fields, and format compliance; it does not certify biblical truth or theological accuracy.
+- **Human teacher review** is strictly required to verify scriptural fidelity and age-appropriateness.
+- **Milestone dependency**: AI generation (BAREA-003) places drafts into a staging state (PENDING_REVIEW). Generated questions cannot bypass review or directly enter the Question Bank or active quizzes without the teacher review/approval gate (BAREA-004).
+
+---
+
 ## Detailed Milestone Descriptions
 
 ### BAREA-001: Foundation (Current Milestone)
 - Establish repository documentation (README.md, AGENTS.md, docs/*).
 - Define product requirements, architectural contracts, and ADRs.
 - Initialize clean Git workflow without legacy baggage.
+- **Status**: IN PROGRESS.
 - **Deliverable**: Architectural blueprint and repository baseline.
 
 ### BAREA-002: Question Bank
-- Database schema and persistence layer for questions.
-- Question attributes: stem, options, correct indicator, explanation, scripture reference, topic, difficulty (Easy, Medium, Hard), and language.
-- CRUD APIs and filtering mechanisms.
+- Database schema and persistence layer for stored, approved questions.
+- Question attributes: stem text, answer options, correct indicator, explanation, scripture reference, topic, difficulty (Easy, Medium, Hard), and language.
+- CRUD APIs, search, and filtering mechanisms.
+- Supports manual question authoring and serves as the destination for approved questions.
 - **Status**: NOT STARTED.
 
 ### BAREA-003: AI Quiz Generation
-- LLM prompt pipeline with structured output enforcement.
-- Support teacher prompts: topic/passage, difficulty (Easy, Medium, Hard), question count, question type, language.
-- Automatic structural schema validation before teacher handoff.
-- Staging questions in pending review state.
+- Core MVP AI generation pipeline with structured output enforcement.
+- Teacher prompt parameters: topic/passage, difficulty (Easy, Medium, Hard), question count, question type, and language.
+- Automatic structural/schema validation (format, required fields, data types).
+- Places all successfully formatted drafts into a staged PENDING_REVIEW state.
+- **Mandatory constraint**: AI questions cannot enter the active Question Bank or be published to live quizzes without passing through BAREA-004.
 - **Status**: NOT STARTED.
 
 ### BAREA-004: Teacher Review/Approval
-- Interface for teachers to review generated questions before they become part of the library.
-- Inline editing of stems, choices, and biblical explanations.
-- Single-question and batch approval into Question Bank.
-- Regeneration triggers for unsatisfactory questions.
+- Review workbench for teachers to inspect AI-generated question drafts.
+- Theological and scriptural fidelity verification by the teacher.
+- Inline editing of question stem, answer choices, correct option, scripture reference, and explanation.
+- Question-level difficulty adjustments (Easy, Medium, Hard).
+- Explicit single-item and batch approval into the Question Bank (APPROVED).
+- Rejection or regeneration requests for unsatisfactory drafts.
 - **Status**: NOT STARTED.
 
 ### BAREA-005: Quiz Authoring
-- Compiling approved questions into structured quizzes.
-- Configurable settings: per-question countdowns, scoring styles, question ordering.
+- Compiling approved questions from the Question Bank into structured quizzes.
+- Configurable settings: per-question countdowns, scoring styles, question ordering, and option shuffling.
 - Publishing workflow that snapshots quizzes for active sessions.
 - **Status**: NOT STARTED.
 
 ### BAREA-006: Share/Join
 - Session creation with room access codes.
 - Dynamic QR code generation for projector and mobile devices.
-- Mobile landing flow: nickname entry, duplicate name handling, session resumption.
+- Low-friction mobile landing flow: nickname entry, duplicate name handling, session resumption.
 - **Status**: NOT STARTED.
 
 ### BAREA-007: Live Quiz
