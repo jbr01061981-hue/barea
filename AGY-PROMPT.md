@@ -1,83 +1,78 @@
-# AGY Prompt — BAREA-002 Corrective Fix
+# AGY-PROMPT — BAREA-002 Final Corrective Fix
 
-## Mission
-Continue the existing **BAREA-002 Question Bank** corrective cycle on branch `barea-002-question-bank` / PR #2.
+Task: fix the remaining approval-gate defect in PR #2.
 
-**Do not merge. Do not create a new PR. Do not start BAREA-003 or add AI, UI, live quiz, auth, QR, realtime, scoring, analytics, or other later-milestone work.**
+Read this file and execute exactly. Do not start BAREA-003 or implement any later milestone.
 
-## Required Fix — Approval Gate
-The current implementation has a lifecycle bypass:
+## Blocking defect
 
-`SqliteQuestionRepository.create()` can accept `status: APPROVED` and persist an approved question directly.
+`SqliteQuestionRepository.create()` currently permits a caller to create a question directly with `status: APPROVED`, bypassing:
 
-This violates the required human-review gate. A question must **never be created directly as APPROVED**.
+`DRAFT -> PENDING_REVIEW -> APPROVED`
 
-### Implement
-1. Make normal question creation always start as `DRAFT`, regardless of a supplied status; OR reject an explicit `status: APPROVED`. Prefer rejecting an explicit APPROVED status if that keeps the API clearer.
-2. Ensure there is no alternate create path that can persist APPROVED without the required lifecycle transition.
-3. Add regression tests proving:
-   - normal creation produces DRAFT;
-   - direct creation with `status: APPROVED` is rejected (if using the preferred approach);
-   - APPROVED can still only be reached through the existing review lifecycle.
-4. Update existing tests/fixtures that currently create questions directly with `status: APPROVED` so they first create as DRAFT and transition through the legitimate lifecycle.
+This must be impossible.
 
-## Preserve
-Do not regress the already-correct BAREA-002 behavior:
-- lifecycle and approval safety;
-- APPROVED content edits demote to PENDING_REVIEW;
-- explicit archiving;
-- duplicate MULTI_SELECT index rejection;
-- durable SQLite persistence across close/reopen;
-- organization/tenant isolation;
-- CRUD, retrieval, list/filter/search;
-- parameterized SQL;
-- existing question types and difficulty;
-- automated tests.
+## Required fix
 
-Do not redesign the architecture merely to fix this defect.
+Normal question creation must never produce `APPROVED` content directly.
 
-## Optional Cleanup
-`ApprovedQuestionModificationError` appears to be exported but unused. Remove it only if this can be done cleanly without changing behavior. This is not required for acceptance.
+Preferred behavior:
+- New questions are created as `DRAFT`.
+- Explicit `status: APPROVED` on create is rejected with the project's normal domain-validation error.
+- No bypass flag or privileged creation path.
+- Legitimate approval remains `DRAFT -> PENDING_REVIEW -> APPROVED`.
 
-## Verification
-Run the complete test suite:
+## Tests
+
+Add a service/public-path regression test proving direct APPROVED creation is rejected.
+
+Ensure normal creation produces `DRAFT`.
+
+Update existing fixtures that currently create questions directly as APPROVED. Where an approved state is required, create as DRAFT and transition through PENDING_REVIEW -> APPROVED.
+
+Run the complete test suite with:
 
 `npm test`
 
-Confirm the working tree and branch state. Keep PR #2 open and unmerged.
+All tests must pass.
+
+## Preserve
+
+Do not regress:
+- Easy / Medium / Hard question-level difficulty
+- MULTIPLE_CHOICE / TRUE_FALSE / MULTI_SELECT
+- lifecycle rules
+- approved-edit demotion to PENDING_REVIEW
+- archive/soft-delete behavior
+- organization isolation
+- SQLite persistence
+- search/filtering
+- approved-only retrieval
+
+## Scope
+
+Do not implement AI, LLM integration, teacher review UI, quiz authoring, live quiz, participant joining, QR, projector, scoring, leaderboard, analytics, or unrelated architecture changes.
+
+If `ApprovedQuestionModificationError` is unused, remove the unused class/import/export rather than adding behavior around it.
 
 ## Git
-Make **one focused Conventional Commit** for this corrective change, e.g.:
 
-`fix: prevent direct approval on question creation`
+Stay on `barea-002-question-bank` and update existing PR #2. Make a focused corrective commit, push it, and do not merge.
 
-Push the existing branch. Do not modify `main`.
+## AGY-REPORT.md
 
-## AGY REPORT — IMPORTANT
-Do **not** ask the user to copy/paste your result into ChatGPT.
+At completion, create or update `AGY-REPORT.md` in the repository with:
 
-At the end of the task, create or update **`AGY-REPORT.md` in the repository** with a concise report containing:
+- task completed
+- exact commit SHA
+- files changed
+- direct-APPROVED creation behavior
+- tests added/updated
+- exact `npm test` result
+- final `git status`
+- confirmation PR #2 remains OPEN and unmerged
+- confirmation no BAREA-003+ functionality was added
 
-- task completed;
-- exact commit SHA;
-- files changed;
-- lifecycle/approval behavior fixed;
-- tests added/updated;
-- exact `npm test` result;
-- `git status` / branch state;
-- PR #2 state;
-- confirmation that no BAREA-003+ work was performed.
+Do not rely on terminal output alone; write the complete report into `AGY-REPORT.md` and commit it.
 
-Commit and push `AGY-REPORT.md` as part of the same focused corrective commit if possible.
-
-The report file is the handoff to BAREA/ChatGPT. **Do not put the report only in the terminal response.**
-
-## Acceptance Criteria
-BAREA-002 is ready for independent review only when:
-- direct APPROVED creation is impossible;
-- approval requires the legitimate lifecycle transition;
-- regression coverage proves the invariant;
-- all tests pass;
-- the report is committed to `AGY-REPORT.md`;
-- PR #2 remains open and unmerged;
-- no later-milestone work was introduced.
+Stop after completing this task.
