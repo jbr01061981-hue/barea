@@ -1,19 +1,15 @@
-# AGY CORRECTIVE TASK — BAREA-004 SECURITY AUTHORIZATION BOUNDARY
+# AGY — BAREA-004 FINAL SECURITY CORRECTION
 
 ## STATUS
 
-BAREA-004 PR #6 is OPEN and must remain OPEN.
+PR #6 (`barea-004-teacher-review`) is OPEN.
 
-**This is a corrective pass for a release-blocking security defect found during independent BAREA review.**
+This is a **small final security correction** after independent BAREA review. The original IDOR issue has been remediated. Do NOT redesign BAREA-004.
 
-Do NOT merge the PR.
-Do NOT close the PR.
-Do NOT start BAREA-005 or any later milestone.
-Do NOT broaden this into a production authentication project.
+**DO NOT MERGE.**
+**DO NOT START BAREA-005 OR ANY LATER MILESTONE.**
 
-## SOURCE OF TRUTH — READ FIRST
-
-Repository: `jbr01061981-hue/barea`
+## SOURCE OF TRUTH
 
 Read the current `main` versions of:
 
@@ -26,226 +22,154 @@ Read the current `main` versions of:
 - `docs/FRONTEND-STANDARD.md`
 - `docs/VERIFICATION-GATES.md`
 
-Then inspect the current PR #6 implementation and existing BAREA-002 Question Bank and BAREA-003 generation boundaries.
+Then inspect the current PR #6 head and `AGY-REPORT.md`.
 
-GitHub is authoritative. Preserve the approved BAREA-004 scope and architecture unless a concrete security defect requires a minimal change.
+## REVIEW FINDING — REMAINING BLOCKER
 
-## BLOCKING DEFECT
+The previous corrective pass successfully removed browser-controlled `organizationId` authority and removed `?org=` as an authorization selector.
 
-The current Teacher Review implementation allows the browser to influence the organization context used by server actions.
+However, `getAuthorizedTeacherContext()` currently returns `DEFAULT_DEV_TEACHER_CONTEXT` whenever no test override exists. That default uses `BAREA_DEV_ORG_ID || 'church-berea-default'` and is not explicitly restricted to development execution.
 
-Specifically, the current review page accepts an `org` URL search parameter/default and the server actions accept `organizationId` from the caller. That means a caller can potentially select another organization's ID instead of having the server determine the authorized teacher's organization.
+The implementation/report also describes this as failing closed, but the normal path currently falls back to a default teacher context rather than requiring an explicitly authorized development context.
 
-This is a **server-side authorization boundary defect**. Question Bank organization isolation underneath is not sufficient if the Teacher Review server-action boundary trusts browser input.
+This does not satisfy the required **development-only + fail-closed** boundary.
 
-The browser must never be the authority for organization identity or authorization.
+## REQUIRED FIX — KEEP IT SMALL
 
-## REQUIRED SECURITY FIX
+Harden the existing teacher-context mechanism only. Do not redesign the application.
 
-Implement the **minimum server-side development teacher identity/context boundary required for BAREA-004**.
+### 1. Explicit development-only guard
 
-### 1. Trusted server-side teacher context
+The default development teacher context may be used **only in an explicitly recognized development/test execution mode**.
 
-Create a small, explicit server-only mechanism that represents the current development teacher identity and authorized organization for the local BAREA-004 workflow.
+Use the existing Next.js/Node environment conventions already present in the repository. Do not invent a production authentication system.
 
-Requirements:
+Required behavior:
 
-- organization context used for Teacher Review reads and mutations MUST be derived server-side;
-- do not accept `organizationId` from a browser action argument as an authority;
-- do not use a URL query parameter as the authorization source;
-- any URL `org` value may be retained only as a navigation/display aid if genuinely useful, but it MUST NOT determine authorization or data access;
-- keep the development identity/context isolated and clearly documented as development-only;
-- do not expose secrets or trusted authorization state to browser JavaScript;
-- do not implement a broad production authentication/authorization system in this corrective pass;
-- fail closed when trusted teacher context is unavailable or unauthorized.
+- explicit development/test mode + valid development organization configuration -> development teacher context is allowed;
+- non-development/production mode without a genuine trusted teacher context -> FAIL CLOSED;
+- missing/empty/invalid organization identity -> FAIL CLOSED;
+- never silently substitute `'church-berea-default'` outside explicitly permitted development/test execution.
 
-Use the simplest secure design compatible with the existing local Next.js architecture. Do not invent unnecessary infrastructure.
+Do not make production secure by merely checking a browser-controlled value.
 
-### 2. Server actions
+### 2. Test override isolation
 
-Audit every Teacher Review server action in the current implementation.
+The existing `setAuthorizedTeacherContext()` hook is for tests.
 
-For every read or mutation involving questions, the organization must come from the trusted server-side teacher context.
+Ensure the test override cannot become a browser-controlled authorization mechanism or production bypass.
 
-This includes, as applicable:
+Keep test-only mechanisms clearly separated from runtime authorization.
 
-- review queue reads;
-- question retrieval;
-- question edits/saves;
-- single approval;
-- batch approval;
-- archive/discard;
-- regeneration.
+### 3. Error semantics
 
-A direct invocation of an action MUST NOT be able to select another organization merely by supplying a forged `organizationId`.
+Use a clear unauthorized error type/message where appropriate, consistent with the existing project conventions.
 
-Prefer removing organization identity from public action inputs entirely. If an input must remain for compatibility, it must be treated as untrusted and must never override the trusted server context.
+The important invariant is:
 
-Do not rely on hidden form fields, disabled controls, query parameters, client state, or TypeScript types as authorization mechanisms.
+`no trusted teacher context -> no Teacher Review data access or mutation`
 
-### 3. Review page / client
+Do not leak another organization's existence through errors.
 
-Remove the current pattern in which the page uses `?org=...` as the authoritative organization selector.
+### 4. Preserve the already-fixed IDOR boundary
 
-The rendered review experience should obtain its data from the server-side authorized context.
+Do NOT restore `organizationId` to public Server Action inputs.
 
-Client components may display organization-related information returned by the server, but must not choose the organization on which mutations operate.
+Do NOT restore `?org=` as an authority.
 
-### 4. Preserve existing isolation
+All Teacher Review actions must continue deriving organization identity from the trusted server context.
 
-Do NOT weaken or bypass the existing BAREA-002 Question Bank organization isolation.
-
-The intended boundary is:
-
-`trusted server teacher context -> authorized organization -> Question Bank service/repository organization isolation`
-
-not:
-
-`browser organizationId -> server action -> database`
-
-Keep the existing domain/lifecycle protections intact.
+Question Bank organization isolation and lifecycle protections must remain unchanged.
 
 ## REQUIRED REGRESSION TESTS
 
-Add automated tests that actively attempt to break the new boundary.
+Add focused tests for the remaining blocker:
 
-At minimum prove:
+1. explicitly permitted development mode with valid configuration returns the expected development teacher context;
+2. development configuration with missing/empty organization ID fails closed;
+3. non-development/production mode without trusted teacher context fails closed;
+4. a browser/query-supplied organization value cannot activate or change the trusted context;
+5. test override works only through the test fixture mechanism and cannot be supplied by the client;
+6. existing cross-tenant read/edit/approve/batch/archive/regenerate tests remain green;
+7. existing BAREA-002 organization-isolation tests remain green;
+8. existing BAREA-003 tests remain green.
 
-1. authorized development teacher can read questions for their own organization;
-2. authorized development teacher can edit/save their own organization's pending question;
-3. authorized development teacher can approve their own organization's question;
-4. authorized development teacher can archive/regenerate within their organization where supported;
-5. a forged organization ID cannot read another organization's review queue;
-6. a forged organization ID cannot retrieve another organization's question;
-7. a forged organization ID cannot edit another organization's question;
-8. a forged organization ID cannot approve another organization's question;
-9. a forged organization ID cannot archive another organization's question;
-10. a forged organization ID cannot regenerate another organization's question;
-11. forged organization input cannot affect batch approval authorization;
-12. missing/invalid trusted teacher context fails closed;
-13. the existing BAREA-002 organization-isolation tests remain green;
-14. the existing BAREA-003 tests remain green.
-
-Tests must exercise the actual server-side action/context boundary, not merely assert that a UI control is hidden.
+Tests must exercise the actual server-side context function/actions, not merely UI behavior.
 
 ## SECURITY AUDIT
 
-Actively inspect the implementation for equivalent authorization bypasses, including:
+Inspect the final implementation for:
 
-- query parameters;
-- form fields;
-- client component props;
-- server action arguments;
+- `BAREA_DEV_ORG_ID` use;
+- `NODE_ENV` / runtime-environment checks;
+- hard-coded development defaults;
+- query parameters and form inputs;
 - cookies/headers if used;
-- direct imports of server-only context into client code;
-- accidental browser bundling of server credentials or trusted context;
-- error messages that leak another organization's data.
+- test hooks;
+- client bundles;
+- server-only imports;
+- accidental exposure of trusted context or credentials.
 
-If a mechanism is used to represent development identity, ensure it cannot be changed by ordinary browser-controlled organization input.
+Specifically prove that an ordinary browser cannot select another organization and cannot turn on the development identity mechanism.
 
-Do not add credentials, API keys, or secrets to the repository.
+## VERIFICATION
 
-## MULTI-AGENT CORRECTIVE REVIEW — REQUIRED
-
-Use available specialized sub-agents rather than treating this as a single-agent fix.
-
-At minimum, where capabilities exist, obtain focused input from:
-
-1. **Security / Backend** — attack the server-side identity and organization authorization boundary.
-2. **Testing** — design and execute cross-organization and forged-input regression tests.
-3. **Frontend / Next.js** — verify that client routing/query state cannot influence authorization and that server/client boundaries remain correct.
-4. **Accessibility / Responsive QA** — confirm the security fix did not break the existing Teacher Review interaction at L2/L3.
-5. **Independent Code Review** — actively attempt to find another authorization or scope defect after the fix.
-
-Record actual sub-agent participation and evidence in `AGY-REPORT.md`. Do not claim a role was performed merely because an agent was invoked.
-
-## REQUIRED VERIFICATION
-
-After implementing the fix, run the complete relevant verification suite, including:
+Run:
 
 - `npm test`
 - `npm run typecheck`
 - `npm run build`
+- `npm run build:next`
 - `git diff --check`
-- appropriate dependency/security audit checks;
-- no new critical `any`;
-- no BOM artifacts;
-- no committed secrets;
-- no server-only credentials/trusted authorization state in browser bundles.
+- dependency/security audit appropriate to the repository;
+- BOM check;
+- secret scan;
+- check for new `any` in `src/`;
+- verify no server-only credentials/trusted authorization mechanism is bundled client-side.
 
-Re-run the existing Teacher Review workflow in an actual local browser.
+Re-run L2 browser verification and L3 responsive verification.
 
-### L2 browser verification
+For L2 specifically verify:
 
-Verify the real rendered Teacher Review flow still works for the authorized development teacher:
+- authorized development teacher can complete the existing Teacher Review workflow;
+- `?org=foreign-org` has no authorization effect;
+- direct foreign question-ID attacks fail closed;
+- no victim-organization data is rendered.
 
-`queue -> open -> edit -> save -> approve -> batch approval -> archive -> regenerate`
+For L3 re-check desktop, tablet, and mobile behavior at the established BAREA-004 viewport ranges.
 
-Also test an attempted cross-organization access path using a forged URL/query value or other browser-controlled input and verify that it cannot change the authorized organization.
+## MULTI-AGENT REVIEW
 
-### L3 responsive verification
+Use available specialized agents for this focused correction:
 
-Re-check desktop, tablet, and mobile Teacher Review behavior after the security change. Use actual viewport sizes and record them.
+1. Security/Backend — attack the environment guard and teacher-context boundary.
+2. Testing — validate production/non-development fail-closed behavior and existing cross-tenant tests.
+3. Frontend/Next.js — verify no browser-controlled value can influence authorization.
+4. Independent Review — attempt to find a bypass after the fix.
 
-Do not claim L2/L3 based only on automated DOM tests.
+Record actual participation and evidence in `AGY-REPORT.md`. Do not claim an agent performed work merely because it was invoked.
 
 ## REPORT
 
 Update `AGY-REPORT.md` with:
 
-- the original security defect;
-- the attack path that was possible;
-- the exact server-side authorization boundary implemented;
-- how browser-controlled organization input is prevented from overriding it;
-- cross-organization regression test evidence;
-- sub-agent roles actually performed and their findings;
-- `npm test` result;
-- typecheck/build results;
-- security/audit results;
-- L2 browser observations and viewport(s);
-- L3 responsive observations and viewport(s);
-- any limitations, especially the fact that the identity mechanism is development-only;
-- final corrective-pass status.
-
-Do not mark BAREA-004 COMPLETED unless all required gates pass.
-
-## STRICT SCOPE
-
-Allowed:
-
-- minimal server-side development teacher identity/context;
-- secure organization derivation;
-- server-action authorization changes;
-- removal/neutralization of browser-controlled organization authority;
-- focused regression/security tests;
-- required documentation/report updates;
-- fixes directly required to preserve BAREA-004 behavior after the security change.
-
-Not allowed:
-
-- full production authentication;
-- user accounts/roles beyond the minimum development teacher context;
-- participant authentication;
-- BAREA-005 Quiz Authoring;
-- BAREA-006 Share/Join;
-- BAREA-007 Live Quiz/realtime;
-- BAREA-008 Participant UI;
-- BAREA-009 Scoring;
-- BAREA-010 Results/Leaderboard;
-- BAREA-011 Projector;
-- BAREA-012 Church Validation;
-- BAREA-013 Pilot;
-- production deployment;
-- new AI providers;
-- unrelated refactoring.
+- remaining blocker;
+- exact fix;
+- environment/fail-closed behavior;
+- focused regression results;
+- security audit results;
+- sub-agent evidence;
+- L2/L3 evidence;
+- final test/typecheck/build results;
+- explicit statement that development teacher context is development/test-only.
 
 ## STOP CONDITION
 
-When the corrective implementation and verification are complete:
+When complete:
 
 - keep PR #6 OPEN;
 - do not merge;
-- do not self-declare merge GO;
-- leave the repository in a clean, reviewable state;
-- update `AGY-REPORT.md` with actual evidence;
-- stop for independent BAREA review and user acceptance.
+- do not close the PR;
+- do not start BAREA-005;
+- leave a clean working tree;
+- stop for fresh independent BAREA review and GO/NO-GO decision.
