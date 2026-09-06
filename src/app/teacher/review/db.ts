@@ -50,11 +50,22 @@ export interface TeacherContext {
 let mockTeacherContext: TeacherContext | null = null;
 
 /**
- * Checks if the application is running in an authorized local development or test environment.
+ * Checks if the application is running in an explicitly authorized local development environment.
+ * Unset or unknown NODE_ENV is strictly NOT treated as development.
  */
-export function isDevelopmentOrTestEnvironment(): boolean {
-  const env = process.env.NODE_ENV;
-  return env === 'development' || env === 'test' || !env;
+export function isDevelopmentEnvironment(): boolean {
+  return process.env.NODE_ENV === 'development';
+}
+
+/**
+ * Checks if the application is running in a recognized automated test execution environment.
+ */
+export function isTestEnvironment(): boolean {
+  if (process.env.NODE_ENV === 'test') return true;
+  // Node.js built-in test runner sets --test flag in process.execArgv or command line
+  if (Array.isArray(process.execArgv) && process.execArgv.includes('--test')) return true;
+  if (Array.isArray(process.argv) && process.argv.some(arg => arg.includes('test'))) return true;
+  return false;
 }
 
 /**
@@ -62,33 +73,38 @@ export function isDevelopmentOrTestEnvironment(): boolean {
  * Never accepts organization identity or credentials from untrusted client input.
  *
  * Security Boundary:
- * 1. Test fixture override (mockTeacherContext) is evaluated first.
- * 2. Default development context is permitted ONLY in explicitly recognized development/test execution
- *    and requires a valid, non-empty organization ID (via BAREA_DEV_ORG_ID or default development org).
- * 3. In non-development/production environments without a genuine trusted context, FAILS CLOSED.
- * 4. Missing or empty organization identity FAILS CLOSED.
+ * 1. Test fixture override (mockTeacherContext) is evaluated first (strictly permitted only in test or development).
+ * 2. Default development context is permitted ONLY when NODE_ENV is explicitly 'development'.
+ *    Unset, unknown, or production NODE_ENV strictly FAILS CLOSED.
+ * 3. In development mode, requires an explicit, non-empty BAREA_DEV_ORG_ID.
+ *    There is NO silent fallback to 'church-berea-default'; missing or empty configuration FAILS CLOSED.
  */
 export async function getAuthorizedTeacherContext(): Promise<TeacherContext> {
-  // Test fixture override
+  // Test fixture override (permitted only in test or development environments)
   if (mockTeacherContext !== null) {
+    if (!isTestEnvironment() && !isDevelopmentEnvironment()) {
+      throw new Error('Forbidden: test authorization overrides are disabled in non-test/production environments.');
+    }
     if (!mockTeacherContext.organizationId || !mockTeacherContext.organizationId.trim() || !mockTeacherContext.userId) {
       throw new Error('Unauthorized: missing or invalid teacher identity.');
     }
     return mockTeacherContext;
   }
 
-  // Non-development / production guard: must fail closed until production authentication is implemented
-  if (!isDevelopmentOrTestEnvironment()) {
-    throw new Error('Unauthorized: production teacher authentication is required. Development teacher context is disabled in production.');
+  // Non-development / production / unset / unknown environment guard: must fail closed
+  if (!isDevelopmentEnvironment()) {
+    const env = process.env.NODE_ENV;
+    if (env === 'production') {
+      throw new Error('Unauthorized: production teacher authentication is required. Development teacher context is disabled in production.');
+    }
+    throw new Error(`Unauthorized: runtime environment (${env || 'unset'}) is not authorized for development teacher context. Explicit trusted teacher authentication is required.`);
   }
 
-  // In development/test mode, resolve development organization
-  const devOrgId = (process.env.BAREA_DEV_ORG_ID !== undefined)
-    ? process.env.BAREA_DEV_ORG_ID.trim()
-    : 'church-berea-default';
+  // In explicit development mode, require explicit BAREA_DEV_ORG_ID configuration (no silent fallback)
+  const devOrgId = process.env.BAREA_DEV_ORG_ID ? process.env.BAREA_DEV_ORG_ID.trim() : '';
 
   if (!devOrgId) {
-    throw new Error('Unauthorized: development organization identity is missing or empty. Development teacher context failed closed.');
+    throw new Error('Unauthorized: BAREA_DEV_ORG_ID is missing or empty. Development teacher context requires an explicit organization configuration and fails closed.');
   }
 
   return {
@@ -105,8 +121,8 @@ export async function getAuthorizedTeacherContext(): Promise<TeacherContext> {
  * Guarded against execution in production mode.
  */
 export function setAuthorizedTeacherContext(context: TeacherContext | null): void {
-  if (!isDevelopmentOrTestEnvironment()) {
-    throw new Error('Forbidden: test authorization overrides cannot be executed in production environment.');
+  if (process.env.NODE_ENV === 'production' || (!isTestEnvironment() && !isDevelopmentEnvironment())) {
+    throw new Error('Forbidden: test authorization overrides cannot be executed in production or unauthorized environments.');
   }
   mockTeacherContext = context;
 }

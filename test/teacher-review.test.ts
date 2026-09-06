@@ -467,11 +467,19 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
     const prevDevOrg = envMap.BAREA_DEV_ORG_ID;
     try {
       envMap.NODE_ENV = 'development';
-      envMap.BAREA_DEV_ORG_ID = '   '; // Whitespace only
 
+      // Case A: missing (undefined)
+      delete envMap.BAREA_DEV_ORG_ID;
       await assert.rejects(
         async () => getAuthorizedTeacherContext(),
-        /development organization identity is missing or empty/i
+        /BAREA_DEV_ORG_ID is missing or empty/i
+      );
+
+      // Case B: whitespace only
+      envMap.BAREA_DEV_ORG_ID = '   ';
+      await assert.rejects(
+        async () => getAuthorizedTeacherContext(),
+        /BAREA_DEV_ORG_ID is missing or empty/i
       );
 
       const queueRes = await getPendingQuestionsAction();
@@ -520,6 +528,68 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
         envMap.BAREA_DEV_ORG_ID = prevDevOrg;
       } else {
         delete envMap.BAREA_DEV_ORG_ID;
+      }
+      setAuthorizedTeacherContext({
+        userId: 'teacher-alpha',
+        organizationId: orgA,
+        displayName: 'Teacher Alpha',
+        role: 'teacher',
+      });
+    }
+  });
+
+  await t.test('19. security: unset NODE_ENV without a trusted test override strictly fails closed', async () => {
+    setAuthorizedTeacherContext(null);
+
+    const envMap = process.env as Record<string, string | undefined>;
+    const prevNodeEnv = envMap.NODE_ENV;
+    try {
+      delete envMap.NODE_ENV;
+
+      await assert.rejects(
+        async () => getAuthorizedTeacherContext(),
+        /runtime environment \(unset\) is not authorized/i
+      );
+
+      const queueRes = await getPendingQuestionsAction();
+      assert.equal(queueRes.success, false);
+      assert.match(queueRes.error || '', /runtime environment \(unset\) is not authorized/i);
+    } finally {
+      if (prevNodeEnv !== undefined) {
+        envMap.NODE_ENV = prevNodeEnv;
+      } else {
+        delete envMap.NODE_ENV;
+      }
+      setAuthorizedTeacherContext({
+        userId: 'teacher-alpha',
+        organizationId: orgA,
+        displayName: 'Teacher Alpha',
+        role: 'teacher',
+      });
+    }
+  });
+
+  await t.test('20. security: unknown/non-standard NODE_ENV without trusted authentication fails closed', async () => {
+    setAuthorizedTeacherContext(null);
+
+    const envMap = process.env as Record<string, string | undefined>;
+    const prevNodeEnv = envMap.NODE_ENV;
+    try {
+      envMap.NODE_ENV = 'staging';
+
+      await assert.rejects(
+        async () => getAuthorizedTeacherContext(),
+        /runtime environment \(staging\) is not authorized/i
+      );
+
+      const queueRes = await getPendingQuestionsAction();
+      assert.equal(queueRes.success, false);
+      assert.match(queueRes.error || '', /runtime environment \(staging\) is not authorized/i);
+    } finally {
+      if (prevNodeEnv !== undefined) {
+        envMap.NODE_ENV = prevNodeEnv;
+      } else {
+        delete envMap.NODE_ENV;
       }
       setAuthorizedTeacherContext({
         userId: 'teacher-alpha',
