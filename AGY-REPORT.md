@@ -80,8 +80,12 @@ fail: 0
 - `.gitignore`: Added `*.log` to prevent stray log files.
 - `AGY-REPORT.md`: Created detailed corrective task report.
 
-## Git & PR Status
-- **Branch**: `barea-002-question-bank`
+## Git & Merge Status
+- **PR #2 State**: **MERGED**
 - **PR #2 URL**: https://github.com/jbr01061981-hue/barea/pull/2
-- **PR #2 State**: **OPEN** (unmerged)
-- **Scope Compliance**: Strictly no BAREA-003+ work was introduced (no AI generation, UI, live quiz engine, auth, or realtime transport).
+- **Merge Commit SHA on `main`**: `1d9f1f5f3f662bf9c34288c4e55d42e155eac406`
+- **Head Reviewed Commit**: `d7130348d8e07aba9a8778cefb8e9d197c6261c4`
+- **Local Branch State**: Switched to `main`, pulled latest merge commit, deleted local `barea-002-question-bank` branch.
+- **Remote Branch State**: Deleted remote `barea-002-question-bank` and pruned remote tracking branch references.
+- **Working Tree**: Clean (`git status` reports working tree clean).
+- **Scope Compliance**: Strictly no BAREA-003+ work was introduced (no AI generation, UI, live quiz engine, auth, or realtime transport). No TypeScript migration performed.
