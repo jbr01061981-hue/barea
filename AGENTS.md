@@ -41,11 +41,24 @@ Every implementation decision must respect these foundational pillars:
 - Never implement an API or live protocol without updating the technical documentation in docs/ first.
 - Keep docs/DECISIONS.md updated with Architecture Decision Records (ADRs) whenever establishing architectural choices or recording open decisions.
 - Keep docs/ROADMAP.md synchronized with task statuses.
+- Read `docs/FRONTEND-STANDARD.md` before implementing or reviewing any frontend work.
 
 ### TypeScript Standard
 - **BAREA application code is TypeScript-first.** New application code must use `.ts`/`.tsx` as appropriate.
 - BAREA-002A is the required migration gate before BAREA-003 begins.
 - Preserve behavior and public contracts during migration; do not use the migration as an excuse to introduce frameworks, APIs, live transport, or unrelated refactors.
+
+### Frontend Standard
+- **Framework**: Next.js 16 with the App Router.
+- **UI**: React 19 with TypeScript.
+- **Styling**: Tailwind CSS 4.
+- **Accessible interaction primitives**: React Aria Components.
+- **Visual design system**: BAREA-owned; do not adopt a generic third-party visual theme.
+- **shadcn/ui is not a BAREA standard.** Do not introduce it as the core component library or visual design language.
+- Do not introduce Material UI, Ant Design, Chakra UI, or another opinionated visual component suite without an explicit architectural decision.
+- Treat Teacher/Host, Participant Mobile, and Projector/Presentation as distinct first-class experiences. Do not simply shrink one dashboard across breakpoints.
+- Avoid generic AI/SaaS visual patterns and decorative UI without a concrete product purpose.
+- Follow `docs/FRONTEND-STANDARD.md` and ADR-010/ADR-011 for the full rules.
 
 ### Git & Branch Workflow
 - Feature branches must follow the naming convention: `barea-<milestone-number>-<short-description>` (e.g., `barea-001-foundation`).
@@ -57,6 +70,7 @@ Every implementation decision must respect these foundational pillars:
 ## 4. Current Milestone Scope
 
 Refer to [docs/ROADMAP.md](./docs/ROADMAP.md) for the active milestone:
-- **Active**: BAREA-002A TypeScript Migration Gate.
-- **Purpose**: Convert the approved BAREA-002 implementation from JavaScript to TypeScript while preserving behavior and test coverage.
-- **Next**: BAREA-003 AI Quiz Generation remains **NOT STARTED** and must not be implemented during BAREA-002A.
+- **Active**: BAREA-004 Teacher Review/Approval.
+- **Purpose**: Build the teacher review/approval capability for AI-generated PENDING_REVIEW questions, within the approved architectural boundaries.
+- **Frontend reference**: `docs/FRONTEND-STANDARD.md` and ADR-010/ADR-011.
+- **Constraint**: Do not start BAREA-005 or later functionality unless the roadmap explicitly advances to it.
