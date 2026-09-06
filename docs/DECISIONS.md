@@ -169,6 +169,48 @@ BAREA-002 established the first executable domain and persistence layer in JavaS
 
 ---
 
+## ADR-009: AI LLM Gateway Provider Port & Architecture
+
+### Status
+**ACCEPTED (BAREA-003)**
+
+### Context
+BAREA-003 introduces the server-side AI quiz generation pipeline. The project requires high-quality, structured biblical questions generated on demand, while avoiding tight coupling to any single proprietary LLM provider SDK or cloud API. Automated testing must be deterministic and must not depend on live credentials or external network access.
+
+### Decision
+1. **Port/Adapter Architecture**: The AI generation pipeline connects to LLMs through a strongly-typed port interface (`AIProvider`), which defines `generateRaw(request: GenerationRequest): Promise<unknown>`.
+2. **Provider Implementations**:
+   - `FakeAIProvider`: In-memory deterministic mock provider for automated unit, validation, and failure-mode testing without network or credentials.
+   - `GeminiAIProvider`: Production adapter for Google Gemini REST API (`gemini-2.5-flash` by default, configurable to `gemini-3.8-flash` or other supported models via `GeminiProviderConfig` or `GEMINI_MODEL`) using native fetch without heavy third-party SDK dependencies.
+3. **Model Selection & API Verification**:
+   - **Default Model**: `gemini-2.5-flash` is selected as the production default. Official Google documentation verifies it as a current stable model with full structured-output schema support, high throughput, and low latency appropriate for server-side question generation batches.
+   - **API Surface & Endpoint**: `POST /v1beta/models/{model}:generateContent` on `https://generativelanguage.googleapis.com`.
+   - **Structured Output Mechanism**: Requests structured JSON via Gemini's native `generationConfig: { responseMimeType: 'application/json', responseSchema: GEMINI_QUESTIONS_RESPONSE_SCHEMA }`.
+   - **Verification Date**: September 6, 2026.
+   - **Official Documentation References**:
+     - Google Gemini Models: `https://ai.google.dev/gemini-api/docs/models`
+     - Google Gemini Structured Output: `https://ai.google.dev/gemini-api/docs/structured-output`
+     - Google Gemini Text Generation: `https://ai.google.dev/gemini-api/docs/generate-content/text-generation`
+     - Google Gemini Deprecations: `https://ai.google.dev/gemini-api/docs/deprecations`
+4. **Configuration, Credentials & Error Redaction**:
+   - Provider credentials and models are configuration-driven via `GeminiProviderConfig` or environment variables (`GEMINI_API_KEY`, `GEMINI_MODEL`).
+   - Credentials are transmitted via the official `x-goog-api-key` HTTP header rather than in URL query parameters.
+   - **Error Redaction Strategy**: Thrown `AIProviderError` messages extract only bounded, safe diagnostics (HTTP status code, status text, and structured error reason). Any echo of API keys, `x-goog-api-key` header tokens, or authorization credentials is deterministically redacted with `[REDACTED]`. Arbitrary multi-line raw provider response bodies (such as server traces) are never dumped into application errors.
+5. **Structured Output & Two-Stage Validation**:
+   - Provider outputs are strictly validated in two stages: first via JSON schema / structural validation (`validateStructuralOutput`), and second through Question domain validation (`validateQuestionPayload`).
+   - Automated structural validation only certifies schema format; it does NOT certify biblical truth or theological accuracy.
+6. **Lifecycle Gate & Atomic Persistence**:
+   - Generated questions are always persisted as `PENDING_REVIEW`, preserving the human teacher review and approval gate (BAREA-004). AI questions can never be created directly as `APPROVED`.
+   - Batch persistence is executed within a single SQLite transaction (`BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`). If any question insert or status transition fails, the transaction is rolled back, ensuring zero questions from that batch remain persisted.
+7. **Future Provider Substitution**:
+   - Alternative providers (e.g. OpenAI, Anthropic, local open-weights models) can be added as `AIProvider` implementations without altering the Question Bank domain, service, or validation layers.
+
+### Consequences
+- **Positive**: Complete provider decoupling, test suite speed and determinism with zero network dependencies, strict lifecycle safety, atomic persistence guarantees, verified model/API contracts, and clean credential/error safety.
+- **Negative**: Adds provider adapter interface maintenance and requires mapping model outputs to the common BAREA schema.
+
+---
+
 ## Open Technical Decisions
 
 The following technical selections remain intentionally deferred:
@@ -176,4 +218,3 @@ The following technical selections remain intentionally deferred:
 1. **Application Framework**: Specific backend/frontend framework(s) and application composition.
 2. **Real-Time Communication Transport**: Specific protocol/library implementation.
 3. **Database & Data Layer for Distributed Environments**: Relational database engine, schema management, and live session state storage for multi-server deployment.
-4. **AI LLM Gateway**: Specific model provider and API integration for question generation.

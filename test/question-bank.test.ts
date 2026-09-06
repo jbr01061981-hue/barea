@@ -659,5 +659,13 @@ test('CommonJS Runtime Contract & Public Exports', () => {
   assert.equal(typeof barea.assertValidStatusTransition, 'function');
   assert.equal(typeof barea.SqliteQuestionRepository, 'function');
   assert.equal(typeof barea.QuestionBankService, 'function');
+  assert.equal(typeof barea.AIGenerationService, 'function');
+  assert.equal(typeof barea.FakeAIProvider, 'function');
+  assert.equal(typeof barea.GeminiAIProvider, 'function');
+  assert.equal(typeof barea.validateGenerationRequest, 'function');
+  assert.equal(typeof barea.validateStructuralOutput, 'function');
+  assert.equal(typeof barea.GenerationValidationError, 'function');
+  assert.equal(typeof barea.StructuralValidationError, 'function');
+  assert.equal(typeof barea.AIProviderError, 'function');
 });
 

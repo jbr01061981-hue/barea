@@ -13,7 +13,7 @@ Milestones must be executed in order. No milestone may proceed into application 
 | **BAREA-001** | **Foundation** | Documentation, architecture, agent guidelines, ADRs | **COMPLETED** |
 | **BAREA-002** | **Question Bank** | Domain models, storage, tagging, difficulty, search/filter | **COMPLETED** |
 | **BAREA-002A** | **TypeScript Migration Gate** | Migrate existing BAREA-002 implementation to TypeScript without changing behavior | **COMPLETED** |
-| **BAREA-003** | **AI Quiz Generation** | Structured LLM prompt pipeline, parameter inputs, structural validation | NOT STARTED |
+| **BAREA-003** | **AI Quiz Generation** | Structured LLM prompt pipeline, parameter inputs, structural validation | **COMPLETED** |
 | **BAREA-004** | **Teacher Review/Approval**| Staging UI, editing, scripture check, approval gate | NOT STARTED |
 | **BAREA-005** | **Quiz Authoring** | Quiz playlist composition, timer & scoring configurations, publishing | NOT STARTED |
 | **BAREA-006** | **Share/Join** | QR generation, room access codes, URL routing, participant onboarding | NOT STARTED |
@@ -79,7 +79,8 @@ AI Generation
 - Automatic structural/schema validation (format, required fields, data types).
 - Places all successfully formatted drafts into a staged PENDING_REVIEW state.
 - **Mandatory constraint**: AI questions cannot enter the active Question Bank or be published to live quizzes without passing through BAREA-004.
-- **Status**: NOT STARTED.
+- **Status**: COMPLETED.
+- **Deliverable**: Server-authoritative AI quiz generation pipeline with port/adapter architecture (`AIProvider`, `FakeAIProvider`, `GeminiAIProvider`), JSON Schema structural output validation, Question domain validation, PENDING_REVIEW Question Bank staging, and atomic SQLite transaction boundary.
 
 ### BAREA-004: Teacher Review/Approval
 - Review workbench for teachers to inspect AI-generated question drafts.
