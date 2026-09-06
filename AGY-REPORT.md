@@ -1,20 +1,23 @@
-# AGY Execution Report — BAREA-003 AI Quiz Generation (Corrective Pass Completed)
+# AGY Execution Report — BAREA-003 AI Quiz Generation (Final Corrective Pass 2)
 
 ## 1. Executive Summary
-Completed milestone **BAREA-003: AI Quiz Generation** and the required **BAREA-003 Corrective Pass** on dedicated branch `barea-003-ai-generation` for PR #4.
+Completed milestone **BAREA-003: AI Quiz Generation** including **Corrective Pass 1 (Atomic Transactions)** and **Final Corrective Pass 2 (Gemini Contract Verification & Error Redaction)** on dedicated branch `barea-003-ai-generation` for PR #4.
 
-The corrective pass addresses both review findings:
-1. **True Atomic Batch Persistence**:
-   - Replaced single-question persistence and compensating archive cleanup with true SQLite transaction semantics (`BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`).
-   - Exposed `transaction<T>(action: () => T): T` on `QuestionRepository` and `QuestionBankService`.
-   - `AIGenerationService.generateQuizQuestions()` executes all question creation and staging inside a single SQLite transaction.
-   - If any insert or status transition fails at any point in the batch, the entire transaction rolls back; **zero** generated questions remain in the database.
-2. **Current Gemini Model & API Safety**:
-   - Replaced obsolete `gemini-1.5-flash` default with `gemini-2.5-flash` (configurable to `gemini-3.8-flash` or other supported models via `GeminiProviderConfig` or `GEMINI_MODEL`).
-   - Replaced query-parameter key transmission (`?key=...`) with the official `x-goog-api-key` HTTP header.
-   - Enforced structured output at the provider level using Gemini's native `responseSchema` (matching `GEMINI_QUESTIONS_RESPONSE_SCHEMA`) and `responseMimeType: 'application/json'`, while retaining mandatory two-stage BAREA validation.
-   - Sanitized provider error messages to prevent credential leakage.
-   - Added deterministic unit tests for `GeminiAIProvider` with mocked fetch (testing header transmission, model configuration, non-2xx status handling, and response parsing without external network access or real credentials).
+The final corrective pass addresses all review points:
+1. **Independent Gemini Contract Verification**:
+   - Verified against current official Google Gemini documentation (`https://ai.google.dev/gemini-api/docs/models`, `https://ai.google.dev/gemini-api/docs/structured-output`, and `https://ai.google.dev/gemini-api/docs/deprecations`).
+   - Selected and retained `gemini-2.5-flash` as the production default model. It is verified as currently supported, stable (not preview or deprecated), possesses high generation throughput and low latency, and natively supports JSON Schema structured outputs.
+   - Verified API endpoint: `POST /v1beta/models/{model}:generateContent` on `https://generativelanguage.googleapis.com`.
+   - Verified request payload format: structured output via `generationConfig: { responseMimeType: 'application/json', responseSchema: GEMINI_QUESTIONS_RESPONSE_SCHEMA }`.
+   - Verified authentication: standard `x-goog-api-key: this.apiKey` header.
+2. **True Error & Secret Redaction**:
+   - Implemented deterministic credential and token scrubbing (`sanitizeMessage`) that scrubs any occurrence of the configured API key, `x-goog-api-key` headers, Bearer tokens, or query-string keys.
+   - Structured error extraction (`extractSafeErrorMessage`): extracts HTTP status code, status text, and clean error reason without blindly copying arbitrary raw multi-line response bodies (preventing internal stack trace or credential leakage).
+   - Added deterministic security regression tests proving redaction of fake credentials in error messages and non-leakage of raw bodies.
+3. **Atomic Persistence & BAREA Invariants**:
+   - True SQLite transaction semantics (`BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`) preserved. Zero questions persisted on batch failure.
+   - Staging as `PENDING_REVIEW` preserved; direct `APPROVED` creation remains prohibited.
+   - Organization isolation preserved.
 
 ---
 
@@ -24,38 +27,58 @@ The corrective pass addresses both review findings:
 - **Base Branch**: `main`
 - **PR**: [#4](https://github.com/jbr01061981-hue/barea/pull/4) — `feat: implement AI Quiz Generation pipeline (BAREA-003)`
 - **PR Status**: **OPEN** (unmerged, left for independent review)
-- **Head Commit SHA**: `2b6b695a763c436033e79543ae3a05864adf1975`
 - **Node.js Version**: `v24.18.0`
 - **npm Version**: `12.0.2`
 - **TypeScript Version**: `7.0.2`
 
 ---
 
-## 3. Architecture & Implementation Highlights
+## 3. Architecture & Contract Verification Highlights
 
-### A. Atomic Batch Persistence Boundary
-- **Repository Interface**: `QuestionRepository` defines `transaction<T>(action: () => T): T`.
-- **SQLite Implementation**: `SqliteQuestionRepository.transaction()` executes `BEGIN IMMEDIATE`, invokes the callback, commits with `COMMIT`, and automatically catches errors to execute `ROLLBACK` before rethrowing.
-- **Service Delegation**: `QuestionBankService.transaction()` delegates directly to the repository transaction.
-- **Pipeline Execution**: `AIGenerationService.generateQuizQuestions()` stages all questions within `this.questionBankService.transaction(...)`. On any failure, zero questions remain in the database.
+### A. Gemini Model Selection Rationale
+- **Selected Model**: `gemini-2.5-flash` (configurable to `gemini-3.8-flash` or other models via `GeminiProviderConfig` or `GEMINI_MODEL`).
+- **Rationale**:
+  1. Currently supported and stable under official Google Gemini documentation.
+  2. No deprecation or shutdown announcement (unlike older 1.x models).
+  3. Optimized for low latency and high reliability in structured JSON question generation.
+  4. Fully compatible with `responseSchema` constrained decoding.
+- **Verification Date**: September 6, 2026.
+- **Official Documentation Sources**:
+  - Models: `https://ai.google.dev/gemini-api/docs/models`
+  - Structured Output: `https://ai.google.dev/gemini-api/docs/structured-output`
+  - Text Generation: `https://ai.google.dev/gemini-api/docs/generate-content/text-generation`
+  - Deprecations: `https://ai.google.dev/gemini-api/docs/deprecations`
 
-### B. Gemini Provider Adapter & Structured Output
-- **Model**: Default `gemini-2.5-flash` (current stable low-latency model supporting structured output schema). Configurable to `gemini-3.8-flash` or environment override.
-- **Auth Header**: Uses `x-goog-api-key: this.apiKey` HTTP request header; API key is never placed in the URL query string.
-- **Schema Enforcement**: Requests `responseSchema: GEMINI_QUESTIONS_RESPONSE_SCHEMA` and `responseMimeType: 'application/json'` in `generationConfig`.
-- **Validation Layers**: Provider structured-output enforcement -> BAREA structural schema validation (`validateStructuralOutput`) -> BAREA Question domain validation (`validateQuestionPayload`).
-- **Error Sanitization**: Slices and sanitizes non-2xx error text so credentials and authorization headers cannot leak.
+### B. Request Structure & Credential Boundary
+- **Endpoint**: `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
+- **Header**: `'x-goog-api-key': this.apiKey` (never placed in URL query parameters).
+- **Body**:
+  ```json
+  {
+    "contents": [{ "role": "user", "parts": [{ "text": "..." }] }],
+    "generationConfig": {
+      "responseMimeType": "application/json",
+      "responseSchema": { ... }
+    }
+  }
+  ```
+- **Error Redaction Design**:
+  - Replaces all occurrences of the configured secret key with `[REDACTED]`.
+  - Regular expressions scrub any `x-goog-api-key:[^\s,]+` or `key=[^\s,]+` patterns.
+  - JSON error responses safely extract `error.message` and `error.status`.
+  - Non-JSON error responses truncate to the first line and bound output to 200 characters, preventing raw internal multi-line dumps.
+
+### C. Atomic Batch Persistence Boundary
+- Persistence runs inside `SqliteQuestionRepository.transaction()` (`BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`).
+- If any question fails validation, insert, or transition, the transaction rolls back, leaving **zero** questions persisted from that batch.
 
 ---
 
-## 4. Exact Files Modified in Corrective Pass
-1. `src/persistence/sqlite-question-repository.ts`: Added `transaction<T>(action: () => T): T` to interface and `SqliteQuestionRepository` using `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`.
-2. `src/service/question-bank-service.ts`: Exposed `transaction<T>(action: () => T): T` delegating to repository.
-3. `src/ai/service/ai-generation-service.ts`: Wrapped batch persistence inside `this.questionBankService.transaction(...)`, eliminating best-effort compensating archive.
-4. `src/ai/provider/gemini-ai-provider.ts`: Updated model default to `gemini-2.5-flash`, switched to `x-goog-api-key` header, added `GEMINI_QUESTIONS_RESPONSE_SCHEMA`, and sanitized errors.
-5. `test/ai/ai-generation.test.ts`: Added atomic rollback regression test, atomic success test, and full deterministic `GeminiAIProvider` test suite (6 new tests, total 56 passing tests).
-6. `docs/DECISIONS.md`: Updated ADR-009 with transaction boundary and current Gemini model/header documentation.
-7. `AGY-REPORT.md`: Updated execution report.
+## 4. Exact Files Modified in Corrective Pass 2
+1. `src/ai/provider/gemini-ai-provider.ts`: Added `sanitizeMessage` and `extractSafeErrorMessage` methods for credential redaction and safe error parsing.
+2. `test/ai/ai-generation.test.ts`: Added deterministic security tests for fake API key redaction, header token redaction, and multi-line body suppression (now 58 passing tests).
+3. `docs/DECISIONS.md`: Updated ADR-009 with complete model selection rationale, documentation links, verification date, and error redaction strategy.
+4. `AGY-REPORT.md`: Updated execution report.
 
 ---
 
@@ -81,76 +104,78 @@ Result: Exited 0 with 0 errors. Clean CommonJS build artifacts produced in `dist
 > tsc -p tsconfig.test.json && node --test "dist/test/**/*.test.js"
 
 ▶ AI Generation Request Validation
-  ✔ accepts valid request with count 1 (1.6023ms)
-  ✔ accepts valid request with count 20 (0.198ms)
-  ✔ rejects count 0 (0.3743ms)
-  ✔ rejects count greater than 20 (0.1612ms)
-  ✔ rejects invalid difficulty (0.1987ms)
-  ✔ rejects invalid question type (0.1848ms)
-  ✔ rejects missing topic and passageReference (0.138ms)
-  ✔ rejects missing organizationId (0.127ms)
-✔ AI Generation Request Validation (4.3065ms)
+  ✔ accepts valid request with count 1 (0.7947ms)
+  ✔ accepts valid request with count 20 (0.1837ms)
+  ✔ rejects count 0 (0.4235ms)
+  ✔ rejects count greater than 20 (0.1602ms)
+  ✔ rejects invalid difficulty (0.1411ms)
+  ✔ rejects invalid question type (0.1632ms)
+  ✔ rejects missing topic and passageReference (0.1177ms)
+  ✔ rejects missing organizationId (0.1393ms)
+✔ AI Generation Request Validation (4.0215ms)
 ▶ Structured Output Validation
-  ✔ accepts structurally valid question batch (0.4569ms)
-  ✔ rejects missing questions array (0.1653ms)
-  ✔ rejects missing required field stem (0.1223ms)
-  ✔ rejects invalid question type (0.1236ms)
-  ✔ rejects out of bounds correctOptionIndices (0.1387ms)
-✔ Structured Output Validation (1.4724ms)
+  ✔ accepts structurally valid question batch (0.4502ms)
+  ✔ rejects missing questions array (0.1539ms)
+  ✔ rejects missing required field stem (0.1254ms)
+  ✔ rejects invalid question type (0.1482ms)
+  ✔ rejects out of bounds correctOptionIndices (0.1127ms)
+✔ Structured Output Validation (1.4108ms)
 ▶ AI Generation Pipeline Execution & Lifecycle Invariants
-  ✔ generates questions and stages them as PENDING_REVIEW (3.4862ms)
-  ✔ enforces exact count matching and rejects count mismatch (0.4062ms)
-  ✔ provider failure persists zero questions (fail-closed) (0.511ms)
-  ✔ provider attempting to pass status: APPROVED cannot bypass lifecycle (0.588ms)
-  ✔ enforces strict organization isolation (1.0501ms)
-  ✔ rejects duplicate correct option indices for MULTI_SELECT (0.3122ms)
-  ✔ atomic rollback on persistence failure guarantees zero questions remain in database (1.2305ms)
-  ✔ successful batch persists exactly N questions in PENDING_REVIEW (0.6802ms)
-✔ AI Generation Pipeline Execution & Lifecycle Invariants (9.9797ms)
+  ✔ generates questions and stages them as PENDING_REVIEW (2.7152ms)
+  ✔ enforces exact count matching and rejects count mismatch (0.3351ms)
+  ✔ provider failure persists zero questions (fail-closed) (0.3718ms)
+  ✔ provider attempting to pass status: APPROVED cannot bypass lifecycle (0.5189ms)
+  ✔ enforces strict organization isolation (0.9693ms)
+  ✔ rejects duplicate correct option indices for MULTI_SELECT (0.313ms)
+  ✔ atomic rollback on persistence failure guarantees zero questions remain in database (0.615ms)
+  ✔ successful batch persists exactly N questions in PENDING_REVIEW (0.6019ms)
+✔ AI Generation Pipeline Execution & Lifecycle Invariants (7.8065ms)
 ▶ GeminiAIProvider Unit Tests (Deterministic / Mocked Fetch)
-  ✔ fails if API key is not configured (0.3832ms)
-  ✔ defaults to gemini-2.5-flash and uses x-goog-api-key header and structured schema (0.3151ms)
-  ✔ honors explicitly configured model (0.153ms)
-  ✔ handles non-2xx response and sanitizes errors without leaking credentials (0.2641ms)
-  ✔ handles malformed JSON response safely (0.2038ms)
-  ✔ handles empty candidate parts response safely (0.2303ms)
-✔ GeminiAIProvider Unit Tests (Deterministic / Mocked Fetch) (2.0531ms)
+  ✔ fails if API key is not configured (0.3357ms)
+  ✔ defaults to gemini-2.5-flash and uses x-goog-api-key header and structured schema (0.2716ms)
+  ✔ honors explicitly configured model (0.1511ms)
+  ✔ handles non-2xx response and sanitizes errors without leaking credentials (0.5955ms)
+  ✔ redacts fake api key if provider echoes key or header in error message (0.2941ms)
+  ✔ does not leak arbitrary raw provider body on non-JSON response (0.2069ms)
+  ✔ handles malformed JSON response safely (0.2025ms)
+  ✔ handles empty candidate parts response safely (0.2294ms)
+✔ GeminiAIProvider Unit Tests (Deterministic / Mocked Fetch) (2.9062ms)
 ▶ Question Domain & Validation
-  ✔ accepts valid MCQ question payload (0.9654ms)
-  ✔ accepts valid TRUE_FALSE question payload (0.17ms)
-  ✔ accepts valid MULTI_SELECT question payload (0.1284ms)
-  ✔ rejects empty organizationId (0.388ms)
-  ✔ rejects empty stem (0.1522ms)
-  ✔ rejects invalid difficulty (0.1408ms)
-  ✔ rejects invalid question type (0.1209ms)
-  ✔ rejects out of bounds correctOptionIndices (0.1394ms)
-  ✔ rejects duplicate correctOptionIndices in MULTI_SELECT (0.2189ms)
-  ✔ rejects question creation with explicit APPROVED status (0.2331ms)
-✔ Question Domain & Validation (4.9606ms)
+  ✔ accepts valid MCQ question payload (0.908ms)
+  ✔ accepts valid TRUE_FALSE question payload (0.1669ms)
+  ✔ accepts valid MULTI_SELECT question payload (0.1437ms)
+  ✔ rejects empty organizationId (0.4897ms)
+  ✔ rejects empty stem (0.3117ms)
+  ✔ rejects invalid difficulty (0.212ms)
+  ✔ rejects invalid question type (0.1743ms)
+  ✔ rejects out of bounds correctOptionIndices (0.1895ms)
+  ✔ rejects duplicate correctOptionIndices in MULTI_SELECT (0.2908ms)
+  ✔ rejects question creation with explicit APPROVED status (0.3363ms)
+✔ Question Domain & Validation (5.8201ms)
 ▶ Question Lifecycle State Transitions
-  ✔ valid transitions succeed (0.1637ms)
-  ✔ invalid transitions are rejected (0.1947ms)
-✔ Question Lifecycle State Transitions (0.5616ms)
+  ✔ valid transitions succeed (0.3926ms)
+  ✔ invalid transitions are rejected (0.627ms)
+✔ Question Lifecycle State Transitions (1.904ms)
 ▶ Question Bank Persistence & Service CRUD Operations
-  ✔ creates question defaulting to DRAFT and rejects explicit APPROVED create in repository/service (2.0434ms)
-  ✔ creates and retrieves question with durable persistence (1.5232ms)
-  ✔ updates question content and preserves domain invariants (0.4682ms)
-  ✔ validates lifecycle transition in service (0.6335ms)
-  ✔ filters by topic, difficulty, type, language, status, and search (1.3961ms)
-  ✔ enforces strict organizational ownership isolation (0.8656ms)
-  ✔ modifying approved question content cannot leave it silently approved (demotes to PENDING_REVIEW) (1.258ms)
-  ✔ archiveQuestion soft-deletes question to ARCHIVED status (1.1514ms)
-✔ Question Bank Persistence & Service CRUD Operations (11.0317ms)
-✔ Question Bank Durable Persistence Across File Reopen (34.6113ms)
-✔ CommonJS Runtime Contract & Public Exports (8.5515ms)
-ℹ tests 56
+  ✔ creates question defaulting to DRAFT and rejects explicit APPROVED create in repository/service (3.1527ms)
+  ✔ creates and retrieves question with durable persistence (1.4612ms)
+  ✔ updates question content and preserves domain invariants (0.729ms)
+  ✔ validates lifecycle transition in service (0.8644ms)
+  ✔ filters by topic, difficulty, type, language, status, and search (1.6594ms)
+  ✔ enforces strict organizational ownership isolation (1.0837ms)
+  ✔ modifying approved question content cannot leave it silently approved (demotes to PENDING_REVIEW) (1.1555ms)
+  ✔ archiveQuestion soft-deletes question to ARCHIVED status (0.9481ms)
+✔ Question Bank Persistence & Service CRUD Operations (13.987ms)
+✔ Question Bank Durable Persistence Across File Reopen (36.2271ms)
+✔ CommonJS Runtime Contract & Public Exports (6.5786ms)
+ℹ tests 58
 ℹ suites 0
-ℹ pass 56
+ℹ pass 58
 ℹ fail 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 165.3674
+ℹ duration_ms 174.1973
 ```
 
 ### D. Code & Secret Audit

@@ -57,6 +57,20 @@ export const GEMINI_QUESTIONS_RESPONSE_SCHEMA = {
   required: ['questions']
 };
 
+function sanitizeMessage(text: string, secrets: string[]): string {
+  let cleaned = text;
+  for (const secret of secrets) {
+    if (secret && secret.length > 3) {
+      cleaned = cleaned.split(secret).join('[REDACTED]');
+    }
+  }
+  // Strip any authorization headers or api key query parameters
+  cleaned = cleaned.replace(/x-goog-api-key:[^\s,]+/gi, 'x-goog-api-key:[REDACTED]');
+  cleaned = cleaned.replace(/key=[a-zA-Z0-9_\-]+/gi, 'key=[REDACTED]');
+  cleaned = cleaned.replace(/Bearer\s+[a-zA-Z0-9_\-\.]+/gi, 'Bearer [REDACTED]');
+  return cleaned;
+}
+
 export class GeminiAIProvider implements AIProvider {
   public readonly name = 'gemini-ai-provider';
   private readonly apiKey?: string;
@@ -67,6 +81,34 @@ export class GeminiAIProvider implements AIProvider {
     this.apiKey = config.apiKey || (typeof process !== 'undefined' ? process.env?.GEMINI_API_KEY : undefined);
     this.model = config.model || (typeof process !== 'undefined' ? process.env?.GEMINI_MODEL : undefined) || 'gemini-2.5-flash';
     this.endpoint = config.endpoint || 'https://generativelanguage.googleapis.com/v1beta';
+  }
+
+  private extractSafeErrorMessage(rawText: string): string {
+    const secrets = this.apiKey ? [this.apiKey] : [];
+    if (!rawText.trim()) return '';
+
+    try {
+      const parsed = JSON.parse(rawText) as Record<string, unknown>;
+      if (parsed && typeof parsed === 'object') {
+        const errorObj = parsed.error as Record<string, unknown> | undefined;
+        if (errorObj && typeof errorObj === 'object') {
+          const msg = typeof errorObj.message === 'string' ? errorObj.message.trim() : '';
+          const status = typeof errorObj.status === 'string' ? errorObj.status.trim() : '';
+          const combined = [status, msg].filter(Boolean).join(': ');
+          if (combined) {
+            return sanitizeMessage(combined.slice(0, 200), secrets);
+          }
+        }
+      }
+    } catch {
+      // Not JSON, extract safe single line
+      const firstLine = rawText.split('\n')[0].trim();
+      if (firstLine) {
+        return sanitizeMessage(firstLine.slice(0, 200), secrets);
+      }
+    }
+
+    return '';
   }
 
   async generateRaw(request: GenerationRequest): Promise<unknown> {
@@ -112,10 +154,11 @@ export class GeminiAIProvider implements AIProvider {
       });
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => '');
-        // Sanitize errorText so credentials/headers cannot leak
-        const sanitizedSnippet = errorText ? errorText.slice(0, 500) : '';
-        throw new AIProviderError(`Gemini API error: HTTP ${response.status} ${response.statusText}${sanitizedSnippet ? ` - ${sanitizedSnippet}` : ''}`);
+        const rawBody = await response.text().catch(() => '');
+        const safeDetail = this.extractSafeErrorMessage(rawBody);
+        throw new AIProviderError(
+          `Gemini API error: HTTP ${response.status} ${response.statusText}${safeDetail ? ` - ${safeDetail}` : ''}`
+        );
       }
 
       const data = await response.json() as Record<string, unknown>;
@@ -131,8 +174,9 @@ export class GeminiAIProvider implements AIProvider {
       if (err instanceof AIProviderError) {
         throw err;
       }
-      const message = err instanceof Error ? err.message : String(err);
-      throw new AIProviderError(`Failed to call Gemini provider: ${message}`, err);
+      const rawMessage = err instanceof Error ? err.message : String(err);
+      const sanitized = sanitizeMessage(rawMessage, this.apiKey ? [this.apiKey] : []);
+      throw new AIProviderError(`Failed to call Gemini provider: ${sanitized}`, err);
     }
   }
 }

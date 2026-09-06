@@ -709,6 +709,81 @@ test('GeminiAIProvider Unit Tests (Deterministic / Mocked Fetch)', async (t) => 
     }
   });
 
+  await t.test('redacts fake api key if provider echoes key or header in error message', async () => {
+    const fakeKey = 'fake-api-key-xyz-987654321';
+    globalThis.fetch = async () => {
+      return {
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        text: async () => JSON.stringify({
+          error: {
+            code: 400,
+            message: `Invalid key provided: ${fakeKey} with header x-goog-api-key:${fakeKey}`,
+            status: 'INVALID_ARGUMENT'
+          }
+        })
+      } as unknown as Response;
+    };
+
+    try {
+      const provider = new GeminiAIProvider({ apiKey: fakeKey });
+
+      await assert.rejects(
+        () => provider.generateRaw({
+          organizationId: 'church-1',
+          topic: 'Prayer',
+          count: 1,
+          difficulty: QuestionDifficulty.EASY,
+          language: 'en'
+        }),
+        (err: unknown) => {
+          assert.ok(err instanceof AIProviderError);
+          assert.ok(!err.message.includes(fakeKey), 'Must redact fake API key from error');
+          assert.ok(err.message.includes('[REDACTED]'), 'Must replace sensitive token with [REDACTED]');
+          assert.match(err.message, /HTTP 400 Bad Request/);
+          return true;
+        }
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  await t.test('does not leak arbitrary raw provider body on non-JSON response', async () => {
+    const sensitiveInternalDump = 'SECRET_INTERNAL_STACK_TRACE_LINE_1\nLINE2\nLINE3\nSECRET_DATABASE_URL=postgres://root:pass@host/db';
+    globalThis.fetch = async () => {
+      return {
+        ok: false,
+        status: 502,
+        statusText: 'Bad Gateway',
+        text: async () => sensitiveInternalDump
+      } as unknown as Response;
+    };
+
+    try {
+      const provider = new GeminiAIProvider({ apiKey: 'some-key' });
+
+      await assert.rejects(
+        () => provider.generateRaw({
+          organizationId: 'church-1',
+          topic: 'Prayer',
+          count: 1,
+          difficulty: QuestionDifficulty.EASY,
+          language: 'en'
+        }),
+        (err: unknown) => {
+          assert.ok(err instanceof AIProviderError);
+          assert.ok(!err.message.includes('SECRET_DATABASE_URL'), 'Must not dump arbitrary multi-line raw bodies');
+          assert.match(err.message, /HTTP 502 Bad Gateway/);
+          return true;
+        }
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   await t.test('handles malformed JSON response safely', async () => {
     globalThis.fetch = async () => {
       return {
