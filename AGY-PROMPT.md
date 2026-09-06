@@ -1,106 +1,115 @@
-# AGY TASK — BAREA-002A Final TypeScript Review Corrections
+# AGY TASK — Merge Approved BAREA-002A and Clean Up
 
-This is the final corrective pass for BAREA-002A on `barea-ts-migration` / PR #3.
+## STATUS
 
-Do NOT start BAREA-003. Do NOT merge PR #3. Do NOT add UI, HTTP APIs, auth, WebSockets, realtime, quiz authoring, AI/LLM, ORM, database replacement, or unrelated refactors.
+BAREA-002A has completed independent review and is **APPROVED FOR MERGE**.
 
-## REQUIRED FIXES
+Repository: `jbr01061981-hue/barea`
+PR: `#3`
+Branch: `barea-ts-migration`
+Approved head: `327824f186f1b6ca80abebd2734f7cf7dd1225a9`
 
-### 1. Remove unnecessary `any`
+Do NOT start BAREA-003 during this task.
 
-Make the TypeScript migration genuinely type-safe.
+## 1. VERIFY BEFORE MERGE
 
-Remove unnecessary `any` from:
-- `src/domain/question.ts`
-- `src/persistence/sqlite-question-repository.ts`
-- the rest of `src/` where introduced by this migration
+1. Confirm PR #3 is OPEN and UNMERGED.
+2. Confirm the PR head contains the approved BAREA-002A TypeScript migration.
+3. Do not merge if the PR head has changed unexpectedly from the approved implementation. If it has changed, STOP and report the difference.
 
-In particular eliminate patterns such as `data: any`, `type: any`, `payload: any`, `updatesObj: any`, and `as any`.
+## 2. MERGE
 
-Use the existing domain types/interfaces plus `unknown` and explicit narrowing where required. Keep the solution simple; do not add elaborate generic abstractions.
+Merge PR #3 into `main` using the repository's normal GitHub merge workflow.
 
-Do not weaken validation or change BAREA-002 behavior.
+Do not add unrelated changes during the merge.
 
-### 2. Prove the CommonJS runtime contract
+## 3. SYNCHRONIZE LOCAL MAIN
 
-Preserve the existing CommonJS package contract:
-- `package.json` must not add `"type": "module"`;
-- runtime entry remains `dist/index.js`;
-- compiled output must be loadable with CommonJS `require()`.
+After the merge:
 
-Add an automated regression test that actually loads `dist/index.js` with CommonJS `require()` and verifies the expected public exports/runtime constructors are available.
+1. Switch to `main`.
+2. Fetch from `origin`.
+3. Pull the merged `origin/main`.
+4. Confirm local `main` is synchronized with `origin/main`.
 
-The check must run as part of the repository validation flow; do not merely report a manual check.
+## 4. CLEAN UP THE MIGRATION BRANCH
 
-Do not convert BAREA to ESM.
+After confirming the merge succeeded:
 
-### 3. Remove encoding artifacts
+1. Delete local branch `barea-ts-migration`.
+2. Delete remote branch `origin/barea-ts-migration`.
+3. Prune stale remote references.
 
-Remove unnecessary UTF-8 BOM characters from migrated/configuration/documentation files.
+Do not delete `main` or any other branch.
 
-Final files must be normal UTF-8 without BOM unless specifically required by the repository.
+## 5. POST-MERGE VALIDATION
 
-### 4. Preserve BAREA-002 invariants
+On the merged `main`, actually run:
 
-Do not change:
-- default DRAFT creation;
-- rejection of direct APPROVED creation;
-- DRAFT -> PENDING_REVIEW -> APPROVED;
-- invalid lifecycle transition rejection;
-- APPROVED content edits demoting to PENDING_REVIEW;
-- ARCHIVED soft-delete and ARCHIVED -> DRAFT restore;
-- approved-only retrieval;
-- search/filtering;
-- organization isolation;
-- MULTIPLE_CHOICE / TRUE_FALSE / MULTI_SELECT;
-- duplicate MULTI_SELECT correct-index rejection;
-- Easy / Medium / Hard difficulty;
-- file-backed SQLite durability across close/reopen;
-- parameterized SQL;
-- `node:sqlite` / `DatabaseSync`;
-- public exports.
+- `npm install`
+- `npm run typecheck`
+- `npm run build`
+- `npm test`
 
-Do not redesign domain or persistence architecture.
+Record the exact results.
 
-## VALIDATION
+Also verify:
 
-Actually run:
+- TypeScript is now the application language.
+- No migrated BAREA-002 `.js` source/test files have returned.
+- `dist/` remains ignored.
+- The approved BAREA-002 Question Bank behavior remains intact.
+- No BAREA-003+ functionality exists.
+- No AI/LLM, UI, HTTP API, authentication, WebSocket, realtime quiz, or quiz-authoring implementation was added.
 
-1. clean dependency installation using the repository package manager;
-2. `npm run typecheck`;
-3. `npm run build`;
-4. `npm test`;
-5. the CommonJS `require('./dist/index.js')` regression test;
-6. verify no migrated `.js` source/test files remain;
-7. verify `dist/` is generated and ignored;
-8. verify zero BOM artifacts in the repository files touched by this migration.
+## 6. ROADMAP
 
-Do not claim results that were not executed.
+Update `docs/ROADMAP.md` on `main` so the milestone status accurately reflects:
 
-## REPORT
+- `BAREA-001` = COMPLETED
+- `BAREA-002` = COMPLETED
+- `BAREA-002A` = COMPLETED
+- `BAREA-003` = NOT STARTED
 
-Update `AGY-REPORT.md` with:
-- baseline commit;
-- final commit SHA;
-- Node/npm/TypeScript versions;
-- exact files changed;
-- type-safety changes and confirmation of zero unnecessary `any` in `src/`;
-- CommonJS regression test and result;
-- encoding/BOM cleanup result;
-- typecheck result;
-- build result;
-- exact test result/count;
-- confirmation of preserved BAREA-002 invariants;
-- confirmation that no BAREA-003+ implementation was added;
-- final working-tree status.
+Do not mark BAREA-003 active or completed.
 
-Do not fabricate any SHA/result.
+## 7. AGY-REPORT.md
 
-## GIT / PR
+Update `AGY-REPORT.md` with the post-merge cleanup report, including:
 
-Stay on `barea-ts-migration`.
-Use a focused Conventional Commit.
-Push the corrective changes to PR #3.
-Leave PR #3 OPEN and UNMERGED.
+- PR #3 merge status;
+- merge commit SHA;
+- resulting `main` commit;
+- branch deletion results;
+- validation commands and exact results;
+- roadmap update;
+- final working-tree status;
+- confirmation that BAREA-003 remains NOT STARTED.
 
-STOP after completion. The next step is independent review of PR #3.
+Do not fabricate any SHA or result.
+
+## 8. STRICT SCOPE
+
+This task is ONLY:
+
+**Merge approved BAREA-002A → synchronize main → clean obsolete migration branch → validate → update roadmap/report → stop.**
+
+Do NOT:
+
+- start BAREA-003;
+- implement AI/LLM;
+- add UI/frontend;
+- add HTTP APIs;
+- add authentication;
+- add WebSockets/realtime transport;
+- add quiz authoring;
+- redesign architecture;
+- perform unrelated refactoring.
+
+## STOP CONDITION
+
+When PR #3 is merged, local `main` is synchronized with `origin/main`, the obsolete migration branch is removed, validation passes, `docs/ROADMAP.md` is updated, `AGY-REPORT.md` is updated, and the working tree is clean:
+
+**STOP.**
+
+Do not begin BAREA-003.
