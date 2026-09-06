@@ -1,91 +1,152 @@
-# AGY Report -- BAREA-002 Corrective Fix (Approval Gate)
+﻿# AGY Execution Report — BAREA-002A TypeScript Migration Gate
 
-## Summary
-Completed the BAREA-002 corrective task as requested in `AGY-PROMPT.md` on branch `barea-002-question-bank` for Pull Request #2.
+## 1. Executive Summary
+Completed the BAREA-002A TypeScript migration task as specified in `AGY-PROMPT.md` on branch `barea-ts-migration` for Pull Request #3.
 
-## Task Completed
-Enforced the human-review approval gate at creation time:
-- Prohibited creating questions directly with `status: APPROVED`.
-- Ensured normal question creation always starts as `DRAFT` by default, and any explicit creation payload specifying `status: APPROVED` is strictly rejected by domain validation with a descriptive `DomainValidationError`.
-- Ensured `APPROVED` status can only be achieved by progressing questions through the legitimate review lifecycle (`DRAFT -> PENDING_REVIEW -> APPROVED`).
-- Updated all existing test fixtures to create questions as `DRAFT` and transition them through the review lifecycle to reach `APPROVED`.
-- Added comprehensive regression tests.
+The entire BAREA application source and test suite have been migrated from JavaScript to TypeScript in a strict, behavior-preserving manner:
+- Zero loss of domain invariants, lifecycle rules, or SQLite persistence logic.
+- Node.js built-in `node:sqlite` (`DatabaseSync`) retained and fully typed via `@types/node`.
+- Full TypeScript strict mode enabled (`"strict": true`).
+- Source compiled from `src/` to `dist/`, with entry points correctly resolving to compiled artifacts.
+- Zero future-milestone scope creep: no BAREA-003+ code (no AI generation, UI, HTTP APIs, auth, or WebSockets).
+- Full automated test suite passes: 24/24 tests green.
+- PR #3 remains **OPEN** and unmerged for independent review.
 
-## Lifecycle / Approval Behavior Fixed
-1. **Creation Invariant**: In `src/domain/question.js` (`validateQuestionPayload`), when `isUpdate` is `false`, any payload containing `status: APPROVED` throws `DomainValidationError('Questions cannot be created directly with APPROVED status. They must follow the review lifecycle.')`.
-2. **Review Gate Guarantee**: Direct creation of approved content is impossible. No question can enter the Question Bank as `APPROVED` without undergoing the human teacher review transition sequence:
-   ```text
-   DRAFT -> PENDING_REVIEW -> APPROVED
-   ```
-3. **Preserved Invariants**:
-   - Content edits to `APPROVED` questions automatically demote to `PENDING_REVIEW` (`ADR-007`).
-   - Soft deletion via `archiveQuestion` / transition to `ARCHIVED`.
-   - Reject duplicate `correctOptionIndices` in `MULTI_SELECT`.
-   - Durable file persistence across SQLite repository close and reopen.
-   - Strict organization/tenant isolation across queries and mutations.
-   - Question-level difficulty (`Easy`, `Medium`, `Hard`) and types (`MULTIPLE_CHOICE`, `TRUE_FALSE`, `MULTI_SELECT`).
-   - Zero external npm runtime dependencies.
+---
 
-## Tests Added & Updated
-Updated `test/question-bank.test.js`:
-- Added test: `rejects question creation with explicit APPROVED status` under `Question Domain & Validation`.
-- Added test: `creates question defaulting to DRAFT and rejects explicit APPROVED create in repository/service` verifying:
-  - Default status is `DRAFT`.
-  - Explicit `status: DRAFT` succeeds.
-  - Direct create with `status: APPROVED` is rejected.
-  - Legitimate lifecycle transition (`DRAFT -> PENDING_REVIEW -> APPROVED`) succeeds.
-- Updated all test fixtures (`church-filter-test`, `church-A`, `church-B`, `church-review-safe`, `church-archive-test`, `church-durable-org`) to create questions as `DRAFT` and transition through `PENDING_REVIEW` to `APPROVED`.
+## 2. Environment & Baseline
+- **Repository**: `jbr01061981-hue/barea`
+- **Branch**: `barea-ts-migration`
+- **PR**: [#3](https://github.com/jbr01061981-hue/barea/pull/3) — `chore: establish BAREA TypeScript migration gate (BAREA-002A)`
+- **PR Status**: **OPEN** (unmerged)
+- **Baseline Commit Inspected**: `dc5d7a549db523555ae3b3c3c12140bbd876359f`
+- **Node.js Version**: `v24.18.0`
+- **npm Version**: `12.0.2`
+- **TypeScript Version**: `7.0.2` (installed as `devDependencies`)
+- **Node Type Definitions**: `@types/node` `^26.4.1` (installed as `devDependencies`)
 
-## Test Execution Result
-`npm test` (`node --test "test/**/*.test.js" "src/**/*.test.js"`) passed cleanly:
+---
+
+## 3. Tooling, Module & Build Configuration
+1. **TypeScript Tooling**:
+   - Added `typescript` (`^7.0.2`) and `@types/node` (`^26.4.1`) as `devDependencies` in `package.json`.
+   - Zero production dependencies added (`dependencies` remains empty).
+2. **`tsconfig.json`**:
+   - Root configuration with `target: "ES2022"`, `module: "Node16"`, `moduleResolution: "Node16"`.
+   - Enabled strict typing: `"strict": true`, `"declaration": true`, `"declarationMap": true`, `"sourceMap": true`.
+   - Maps source `src/` to compile output `dist/`.
+   - Included `"types": ["node"]` to cleanly resolve `node:sqlite` and Node built-ins.
+3. **`tsconfig.test.json`**:
+   - Extends `./tsconfig.json` for test compilation (`src/**/*` and `test/**/*` compiled to `dist/`).
+4. **`.gitignore`**:
+   - Added `dist/` build output to `.gitignore`.
+5. **`package.json` Scripts & Manifest**:
+   - `"main": "dist/index.js"`
+   - `"types": "dist/index.d.ts"`
+   - `"scripts"`:
+     - `"build": "tsc"`
+     - `"typecheck": "tsc --noEmit"`
+     - `"test": "tsc -p tsconfig.test.json && node --test \"dist/test/**/*.test.js\""`
+
+---
+
+## 4. Files Added, Migrated, and Removed
+### Added / Migrated
+- `tsconfig.json`: Root TypeScript configuration for library compilation.
+- `tsconfig.test.json`: TypeScript configuration for test suite compilation.
+- `src/domain/question.ts`: Migrated domain definitions, enums, types, interfaces (`Question`, `CreateQuestionPayload`, `UpdateQuestionPayload`, `QuestionFilter`), error classes, and payload/transition validators.
+- `src/persistence/sqlite-question-repository.ts`: Migrated SQLite repository implementing `QuestionRepository` interface, parameterized queries with `DatabaseSync`, typed row mapping, and domain-safe edit demotion.
+- `src/service/question-bank-service.ts`: Migrated Question Bank domain service wrapping repository operations, typed methods, and approval filtering.
+- `src/index.ts`: Migrated public entry point exporting domain symbols, types, `SqliteQuestionRepository`, and `QuestionBankService`.
+- `test/question-bank.test.ts`: Migrated complete test suite with 24 tests across domain validation, lifecycle state transitions, CRUD operations, persistence across file reopen, and organizational isolation.
+
+### Removed
+- `src/domain/question.js` (replaced by `.ts`)
+- `src/persistence/sqlite-question-repository.js` (replaced by `.ts`)
+- `src/service/question-bank-service.js` (replaced by `.ts`)
+- `src/index.js` (replaced by `.ts`)
+- `test/question-bank.test.js` (replaced by `.ts`)
+
+---
+
+## 5. Behavioral Invariant Verification
+All 11 mandatory BAREA-002 invariants were verified to remain strictly intact:
+1. **Creation Default**: New questions default to `DRAFT`.
+2. **Approval Gate on Create**: Explicit creation payloads with `status: APPROVED` are rejected with `DomainValidationError`.
+3. **Legitimate Lifecycle**: `APPROVED` can only be reached via `DRAFT -> PENDING_REVIEW -> APPROVED`.
+4. **Approved Edit Demotion**: Modifying content of an `APPROVED` question automatically demotes status to `PENDING_REVIEW`.
+5. **Archiving & Restore**: Soft deletion to `ARCHIVED`; unarchiving restores to `DRAFT` (never directly to `APPROVED`).
+6. **Organization Isolation**: Enforced across repository lookups, updates, transitions, and listing queries.
+7. **Approved-Only Listing**: `listApprovedQuestions` strictly retrieves only questions with `APPROVED` status.
+8. **Difficulty Levels**: Explicitly typed and validated as `'Easy' | 'Medium' | 'Hard'`.
+9. **Question Types**: Explicitly typed and validated as `'MULTIPLE_CHOICE' | 'TRUE_FALSE' | 'MULTI_SELECT'`.
+10. **Persistence Model**: Parameterized SQL queries using built-in `node:sqlite` (`DatabaseSync`), preserving schema, indexes, and file durability across reopen.
+11. **Human Review Mandate**: AI questions cannot enter the Question Bank or live quizzes without future teacher approval.
+
+---
+
+## 6. Validation Results
+
+### A. TypeScript Type Check (`npm run typecheck`)
+```text
+> barea@0.1.0 typecheck
+> tsc --noEmit
+```
+Completed with 0 errors.
+
+### B. TypeScript Compilation (`npm run build`)
+```text
+> barea@0.1.0 build
+> tsc
+```
+Completed with 0 errors, generating `dist/` with `.js`, `.d.ts`, and `.map` files.
+
+### C. Automated Test Suite (`npm test`)
 ```text
 > barea@0.1.0 test
-> node --test "test/**/*.test.js" "src/**/*.test.js"
+> tsc -p tsconfig.test.json && node --test "dist/test/**/*.test.js"
 
-PASS Question Domain & Validation
-  ✔ accepts valid MCQ question payload
-  ✔ accepts valid TRUE_FALSE question payload
-  ✔ accepts valid MULTI_SELECT question payload
-  ✔ rejects empty organizationId
-  ✔ rejects empty stem
-  ✔ rejects invalid difficulty
-  ✔ rejects invalid question type
-  ✔ rejects out of bounds correctOptionIndices
-  ✔ rejects duplicate correctOptionIndices in MULTI_SELECT
-  ✔ rejects question creation with explicit APPROVED status
-PASS Question Lifecycle State Transitions
-  ✔ valid transitions succeed
-  ✔ invalid transitions are rejected
-PASS Question Bank Persistence & Service CRUD Operations
-  ✔ creates question defaulting to DRAFT and rejects explicit APPROVED create in repository/service
-  ✔ creates and retrieves question with durable persistence
-  ✔ updates question content and preserves domain invariants
-  ✔ validates lifecycle transition in service
-  ✔ filters by topic, difficulty, type, language, status, and search
-  ✔ enforces strict organizational ownership isolation
-  ✔ modifying approved question content cannot leave it silently approved (demotes to PENDING_REVIEW)
-  ✔ archiveQuestion soft-deletes question to ARCHIVED status
-PASS Question Bank Durable Persistence Across File Reopen
-total tests: 24
-pass: 24
-fail: 0
+▶ Question Domain & Validation
+  ✔ accepts valid MCQ question payload (1.1063ms)
+  ✔ accepts valid TRUE_FALSE question payload (0.2168ms)
+  ✔ accepts valid MULTI_SELECT question payload (0.1682ms)
+  ✔ rejects empty organizationId (0.5231ms)
+  ✔ rejects empty stem (0.1997ms)
+  ✔ rejects invalid difficulty (1.0512ms)
+  ✔ rejects invalid question type (0.1838ms)
+  ✔ rejects out of bounds correctOptionIndices (0.1992ms)
+  ✔ rejects duplicate correctOptionIndices in MULTI_SELECT (0.2616ms)
+  ✔ rejects question creation with explicit APPROVED status (0.363ms)
+✔ Question Domain & Validation (6.2232ms)
+▶ Question Lifecycle State Transitions
+  ✔ valid transitions succeed (0.2141ms)
+  ✔ invalid transitions are rejected (0.2495ms)
+✔ Question Lifecycle State Transitions (0.6954ms)
+▶ Question Bank Persistence & Service CRUD Operations
+  ✔ creates question defaulting to DRAFT and rejects explicit APPROVED create in repository/service (2.4429ms)
+  ✔ creates and retrieves question with durable persistence (1.2758ms)
+  ✔ updates question content and preserves domain invariants (0.5561ms)
+  ✔ validates lifecycle transition in service (0.704ms)
+  ✔ filters by topic, difficulty, type, language, status, and search (1.3464ms)
+  ✔ enforces strict organizational ownership isolation (1.0176ms)
+  ✔ modifying approved question content cannot leave it silently approved (demotes to PENDING_REVIEW) (1.0079ms)
+  ✔ archiveQuestion soft-deletes question to ARCHIVED status (0.835ms)
+✔ Question Bank Persistence & Service CRUD Operations (10.9525ms)
+✔ Question Bank Durable Persistence Across File Reopen (26.6293ms)
+ℹ tests 24
+ℹ suites 0
+ℹ pass 24
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 157.0454
 ```
 
-## Files Changed
-- `src/domain/question.js`: Added validation rule rejecting direct creation with `APPROVED` status; removed unused `ApprovedQuestionModificationError`.
-- `src/persistence/sqlite-question-repository.js`: Removed unused import of `ApprovedQuestionModificationError`.
-- `src/index.js`: Removed unused export of `ApprovedQuestionModificationError`.
-- `test/question-bank.test.js`: Added regression tests for creation status invariants, updated all fixtures, and removed unused import.
-- `docs/DECISIONS.md`: Documented direct `APPROVED` creation prohibition in ADR-007.
-- `.gitignore`: Added `*.log` to prevent stray log files.
-- `AGY-REPORT.md`: Created detailed corrective task report.
+---
 
-## Git & Merge Status
-- **PR #2 State**: **MERGED**
-- **PR #2 URL**: https://github.com/jbr01061981-hue/barea/pull/2
-- **Merge Commit SHA on `main`**: `1d9f1f5f3f662bf9c34288c4e55d42e155eac406`
-- **Head Reviewed Commit**: `d7130348d8e07aba9a8778cefb8e9d197c6261c4`
-- **Local Branch State**: Switched to `main`, pulled latest merge commit, deleted local `barea-002-question-bank` branch.
-- **Remote Branch State**: Deleted remote `barea-002-question-bank` and pruned remote tracking branch references.
-- **Working Tree**: Clean (`git status` reports working tree clean).
-- **Scope Compliance**: Strictly no BAREA-003+ work was introduced (no AI generation, UI, live quiz engine, auth, or realtime transport). No TypeScript migration performed.
+## 7. Scope & Boundary Attestation
+- **No BAREA-003 Work**: No LLM prompt pipelines, AI generator classes, or generative schemas were introduced.
+- **No Future UI/API Work**: No web framework, Express/Fastify/Koa, React/Vue/Svelte, GraphQL, or WebSocket code was introduced.
+- **No ORM or DB Replacement**: SQLite via `node:sqlite` remains the persistence mechanism without Prisma, Drizzle, TypeORM, or other third-party DB layers.
+- **PR #3 Remains Open**: PR #3 is NOT merged and is left for independent review.

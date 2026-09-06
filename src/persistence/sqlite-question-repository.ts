@@ -1,21 +1,53 @@
-const { DatabaseSync } = require('node:sqlite');
-const crypto = require('crypto');
-const {
+﻿import { DatabaseSync } from 'node:sqlite';
+import * as crypto from 'crypto';
+import {
   validateQuestionPayload,
   assertValidStatusTransition,
   QuestionStatus,
   QuestionDifficulty,
   QuestionType,
-  DomainValidationError
-} = require('../domain/question');
+  DomainValidationError,
+  type Question,
+  type CreateQuestionPayload,
+  type UpdateQuestionPayload,
+  type QuestionFilter
+} from '../domain/question';
 
-class SqliteQuestionRepository {
-  constructor(dbPath = ':memory:') {
+export interface QuestionRepository {
+  create(data: CreateQuestionPayload): Question;
+  findById(organizationId: string, id: string): Question | null;
+  update(organizationId: string, id: string, updates: UpdateQuestionPayload): Question | null;
+  list(organizationId: string, filter?: QuestionFilter): Question[];
+  transitionStatus(organizationId: string, id: string, targetStatus: QuestionStatus): Question | null;
+  close(): void;
+}
+
+interface QuestionRow {
+  id: string;
+  organization_id: string;
+  stem: string;
+  type: string;
+  options_json: string;
+  correct_option_indices_json: string;
+  explanation: string | null;
+  scripture_reference: string;
+  topic: string;
+  difficulty: string;
+  language: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export class SqliteQuestionRepository implements QuestionRepository {
+  private db: DatabaseSync;
+
+  constructor(dbPath: string = ':memory:') {
     this.db = new DatabaseSync(dbPath);
     this.init();
   }
 
-  init() {
+  init(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS questions (
         id TEXT PRIMARY KEY,
@@ -40,28 +72,28 @@ class SqliteQuestionRepository {
     `);
   }
 
-  _rowToEntity(row) {
+  private _rowToEntity(row: QuestionRow | null | undefined): Question | null {
     if (!row) return null;
     return {
       id: row.id,
       organizationId: row.organization_id,
       stem: row.stem,
-      type: row.type,
+      type: row.type as any,
       options: JSON.parse(row.options_json),
       correctOptionIndices: JSON.parse(row.correct_option_indices_json),
       explanation: row.explanation || '',
       scriptureReference: row.scripture_reference,
       topic: row.topic,
-      difficulty: row.difficulty,
+      difficulty: row.difficulty as any,
       language: row.language,
-      status: row.status,
+      status: row.status as any,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
   }
 
-  create(data) {
-    const payload = Object.assign({}, data);
+  create(data: CreateQuestionPayload): Question {
+    const payload: any = Object.assign({}, data);
     if (!payload.status) {
       payload.status = QuestionStatus.DRAFT;
     }
@@ -97,38 +129,39 @@ class SqliteQuestionRepository {
       updatedAt
     );
 
-    return this.findById(payload.organizationId, id);
+    return this.findById(payload.organizationId, id)!;
   }
 
-  findById(organizationId, id) {
+  findById(organizationId: string, id: string): Question | null {
     const stmt = this.db.prepare('SELECT * FROM questions WHERE organization_id = ? AND id = ?');
-    const row = stmt.get(organizationId, id);
+    const row = stmt.get(organizationId, id) as unknown as QuestionRow | undefined;
     return this._rowToEntity(row);
   }
 
-  update(organizationId, id, updates) {
+  update(organizationId: string, id: string, updates: UpdateQuestionPayload): Question | null {
     const existing = this.findById(organizationId, id);
     if (!existing) {
       return null;
     }
 
-    const isStatusOnlyChange = Object.keys(updates).every((k) => k === 'status' || k === 'organizationId' || k === 'id');
+    const updatesObj: any = Object.assign({}, updates);
+    const isStatusOnlyChange = Object.keys(updatesObj).every((k) => k === 'status' || k === 'organizationId' || k === 'id');
 
     // Domain-safe rule for APPROVED question content modification:
     // Approved questions cannot silently have their content modified while retaining APPROVED status.
     // Any content change on an APPROVED question automatically resets status to PENDING_REVIEW
     // (unless an explicit valid status transition such as ARCHIVED was specified).
     if (existing.status === QuestionStatus.APPROVED && !isStatusOnlyChange) {
-      if (updates.status === undefined || updates.status === QuestionStatus.APPROVED) {
-        updates.status = QuestionStatus.PENDING_REVIEW;
+      if (updatesObj.status === undefined || updatesObj.status === QuestionStatus.APPROVED) {
+        updatesObj.status = QuestionStatus.PENDING_REVIEW;
       }
     }
 
-    if (updates.status !== undefined && updates.status !== existing.status) {
-      assertValidStatusTransition(existing.status, updates.status);
+    if (updatesObj.status !== undefined && updatesObj.status !== existing.status) {
+      assertValidStatusTransition(existing.status, updatesObj.status);
     }
 
-    const merged = Object.assign({}, existing, updates, { organizationId });
+    const merged = Object.assign({}, existing, updatesObj, { organizationId });
     validateQuestionPayload(merged, true);
 
     const now = new Date().toISOString();
@@ -167,9 +200,9 @@ class SqliteQuestionRepository {
     return this.findById(organizationId, id);
   }
 
-  list(organizationId, filter = {}) {
+  list(organizationId: string, filter: QuestionFilter = {}): Question[] {
     let sql = 'SELECT * FROM questions WHERE organization_id = ?';
-    const params = [organizationId];
+    const params: any[] = [organizationId];
 
     if (filter.status) {
       sql += ' AND status = ?';
@@ -199,19 +232,15 @@ class SqliteQuestionRepository {
 
     sql += ' ORDER BY created_at DESC';
     const stmt = this.db.prepare(sql);
-    const rows = stmt.all(...params);
-    return rows.map((r) => this._rowToEntity(r));
+    const rows = stmt.all(...params) as unknown as QuestionRow[];
+    return rows.map((r) => this._rowToEntity(r)!);
   }
 
-  transitionStatus(organizationId, id, targetStatus) {
+  transitionStatus(organizationId: string, id: string, targetStatus: QuestionStatus): Question | null {
     return this.update(organizationId, id, { status: targetStatus });
   }
 
-  close() {
+  close(): void {
     this.db.close();
   }
 }
-
-module.exports = {
-  SqliteQuestionRepository
-};

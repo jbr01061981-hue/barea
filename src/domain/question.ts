@@ -1,36 +1,97 @@
-const QuestionDifficulty = Object.freeze({
+export const QuestionDifficulty = Object.freeze({
   EASY: 'Easy',
   MEDIUM: 'Medium',
   HARD: 'Hard'
-});
-const QuestionType = Object.freeze({
+} as const);
+export type QuestionDifficulty = (typeof QuestionDifficulty)[keyof typeof QuestionDifficulty];
+export const QuestionType = Object.freeze({
   MULTIPLE_CHOICE: 'MULTIPLE_CHOICE',
   TRUE_FALSE: 'TRUE_FALSE',
   MULTI_SELECT: 'MULTI_SELECT'
-});
-const QuestionStatus = Object.freeze({
+} as const);
+export type QuestionType = (typeof QuestionType)[keyof typeof QuestionType];
+export const QuestionStatus = Object.freeze({
   DRAFT: 'DRAFT',
   PENDING_REVIEW: 'PENDING_REVIEW',
   APPROVED: 'APPROVED',
   ARCHIVED: 'ARCHIVED'
-});
-const VALID_STATUS_TRANSITIONS = Object.freeze({
-  [QuestionStatus.DRAFT]: new Set([QuestionStatus.PENDING_REVIEW, QuestionStatus.ARCHIVED]),
-  [QuestionStatus.PENDING_REVIEW]: new Set([QuestionStatus.APPROVED, QuestionStatus.DRAFT, QuestionStatus.ARCHIVED]),
-  [QuestionStatus.APPROVED]: new Set([QuestionStatus.PENDING_REVIEW, QuestionStatus.ARCHIVED]),
-  [QuestionStatus.ARCHIVED]: new Set([QuestionStatus.DRAFT])
-});
-class DomainValidationError extends Error {
-  constructor(msg) { super(msg); this.name = 'DomainValidationError'; }
+} as const);
+export type QuestionStatus = (typeof QuestionStatus)[keyof typeof QuestionStatus];
+
+export interface Question {
+  id: string;
+  organizationId: string;
+  stem: string;
+  type: QuestionType;
+  options: string[];
+  correctOptionIndices: number[];
+  explanation: string;
+  scriptureReference: string;
+  topic: string;
+  difficulty: QuestionDifficulty;
+  language: string;
+  status: QuestionStatus;
+  createdAt: string;
+  updatedAt: string;
 }
-class InvalidLifecycleTransitionError extends Error {
-  constructor(curr, next) {
+
+export interface CreateQuestionPayload {
+  id?: string;
+  organizationId: string;
+  stem: string;
+  type: QuestionType;
+  options: string[];
+  correctOptionIndices: number[];
+  explanation?: string;
+  scriptureReference: string;
+  topic: string;
+  difficulty: QuestionDifficulty;
+  language: string;
+  status?: QuestionStatus;
+  createdAt?: string;
+}
+
+export interface UpdateQuestionPayload {
+  organizationId?: string;
+  id?: string;
+  stem?: string;
+  type?: QuestionType;
+  options?: string[];
+  correctOptionIndices?: number[];
+  explanation?: string;
+  scriptureReference?: string;
+  topic?: string;
+  difficulty?: QuestionDifficulty;
+  language?: string;
+  status?: QuestionStatus;
+}
+
+export interface QuestionFilter {
+  status?: QuestionStatus;
+  difficulty?: QuestionDifficulty;
+  topic?: string;
+  type?: QuestionType;
+  language?: string;
+  search?: string;
+}
+
+export const VALID_STATUS_TRANSITIONS: Readonly<Record<QuestionStatus, ReadonlySet<QuestionStatus>>> = Object.freeze({
+  [QuestionStatus.DRAFT]: new Set<QuestionStatus>([QuestionStatus.PENDING_REVIEW, QuestionStatus.ARCHIVED]),
+  [QuestionStatus.PENDING_REVIEW]: new Set<QuestionStatus>([QuestionStatus.APPROVED, QuestionStatus.DRAFT, QuestionStatus.ARCHIVED]),
+  [QuestionStatus.APPROVED]: new Set<QuestionStatus>([QuestionStatus.PENDING_REVIEW, QuestionStatus.ARCHIVED]),
+  [QuestionStatus.ARCHIVED]: new Set<QuestionStatus>([QuestionStatus.DRAFT])
+});
+export class DomainValidationError extends Error {
+  constructor(msg: string) { super(msg); this.name = 'DomainValidationError'; }
+}
+export class InvalidLifecycleTransitionError extends Error {
+  constructor(curr: string, next: string) {
     super('Cannot transition question from status ' + curr + ' to ' + next + '.');
     this.name = 'InvalidLifecycleTransitionError';
   }
 }
-function normalizeString(v) { return typeof v === 'string' ? v.trim() : ''; }
-function validateQuestionPayload(data, isUpdate = false) {
+function normalizeString(v: unknown): string { return typeof v === 'string' ? v.trim() : ''; }
+export function validateQuestionPayload(data: any, isUpdate = false): void {
   if (!data || typeof data !== 'object') throw new DomainValidationError('Question data must be an object.');
   if (!isUpdate || data.organizationId !== undefined) {
     if (!normalizeString(data.organizationId)) throw new DomainValidationError('organizationId is required and must be non-empty.');
@@ -70,7 +131,7 @@ function validateQuestionPayload(data, isUpdate = false) {
     validateOptionsAndAnswers(data, effectiveType);
   }
 }
-function validateOptionsAndAnswers(data, type) {
+function validateOptionsAndAnswers(data: any, type: any): void {
   if (type === QuestionType.MULTIPLE_CHOICE) {
     if (!Array.isArray(data.options) || data.options.length < 2) {
       throw new DomainValidationError('MULTIPLE_CHOICE requires at least 2 options.');
@@ -103,7 +164,7 @@ function validateOptionsAndAnswers(data, type) {
     if (!Array.isArray(data.correctOptionIndices) || data.correctOptionIndices.length < 1) {
       throw new DomainValidationError('MULTI_SELECT requires at least 1 correct option index.');
     }
-    const seenIndices = new Set();
+    const seenIndices = new Set<number>();
     for (const idx of data.correctOptionIndices) {
       if (!Number.isInteger(idx) || idx < 0 || idx >= data.options.length) {
         throw new DomainValidationError('Correct option index ' + idx + ' is out of bounds.');
@@ -115,18 +176,9 @@ function validateOptionsAndAnswers(data, type) {
     }
   }
 }
-function assertValidStatusTransition(curr, next) {
+export function assertValidStatusTransition(curr: QuestionStatus, next: QuestionStatus): void {
   if (curr === next) return;
   const allowed = VALID_STATUS_TRANSITIONS[curr];
   if (!allowed || !allowed.has(next)) throw new InvalidLifecycleTransitionError(curr, next);
 }
-module.exports = {
-  QuestionDifficulty,
-  QuestionType,
-  QuestionStatus,
-  VALID_STATUS_TRANSITIONS,
-  DomainValidationError,
-  InvalidLifecycleTransitionError,
-  validateQuestionPayload,
-  assertValidStatusTransition
-};
+
