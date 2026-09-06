@@ -14,7 +14,7 @@ Milestones must be executed in order. No milestone may proceed into application 
 | **BAREA-002** | **Question Bank** | Domain models, storage, tagging, difficulty, search/filter | **COMPLETED** |
 | **BAREA-002A** | **TypeScript Migration Gate** | Migrate existing BAREA-002 implementation to TypeScript without changing behavior | **COMPLETED** |
 | **BAREA-003** | **AI Quiz Generation** | Structured LLM prompt pipeline, parameter inputs, structural validation | **COMPLETED** |
-| **BAREA-004** | **Teacher Review/Approval**| Staging UI, editing, scripture check, approval gate | NOT STARTED |
+| **BAREA-004** | **Teacher Review/Approval** | Production frontend foundation, staging UI, editing, Scripture review, approval gate | **IN PROGRESS — DESIGN APPROVED** |
 | **BAREA-005** | **Quiz Authoring** | Quiz playlist composition, timer & scoring configurations, publishing | NOT STARTED |
 | **BAREA-006** | **Share/Join** | QR generation, room access codes, URL routing, participant onboarding | NOT STARTED |
 | **BAREA-007** | **Live Quiz** | Authoritative state machine, timer sync, real-time transport | NOT STARTED |
@@ -83,13 +83,16 @@ AI Generation
 - **Deliverable**: Server-authoritative AI quiz generation pipeline with port/adapter architecture (`AIProvider`, `FakeAIProvider`, `GeminiAIProvider`), JSON Schema structural output validation, Question domain validation, PENDING_REVIEW Question Bank staging, and atomic SQLite transaction boundary.
 
 ### BAREA-004: Teacher Review/Approval
-- Review workbench for teachers to inspect AI-generated question drafts.
-- Theological and scriptural fidelity verification by the teacher.
-- Inline editing of question stem, answer choices, correct option, scripture reference, and explanation.
-- Question-level difficulty adjustments (Easy, Medium, Hard).
-- Explicit single-item and batch approval into the Question Bank (APPROVED).
-- Rejection or regeneration requests for unsatisfactory drafts.
-- **Status**: NOT STARTED.
+- Establish the production frontend foundation through the actual Teacher Review experience rather than a throwaway frontend scaffold.
+- Use Next.js 16, React 19, TypeScript, Tailwind CSS 4, Next.js App Router, React Aria Components, and BAREA-owned design tokens/visual language.
+- Provide an organization-scoped PENDING_REVIEW queue and focused review workspace.
+- Allow teachers to inspect Scripture/reference/explanation and edit question content, answers, correct answers, difficulty, and other required metadata.
+- Require explicit approval separate from save/edit operations.
+- Support individual approval and transactional batch approval.
+- Support discard/archive and regeneration without silently overwriting the original question.
+- Preserve the human theological/scriptural review gate; no automated theological certification is introduced.
+- **Status**: IN PROGRESS — DESIGN APPROVED.
+- **Deliverable**: Production-ready Teacher Review/Approval workbench and minimal reusable frontend foundation, verified through automated checks plus L2 browser/visual and L3 responsive/mobile/tablet testing.
 
 ### BAREA-005: Quiz Authoring
 - Compiling approved questions from the Question Bank into structured quizzes.
