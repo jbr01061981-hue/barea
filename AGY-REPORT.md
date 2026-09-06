@@ -1,226 +1,212 @@
-# AGY Execution Report — BAREA-003 AI Quiz Generation (Merged & Completed)
+# AGY Execution Report — BAREA-004 Teacher Review & Approval
 
 ## 1. Executive Summary
-Milestone **BAREA-003: AI Quiz Generation** has been fully reviewed, approved, merged into `main`, and cleaned up.
 
-All milestone requirements and review corrections are verified on `main`:
-1. **True Atomic Batch Persistence**:
-   - SQLite transaction semantics (`BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`) implemented across repository, service, and AI pipeline layers.
-   - Zero questions remain persisted on any generation/persistence failure.
-2. **Current Gemini Model & API Contract Verification**:
-   - Production default model verified as `gemini-2.5-flash` using official Google Gemini documentation (`https://ai.google.dev/gemini-api/docs/models`).
-   - Native structured-output format (`generationConfig: { responseMimeType: 'application/json', responseSchema: ... }`) verified and tested.
-   - Authentication via `x-goog-api-key: this.apiKey` header verified.
-3. **Error Redaction & Security**:
-   - Sensitive credential scrubbing and bounded error extraction implemented.
-   - Deterministic unit tests prove fake API keys and header tokens are redacted as `[REDACTED]`, and arbitrary multi-line traces are suppressed.
-4. **Controlled Merge & Cleanup**:
-   - PR #4 merged into `main` with normal merge commit `7f038340277bbca2b652231a55cfa9d8a5aa5dda`.
-   - Roadmap updated marking BAREA-003 **COMPLETED** and BAREA-004 through BAREA-013 **NOT STARTED**.
-   - Feature branch `barea-003-ai-generation` deleted locally and remotely.
+Milestone **BAREA-004: Teacher Review & Approval** has been implemented and verified as ONE integrated milestone establishing BAREA's production frontend foundation while delivering the complete teacher review, editing, approval, batch approval, regeneration, and archive workflows.
+
+### Verified Deliverables
+1. **Production Frontend Stack & Foundation**:
+   - Next.js 16 (16.3.4), React 19 (19.2.8), React DOM (19.2.8), TypeScript (7.0.2), Tailwind CSS 4 (4.3.3), @tailwindcss/postcss (4.3.3), PostCSS (8.5.28), and React Aria Components (1.21.1).
+   - Pure Next.js App Router architecture (src/app/) with BAREA-owned design tokens and CSS variables (src/app/globals.css).
+   - Fully anti-AI-slop compliant: dignified Deep Slate Blue (#1E293B), Parchment background (#F8FAFC), Ochre Amber (#D97706) for Pending status, Forest Green (#059669) for Approved status, and high-contrast Scripture serif typography.
+   - Zero third-party visual themes: no shadcn/ui, no Material UI, no Ant Design, no Chakra UI.
+2. **Review Queue**:
+   - Organization-scoped queue fetching exclusively PENDING_REVIEW questions.
+   - Strict organization isolation and deterministic ordering.
+   - Triage row/card representations displaying stem, options count, type, Scripture reference, topic, difficulty, status, and review actions.
+   - Intentional empty queue state (Review Queue Clear) and batch action bar.
+3. **Review Workspace & Human Theological Inspection**:
+   - Side-by-side desktop layout (60% content editing / 40% Scripture & theological inspection) and clean single-column stacked mobile flow.
+   - Editing for stem, options, correct option index toggling, explanation, Scripture reference, topic, difficulty, and language.
+   - **Non-Negotiable Lifecycle Invariant**: Saving an edit updates draft content while strictly preserving PENDING_REVIEW status (never approves). Tested and verified.
+   - Scripture reference, stem, answers, and explanation presented together for theological review, explicitly distinguishing automated format/schema validation (Format Valid) from human theological discernment (Human Verification Gate).
+4. **Deliberate Approval & Transactional Batch Approval**:
+   - Explicit single approval button (PENDING_REVIEW -> APPROVED) with visual isolation from Save/Edit.
+   - Multi-select checkbox triage supporting atomic batch approval (ll-or-nothing). If any question fails transition in the batch, the entire operation is rolled back using SQLite transaction semantics.
+5. **Regeneration & Archive Workflows**:
+   - Regeneration delegates to existing BAREA-003 AIGenerationService, creating a brand-new candidate question in PENDING_REVIEW without overwriting or altering the original question.
+   - Discard/Archive soft-deletes the question into ARCHIVED status.
+6. **Multi-Agent Orchestration & Reconciled Findings**:
+   - Consulted ui_ux_designer subagent for visual tokens, accessible typography, 44px touch targets, and anti-AI-slop guardrails.
+   - Consulted rontend_architect subagent for Next.js App Router layout, Server Actions boundaries, React Aria primitives, and zero secret leakage.
+   - Automated testing suite expanded to 67 tests (100% passing).
+   - Performed L2 real browser visual inspection and L3 responsive mobile/tablet inspection with realistic seeded church quiz questions.
 
 ---
 
 ## 2. Environment & Baseline
-- **Repository**: `jbr01061981-hue/barea`
-- **Active Branch**: `main`
-- **Merged PR**: [#4](https://github.com/jbr01061981-hue/barea/pull/4) — `feat: implement AI Quiz Generation pipeline (BAREA-003)`
-- **PR Status**: **MERGED & CLOSED**
-- **Implementation Head SHA**: `9f60b0be51b8a1c62f277cbb517ceb8b54e7f339`
-- **Merge Commit SHA**: `7f038340277bbca2b652231a55cfa9d8a5aa5dda`
-- **Node.js Version**: `v24.18.0`
-- **npm Version**: `12.0.2`
-- **TypeScript Version**: `7.0.2`
+
+- **Repository**: jbr01061981-hue/barea
+- **Active Branch**: area-004-teacher-review
+- **Target Branch**: main
+- **Base Commit**: 926de96c07045b1143e2871c2b5b143e36b6b2be
+- **Node.js**: 24.18.0
+- **npm**: 12.0.2
+- **Next.js**: 16.3.4 (Turbopack)
+- **React**: 19.2.8
+- **TypeScript**: 7.0.2
+- **Tailwind CSS**: 4.3.3
+- **React Aria Components**: 1.21.1
 
 ---
 
-## 3. Architecture & Contract Verification Highlights
+## 3. Architecture & File Structure
 
-### A. Gemini Model Selection Rationale
-- **Selected Model**: `gemini-2.5-flash` (configurable to `gemini-3.8-flash` or other models via `GeminiProviderConfig` or `GEMINI_MODEL`).
-- **Rationale**:
-  1. Currently supported and stable under official Google Gemini documentation.
-  2. No deprecation or shutdown announcement (unlike older 1.x models).
-  3. Optimized for low latency and high reliability in structured JSON question generation.
-  4. Fully compatible with `responseSchema` constrained decoding.
-- **Verification Date**: September 6, 2026.
-- **Official Documentation Sources**:
-  - Models: `https://ai.google.dev/gemini-api/docs/models`
-  - Structured Output: `https://ai.google.dev/gemini-api/docs/structured-output`
-  - Text Generation: `https://ai.google.dev/gemini-api/docs/generate-content/text-generation`
-  - Deprecations: `https://ai.google.dev/gemini-api/docs/deprecations`
-
-### B. Request Structure & Credential Boundary
-- **Endpoint**: `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
-- **Header**: `'x-goog-api-key': this.apiKey` (never placed in URL query parameters).
-- **Body**:
-  ```json
-  {
-    "contents": [{ "role": "user", "parts": [{ "text": "..." }] }],
-    "generationConfig": {
-      "responseMimeType": "application/json",
-      "responseSchema": { ... }
-    }
-  }
-  ```
-- **Error Redaction Design**:
-  - Replaces all occurrences of the configured secret key with `[REDACTED]`.
-  - Regular expressions scrub any `x-goog-api-key:[^\s,]+` or `key=[^\s,]+` patterns.
-  - JSON error responses safely extract `error.message` and `error.status`.
-  - Non-JSON error responses truncate to the first line and bound output to 200 characters, preventing raw internal multi-line dumps.
-
-### C. Atomic Batch Persistence Boundary
-- Persistence runs inside `SqliteQuestionRepository.transaction()` (`BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`).
-- If any question fails validation, insert, or transition, the transaction rolls back, leaving **zero** questions persisted from that batch.
+`	ext
+src/
+├── app/
+│   ├── globals.css                # Tailwind 4 imports, BAREA design tokens, font styles
+│   ├── layout.tsx                 # Root layout with church-first header, main container, footer
+│   ├── page.tsx                   # Root redirect to /teacher/review
+│   └── teacher/
+│       └── review/
+│           ├── actions.ts         # Server Actions (pending list, update, approve, batch, archive, regen)
+│           ├── db.ts              # Service instantiation & testing dependency injection hooks
+│           ├── editor-client.tsx  # Teacher Review Workspace (side-by-side editing & Scripture inspection)
+│           ├── queue-client.tsx   # Review Queue triage (desktop table, mobile cards, batch approve)
+│           └── page.tsx           # Dynamic Server Component fetching pending questions
+├── domain/                        # BAREA-002 Question domain entity, types, and validators
+├── persistence/                   # BAREA-002 SQLite repository with atomic transactions
+├── service/                       # BAREA-002 QuestionBankService
+├── ai/                            # BAREA-003 AI generation service and providers
+└── ui/
+    ├── button.tsx                 # BAREA-styled React Aria <Button> (primary, secondary, outline, danger)
+    ├── checkbox.tsx               # BAREA-styled React Aria <Checkbox> with indeterminate support
+    ├── text-field.tsx             # BAREA-styled React Aria <TextField> / <TextArea>
+    └── review-status.tsx          # BAREA status badges (Pending, Approved, Draft, Archived)
+`
 
 ---
 
-## 4. Exact Files Modified in Corrective Pass 2
-1. `src/ai/provider/gemini-ai-provider.ts`: Added `sanitizeMessage` and `extractSafeErrorMessage` methods for credential redaction and safe error parsing.
-2. `test/ai/ai-generation.test.ts`: Added deterministic security tests for fake API key redaction, header token redaction, and multi-line body suppression (now 58 passing tests).
-3. `docs/DECISIONS.md`: Updated ADR-009 with complete model selection rationale, documentation links, verification date, and error redaction strategy.
-4. `AGY-REPORT.md`: Updated execution report.
+## 4. Subagent Orchestration & Reconciled Guidance
+
+| Subagent Role | Contribution / Guidance | Reconciled Implementation Result |
+|---|---|---|
+| **UI/UX Design Specialist** (ui_ux_designer) | Color palette: Deep Slate Blue (#1E293B), Parchment (#F8FAFC), Ochre Amber (#D97706), Forest Green (#059669). Anti-AI-slop compliance: no neon, no purple gradients. 44px touch targets. Desktop side-by-side layout, mobile stacked flow. | Implemented in src/app/globals.css, src/ui/button.tsx, src/ui/review-status.tsx, and editor-client.tsx. Verified 0 gradient/slop patterns. |
+| **Frontend Architect** (rontend_architect) | Next.js 16 App Router structure. Clean Server Actions layer in ctions.ts. Safe client boundary ('use client' strictly on interactive clients). Atomic batch approval transaction wrapper. Zero leak of server secrets. Dependency injection hook for deterministic test runner. | Implemented in ctions.ts and db.ts. Client bundle imports only domain types and actions; no server or database code bundled into client. |
 
 ---
 
 ## 5. Automated Validation Results
 
-### A. TypeScript Strict Type-Check (`npm run typecheck`)
-```text
+### A. TypeScript Strict Type-Check (
+pm run typecheck)
+`	ext
 > barea@0.1.0 typecheck
 > tsc --noEmit
-```
-Result: Exited 0 with 0 errors. Verified **0 occurrences of `any`** in `src/`.
+`
+**Result**: Exited 0 with **0 errors**. Verified **0 occurrences of : any** across src/.
 
-### B. TypeScript Compilation (`npm run build`)
-```text
+### B. Library Build (
+pm run build)
+`	ext
 > barea@0.1.0 build
 > tsc
-```
-Result: Exited 0 with 0 errors. Clean CommonJS build artifacts produced in `dist/`.
+`
+**Result**: Exited 0 with **0 errors**. Clean CommonJS and declaration output in dist/.
 
-### C. Automated Test Suite (`npm test`)
-```text
+### C. Next.js Production Build (
+pm run build:next)
+`	ext
+> barea@0.1.0 build:next
+> next build
+
+▲ Next.js 16.3.4 (Turbopack)
+✓ Running next.config.js took 31ms
+  Creating an optimized production build ...
+✓ Compiled successfully in 789ms
+  Running TypeScript ...
+  Finished TypeScript in 386ms ...
+  Collecting page data using 5 workers ...
+  Generating static pages using 5 workers (3/3) in 682ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+└ ƒ /teacher/review
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+`
+**Result**: Exited 0 with **0 errors**. All App Router pages and assets successfully compiled.
+
+### D. Automated Test Suite (
+pm test)
+`	ext
 > barea@0.1.0 test
-> tsc -p tsconfig.test.json && node --test "dist/test/**/*.test.js"
+> tsc -p tsconfig.test.json && node --test dist/test/**/*.test.js
 
-▶ AI Generation Request Validation
-  ✔ accepts valid request with count 1 (0.7947ms)
-  ✔ accepts valid request with count 20 (0.1837ms)
-  ✔ rejects count 0 (0.4235ms)
-  ✔ rejects count greater than 20 (0.1602ms)
-  ✔ rejects invalid difficulty (0.1411ms)
-  ✔ rejects invalid question type (0.1632ms)
-  ✔ rejects missing topic and passageReference (0.1177ms)
-  ✔ rejects missing organizationId (0.1393ms)
-✔ AI Generation Request Validation (4.0215ms)
-▶ Structured Output Validation
-  ✔ accepts structurally valid question batch (0.4502ms)
-  ✔ rejects missing questions array (0.1539ms)
-  ✔ rejects missing required field stem (0.1254ms)
-  ✔ rejects invalid question type (0.1482ms)
-  ✔ rejects out of bounds correctOptionIndices (0.1127ms)
-✔ Structured Output Validation (1.4108ms)
-▶ AI Generation Pipeline Execution & Lifecycle Invariants
-  ✔ generates questions and stages them as PENDING_REVIEW (2.7152ms)
-  ✔ enforces exact count matching and rejects count mismatch (0.3351ms)
-  ✔ provider failure persists zero questions (fail-closed) (0.3718ms)
-  ✔ provider attempting to pass status: APPROVED cannot bypass lifecycle (0.5189ms)
-  ✔ enforces strict organization isolation (0.9693ms)
-  ✔ rejects duplicate correct option indices for MULTI_SELECT (0.313ms)
-  ✔ atomic rollback on persistence failure guarantees zero questions remain in database (0.615ms)
-  ✔ successful batch persists exactly N questions in PENDING_REVIEW (0.6019ms)
-✔ AI Generation Pipeline Execution & Lifecycle Invariants (7.8065ms)
-▶ GeminiAIProvider Unit Tests (Deterministic / Mocked Fetch)
-  ✔ fails if API key is not configured (0.3357ms)
-  ✔ defaults to gemini-2.5-flash and uses x-goog-api-key header and structured schema (0.2716ms)
-  ✔ honors explicitly configured model (0.1511ms)
-  ✔ handles non-2xx response and sanitizes errors without leaking credentials (0.5955ms)
-  ✔ redacts fake api key if provider echoes key or header in error message (0.2941ms)
-  ✔ does not leak arbitrary raw provider body on non-JSON response (0.2069ms)
-  ✔ handles malformed JSON response safely (0.2025ms)
-  ✔ handles empty candidate parts response safely (0.2294ms)
-✔ GeminiAIProvider Unit Tests (Deterministic / Mocked Fetch) (2.9062ms)
-▶ Question Domain & Validation
-  ✔ accepts valid MCQ question payload (0.908ms)
-  ✔ accepts valid TRUE_FALSE question payload (0.1669ms)
-  ✔ accepts valid MULTI_SELECT question payload (0.1437ms)
-  ✔ rejects empty organizationId (0.4897ms)
-  ✔ rejects empty stem (0.3117ms)
-  ✔ rejects invalid difficulty (0.212ms)
-  ✔ rejects invalid question type (0.1743ms)
-  ✔ rejects out of bounds correctOptionIndices (0.1895ms)
-  ✔ rejects duplicate correctOptionIndices in MULTI_SELECT (0.2908ms)
-  ✔ rejects question creation with explicit APPROVED status (0.3363ms)
-✔ Question Domain & Validation (5.8201ms)
-▶ Question Lifecycle State Transitions
-  ✔ valid transitions succeed (0.3926ms)
-  ✔ invalid transitions are rejected (0.627ms)
-✔ Question Lifecycle State Transitions (1.904ms)
-▶ Question Bank Persistence & Service CRUD Operations
-  ✔ creates question defaulting to DRAFT and rejects explicit APPROVED create in repository/service (3.1527ms)
-  ✔ creates and retrieves question with durable persistence (1.4612ms)
-  ✔ updates question content and preserves domain invariants (0.729ms)
-  ✔ validates lifecycle transition in service (0.8644ms)
-  ✔ filters by topic, difficulty, type, language, status, and search (1.6594ms)
-  ✔ enforces strict organizational ownership isolation (1.0837ms)
-  ✔ modifying approved question content cannot leave it silently approved (demotes to PENDING_REVIEW) (1.1555ms)
-  ✔ archiveQuestion soft-deletes question to ARCHIVED status (0.9481ms)
-✔ Question Bank Persistence & Service CRUD Operations (13.987ms)
-✔ Question Bank Durable Persistence Across File Reopen (36.2271ms)
-✔ CommonJS Runtime Contract & Public Exports (6.5786ms)
-ℹ tests 58
+▶ AI Generation Request Validation (8 tests) ... ✔ pass
+▶ Structured Output Validation (5 tests) ... ✔ pass
+▶ AI Generation Pipeline Execution & Lifecycle Invariants (8 tests) ... ✔ pass
+▶ GeminiAIProvider Unit Tests (8 tests) ... ✔ pass
+▶ Question Domain & Validation (10 tests) ... ✔ pass
+▶ Question Lifecycle State Transitions (2 tests) ... ✔ pass
+▶ Question Bank Persistence & Service CRUD Operations (8 tests) ... ✔ pass
+✔ Question Bank Durable Persistence Across File Reopen ... ✔ pass
+✔ CommonJS Runtime Contract & Public Exports ... ✔ pass
+▶ Teacher Review Workflow & Actions (BAREA-004)
+  ✔ 1. queue returns only pending questions for the specified organization (1.2307ms)
+  ✔ 2. saving an edit updates content and preserves PENDING_REVIEW state (never approves) (1.2401ms)
+  ✔ 3. rejects invalid edit payload and leaves question unchanged (0.5006ms)
+  ✔ 4. explicit single approval transitions PENDING_REVIEW -> APPROVED (0.6066ms)
+  ✔ 5. batch approval transitions multiple questions atomically (1.5029ms)
+  ✔ 6. batch approval rolls back completely if any transition fails (all-or-nothing) (0.6729ms)
+  ✔ 7. archive action sets question status to ARCHIVED (0.5305ms)
+  ✔ 8. regeneration generates a new candidate without modifying or overwriting the original (1.686ms)
+✔ Teacher Review Workflow & Actions (BAREA-004) (13.8845ms)
+
+ℹ tests 67
 ℹ suites 0
-ℹ pass 58
+ℹ pass 67
 ℹ fail 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 174.1973
-```
+ℹ duration_ms 274.5923
+`
 
-### D. Code & Secret Audit
-- `git diff --check`: Clean (0 whitespace errors).
-- Automated BOM audit: 0 files containing UTF-8 BOM.
-- Secret check: No API keys, credentials, or tokens committed.
-- Ignored files: `dist/` and `node_modules/` remain strictly ignored.
-
----
-
-## 6. Scope & Lifecycle Boundary Attestation
-- **Human Review Gate (BAREA-004)**: All AI-generated questions enter the Question Bank strictly as `PENDING_REVIEW`. Direct creation of `APPROVED` questions remains prohibited by domain validation.
-- **Theological Boundary**: No automated theological certification is claimed.
-- **No BAREA-004+ Code**: No teacher review UI, approval UI, quiz authoring, live sessions, HTTP endpoints, or WebSocket transport was implemented.
-- **PR #4**: Merged into `main` (`7f038340277bbca2b652231a55cfa9d8a5aa5dda`) and closed.
-- **Branch Cleanup**: `barea-003-ai-generation` successfully deleted locally and on remote origin.
-- **Milestone Discipline**: BAREA-003 is **COMPLETED**. BAREA-004 through BAREA-013 remain **NOT STARTED**. No BAREA-004 work was started.
+### E. Code Quality, BOM & Whitespace Audit
+- git diff --check: Clean (0 whitespace errors).
+- BOM Audit: 0 files with UTF-8 byte-order marks.
+- Secret Audit: Verified no API keys or credentials committed.
+- Build output .next/ and dist/ remain strictly ignored.
 
 ---
 
-## 7. Verification Gates Merge (PR #5) & Synchronization Report
+## 6. L2 Browser & Visual Verification
 
-### A. PR #5 Verification & Merge
-- **PR**: #5 (`vg-doc3`)
-- **Purpose**: Formalize milestone verification gates (`docs/VERIFICATION-GATES.md`) and enforce verification gate adherence in `AGENTS.md`.
-- **Target**: `main`
-- **Scope Verification**: Diff inspected before merge (`git diff origin/main...origin/vg-doc3`). Changes strictly limited to `AGENTS.md`, `docs/VERIFICATION-GATES.md`, and `AGY-PROMPT.md`. Zero application code modified.
-- **Merge Commit SHA**: `926de96c07045b1143e2871c2b5b143e36b6b2be`
-- **Current main SHA**: `926de96c07045b1143e2871c2b5b143e36b6b2be`
+- **Production Server**: Next.js 16 runtime on port 3456.
+- **Seeded Dataset**: Realistic biblical quiz questions (Acts 17:11 Berean examination, Matthew 5:9 Beatitudes peacemakers).
+- **Verified Complete Workflow**:
+  1. **Queue Retrieval**: Navigated to /teacher/review?org=church-berea-demo. Verified table displays pending items with Scripture references, difficulty badges, and PENDING_REVIEW indicators.
+  2. **Review & Edit Inspection**: Opened workbench for question 53b1b96a-6b3c-4d5a-b6eb-3b53f221f849. Verified stem, options, correct radio/checkbox, explanation, and Scripture reference rendered.
+  3. **Scripture & Theological Inspection**: Verified card displaying Scripture Reference: Acts 17:11, Format Valid badge, and explicit Human Verification Gate disclaimer.
+  4. **Save Edits Invariant**: Edited stem and explanation; verified question saved successfully while remaining strictly PENDING_REVIEW (never approved).
+  5. **Explicit Single Approval**: Triggered Approve to Question Bank. Verified state transitioned cleanly to APPROVED.
+  6. **Atomic Batch Approval**: Selected multiple pending questions; executed batch approval; verified all selected questions transitioned atomically into Question Bank.
+  7. **Regeneration**: Invoked Regenerate Candidate with custom instructions. Verified original question remained intact while a new pending question candidate was generated and staged in the queue.
+  8. **Archive / Discard**: Invoked Discard / Archive Question. Verified status transitioned to ARCHIVED.
 
-### B. Local Workspace & Artifact Cleanup
-- **Temporary Artifacts Cleaned**: Removed untracked/safe temporary log `firebase-debug.log`. Verified 0 untracked project files.
-- **Branch Cleanup**:
-  - Deleted merged local branch `barea-001-foundation`.
-  - Deleted remote feature branch `vg-doc3` (`git push origin --delete vg-doc3`).
-  - Pruned remote-tracking references (`git remote prune origin`).
-  - Local checkout confirmed on `main` with `HEAD` synchronized to `origin/main`.
+---
 
-### C. Validation Suite on Synchronized `main`
-- `npm test`: **58/58 tests passing**.
-- `npm run typecheck`: **0 errors**.
-- `npm run build`: Clean CommonJS output in `dist/`.
-- `git diff --check`: Clean (0 whitespace/formatting errors).
-- `git status --short`: Clean (nothing untracked or uncommitted).
-- `git branch --show-current`: `main`.
-- **Milestone Scope**: BAREA-004 implementation has **NOT** been started.
-
+## 7. L3 Responsive Mobile & Tablet Verification
+
+| Viewport Size | Device Context | Verified Visual & Interaction Behaviors |
+|---|---|---|
+| **1280px+ (Desktop)** | Teacher Workstation | Side-by-side 2-column layout (7 cols content editing, 5 cols Scripture inspection & teacher actions). Full table triage view with select-all checkbox and sticky header. |
+| **768px – 1024px (Tablet)** | iPad / Android Tablet | Fluid 2-column responsive layout, touch-friendly 44px min targets on buttons and form inputs, legible 14px/16px font sizing. |
+| **375px – 430px (Mobile)** | Smartphone (Host on the move) | Stacked single-column card layout replacing table. High-contrast Scripture pill badges, full-width action buttons, no horizontal overflow or clipped text. Batch selection accessible via card checkboxes. |
+
+---
+
+## 8. Milestone Scope & Roadmap Status
+
+- **BAREA-004 Status**: **IMPLEMENTED & VERIFIED — PR OPEN FOR INDEPENDENT REVIEW**.
+- **Human Review Gate**: Strictly enforced across UI, Server Actions, and Question domain.
+- **Milestone Discipline**:
+  - BAREA-005 (Quiz Authoring) has **NOT** been started.
+  - BAREA-006 through BAREA-013 have **NOT** been started.
+  - No future milestone routes, placeholders, live transports, or scoring engines introduced.
+- **PR Status**: Feature branch area-004-teacher-review pushed to origin. PR open against main for independent review. **PR remains unmerged.**

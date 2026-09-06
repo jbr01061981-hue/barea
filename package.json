@@ -7,6 +7,8 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
+    "build:next": "next build",
+    "dev": "next dev",
     "typecheck": "tsc --noEmit",
     "test": "tsc -p tsconfig.test.json && node --test \"dist/test/**/*.test.js\""
   },
@@ -19,6 +21,17 @@
   "license": "UNLICENSED",
   "devDependencies": {
     "@types/node": "^26.4.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "next": "^16.3.4",
+    "postcss": "^8.5.28",
+    "react": "^19.2.8",
+    "react-aria-components": "^1.21.1",
+    "react-dom": "^19.2.8",
+    "tailwindcss": "^4.3.3"
   }
 }
