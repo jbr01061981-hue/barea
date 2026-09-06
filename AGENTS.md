@@ -42,13 +42,14 @@ Every implementation decision must respect these foundational pillars:
 - Keep docs/DECISIONS.md updated with Architecture Decision Records (ADRs) whenever establishing architectural choices or recording open decisions.
 - Keep docs/ROADMAP.md synchronized with task statuses.
 
-### Conceptual Architecture & Technology Agnosticism in BAREA-001
-- Do not lock in specific application runtimes, databases, ORMs, or transport libraries prematurely during BAREA-001. Keep technical decisions open until their corresponding milestones.
-- Avoid introducing arbitrary performance metrics, bundle sizes, or latency SLAs that have not been established by validated product requirements.
+### TypeScript Standard
+- **BAREA application code is TypeScript-first.** New application code must use `.ts`/`.tsx` as appropriate.
+- BAREA-002A is the required migration gate before BAREA-003 begins.
+- Preserve behavior and public contracts during migration; do not use the migration as an excuse to introduce frameworks, APIs, live transport, or unrelated refactors.
 
 ### Git & Branch Workflow
-- Feature branches must follow the naming convention: barea-<milestone-number>-<short-description> (e.g., barea-001-foundation).
-- Commits must adhere to Conventional Commits (e.g., feat, fix, docs, chore, refactor).
+- Feature branches must follow the naming convention: `barea-<milestone-number>-<short-description>` (e.g., `barea-001-foundation`).
+- Commits must adhere to Conventional Commits (e.g., `feat`, `fix`, `docs`, `chore`, `refactor`).
 - Open Pull Requests against main for review. Do not self-merge unless explicitly instructed by the user.
 
 ---
@@ -56,5 +57,6 @@ Every implementation decision must respect these foundational pillars:
 ## 4. Current Milestone Scope
 
 Refer to [docs/ROADMAP.md](./docs/ROADMAP.md) for the active milestone:
-- **Active**: BAREA-001 Foundation (Documentation & Architecture Foundation only).
-- **Future**: BAREA-002 through BAREA-013 are currently **NOT STARTED**. Do not generate application code or scaffold mock backends during BAREA-001.
+- **Active**: BAREA-002A TypeScript Migration Gate.
+- **Purpose**: Convert the approved BAREA-002 implementation from JavaScript to TypeScript while preserving behavior and test coverage.
+- **Next**: BAREA-003 AI Quiz Generation remains **NOT STARTED** and must not be implemented during BAREA-002A.
