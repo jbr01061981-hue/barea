@@ -622,3 +622,42 @@ test('Question Bank Durable Persistence Across File Reopen', async (t) => {
     }
   }
 });
+
+test('CommonJS Runtime Contract & Public Exports', () => {
+  // Verifies that the compiled package can be loaded through CommonJS require()
+  // and exposes all expected public BAREA exports.
+  const path = require('path');
+  const fs = require('fs');
+  const distPath = path.resolve(__dirname, '../../dist/index.js');
+  const resolvedPath = fs.existsSync(distPath) ? distPath : path.resolve(process.cwd(), 'dist/index.js');
+
+  assert.ok(fs.existsSync(resolvedPath), 'dist/index.js must exist after build');
+
+  const barea = require(resolvedPath);
+
+  assert.ok(barea, 'BAREA root export must be truthy');
+  assert.equal(typeof barea.QuestionDifficulty, 'object');
+  assert.equal(barea.QuestionDifficulty.EASY, 'Easy');
+  assert.equal(barea.QuestionDifficulty.MEDIUM, 'Medium');
+  assert.equal(barea.QuestionDifficulty.HARD, 'Hard');
+
+  assert.equal(typeof barea.QuestionType, 'object');
+  assert.equal(barea.QuestionType.MULTIPLE_CHOICE, 'MULTIPLE_CHOICE');
+  assert.equal(barea.QuestionType.TRUE_FALSE, 'TRUE_FALSE');
+  assert.equal(barea.QuestionType.MULTI_SELECT, 'MULTI_SELECT');
+
+  assert.equal(typeof barea.QuestionStatus, 'object');
+  assert.equal(barea.QuestionStatus.DRAFT, 'DRAFT');
+  assert.equal(barea.QuestionStatus.PENDING_REVIEW, 'PENDING_REVIEW');
+  assert.equal(barea.QuestionStatus.APPROVED, 'APPROVED');
+  assert.equal(barea.QuestionStatus.ARCHIVED, 'ARCHIVED');
+
+  assert.equal(typeof barea.VALID_STATUS_TRANSITIONS, 'object');
+  assert.equal(typeof barea.DomainValidationError, 'function');
+  assert.equal(typeof barea.InvalidLifecycleTransitionError, 'function');
+  assert.equal(typeof barea.validateQuestionPayload, 'function');
+  assert.equal(typeof barea.assertValidStatusTransition, 'function');
+  assert.equal(typeof barea.SqliteQuestionRepository, 'function');
+  assert.equal(typeof barea.QuestionBankService, 'function');
+});
+

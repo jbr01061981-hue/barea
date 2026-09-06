@@ -1,4 +1,4 @@
-﻿import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
 import * as crypto from 'crypto';
 import {
   validateQuestionPayload,
@@ -78,25 +78,25 @@ export class SqliteQuestionRepository implements QuestionRepository {
       id: row.id,
       organizationId: row.organization_id,
       stem: row.stem,
-      type: row.type as any,
-      options: JSON.parse(row.options_json),
-      correctOptionIndices: JSON.parse(row.correct_option_indices_json),
+      type: row.type as QuestionType,
+      options: JSON.parse(row.options_json) as string[],
+      correctOptionIndices: JSON.parse(row.correct_option_indices_json) as number[],
       explanation: row.explanation || '',
       scriptureReference: row.scripture_reference,
       topic: row.topic,
-      difficulty: row.difficulty as any,
+      difficulty: row.difficulty as QuestionDifficulty,
       language: row.language,
-      status: row.status as any,
+      status: row.status as QuestionStatus,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
   }
 
   create(data: CreateQuestionPayload): Question {
-    const payload: any = Object.assign({}, data);
-    if (!payload.status) {
-      payload.status = QuestionStatus.DRAFT;
-    }
+    const payload: CreateQuestionPayload = {
+      ...data,
+      status: data.status || QuestionStatus.DRAFT
+    };
     validateQuestionPayload(payload, false);
 
     const id = payload.id || crypto.randomUUID();
@@ -124,7 +124,7 @@ export class SqliteQuestionRepository implements QuestionRepository {
       payload.topic,
       payload.difficulty,
       payload.language,
-      payload.status,
+      (payload.status || QuestionStatus.DRAFT),
       createdAt,
       updatedAt
     );
@@ -144,8 +144,9 @@ export class SqliteQuestionRepository implements QuestionRepository {
       return null;
     }
 
-    const updatesObj: any = Object.assign({}, updates);
-    const isStatusOnlyChange = Object.keys(updatesObj).every((k) => k === 'status' || k === 'organizationId' || k === 'id');
+    const updatesObj: UpdateQuestionPayload = { ...updates };
+    const updateKeys = Object.keys(updatesObj) as (keyof UpdateQuestionPayload)[];
+    const isStatusOnlyChange = updateKeys.every((k) => k === 'status' || k === 'organizationId' || k === 'id');
 
     // Domain-safe rule for APPROVED question content modification:
     // Approved questions cannot silently have their content modified while retaining APPROVED status.
@@ -161,7 +162,12 @@ export class SqliteQuestionRepository implements QuestionRepository {
       assertValidStatusTransition(existing.status, updatesObj.status);
     }
 
-    const merged = Object.assign({}, existing, updatesObj, { organizationId });
+    const merged: Question = {
+      ...existing,
+      ...updatesObj,
+      organizationId,
+      id
+    };
     validateQuestionPayload(merged, true);
 
     const now = new Date().toISOString();
@@ -202,7 +208,7 @@ export class SqliteQuestionRepository implements QuestionRepository {
 
   list(organizationId: string, filter: QuestionFilter = {}): Question[] {
     let sql = 'SELECT * FROM questions WHERE organization_id = ?';
-    const params: any[] = [organizationId];
+    const params: string[] = [organizationId];
 
     if (filter.status) {
       sql += ' AND status = ?';

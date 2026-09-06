@@ -1,4 +1,4 @@
-﻿import {
+import {
   QuestionStatus,
   type Question,
   type CreateQuestionPayload,
