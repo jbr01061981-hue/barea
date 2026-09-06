@@ -10,6 +10,53 @@ export interface GeminiProviderConfig {
   endpoint?: string;
 }
 
+export const GEMINI_QUESTIONS_RESPONSE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    questions: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          stem: { type: 'STRING' },
+          type: {
+            type: 'STRING',
+            enum: ['MULTIPLE_CHOICE', 'TRUE_FALSE', 'MULTI_SELECT']
+          },
+          options: {
+            type: 'ARRAY',
+            items: { type: 'STRING' }
+          },
+          correctOptionIndices: {
+            type: 'ARRAY',
+            items: { type: 'INTEGER' }
+          },
+          explanation: { type: 'STRING' },
+          scriptureReference: { type: 'STRING' },
+          topic: { type: 'STRING' },
+          difficulty: {
+            type: 'STRING',
+            enum: ['Easy', 'Medium', 'Hard']
+          },
+          language: { type: 'STRING' }
+        },
+        required: [
+          'stem',
+          'type',
+          'options',
+          'correctOptionIndices',
+          'explanation',
+          'scriptureReference',
+          'topic',
+          'difficulty',
+          'language'
+        ]
+      }
+    }
+  },
+  required: ['questions']
+};
+
 export class GeminiAIProvider implements AIProvider {
   public readonly name = 'gemini-ai-provider';
   private readonly apiKey?: string;
@@ -18,7 +65,7 @@ export class GeminiAIProvider implements AIProvider {
 
   constructor(config: GeminiProviderConfig = {}) {
     this.apiKey = config.apiKey || (typeof process !== 'undefined' ? process.env?.GEMINI_API_KEY : undefined);
-    this.model = config.model || (typeof process !== 'undefined' ? process.env?.GEMINI_MODEL : undefined) || 'gemini-1.5-flash';
+    this.model = config.model || (typeof process !== 'undefined' ? process.env?.GEMINI_MODEL : undefined) || 'gemini-2.5-flash';
     this.endpoint = config.endpoint || 'https://generativelanguage.googleapis.com/v1beta';
   }
 
@@ -29,7 +76,7 @@ export class GeminiAIProvider implements AIProvider {
       );
     }
 
-    const url = `${this.endpoint}/models/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
+    const url = `${this.endpoint}/models/${encodeURIComponent(this.model)}:generateContent`;
 
     const promptText = [
       `You are an assistant generating biblical quiz questions for church education.`,
@@ -47,7 +94,8 @@ export class GeminiAIProvider implements AIProvider {
       const response = await fetch(url, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'x-goog-api-key': this.apiKey
         },
         body: JSON.stringify({
           contents: [
@@ -57,14 +105,17 @@ export class GeminiAIProvider implements AIProvider {
             }
           ],
           generationConfig: {
-            responseMimeType: 'application/json'
+            responseMimeType: 'application/json',
+            responseSchema: GEMINI_QUESTIONS_RESPONSE_SCHEMA
           }
         })
       });
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => '');
-        throw new AIProviderError(`Gemini API error: HTTP ${response.status} ${response.statusText} - ${errorText}`);
+        // Sanitize errorText so credentials/headers cannot leak
+        const sanitizedSnippet = errorText ? errorText.slice(0, 500) : '';
+        throw new AIProviderError(`Gemini API error: HTTP ${response.status} ${response.statusText}${sanitizedSnippet ? ` - ${sanitizedSnippet}` : ''}`);
       }
 
       const data = await response.json() as Record<string, unknown>;

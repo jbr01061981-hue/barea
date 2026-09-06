@@ -41,4 +41,8 @@ export class QuestionBankService {
   archiveQuestion(organizationId: string, id: string): Question | null {
     return this.repo.transitionStatus(organizationId, id, QuestionStatus.ARCHIVED);
   }
+
+  transaction<T>(action: () => T): T {
+    return this.repo.transaction(action);
+  }
 }

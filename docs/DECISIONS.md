@@ -181,20 +181,22 @@ BAREA-003 introduces the server-side AI quiz generation pipeline. The project re
 1. **Port/Adapter Architecture**: The AI generation pipeline connects to LLMs through a strongly-typed port interface (`AIProvider`), which defines `generateRaw(request: GenerationRequest): Promise<unknown>`.
 2. **Provider Implementations**:
    - `FakeAIProvider`: In-memory deterministic mock provider for automated unit, validation, and failure-mode testing without network or credentials.
-   - `GeminiAIProvider`: Production adapter for Google Gemini API (`gemini-1.5-flash` by default) using native fetch and standard HTTP endpoints without heavy third-party SDK dependencies.
+   - `GeminiAIProvider`: Production adapter for Google Gemini API (`gemini-2.5-flash` by default, configurable to `gemini-3.8-flash` or other supported models) using native fetch and standard HTTP endpoints without heavy third-party SDK dependencies. Requests structured JSON via Gemini's native `responseSchema` and `responseMimeType: 'application/json'`.
 3. **Configuration & Credentials**:
-   - Provider credentials and models are purely configuration-driven via `GeminiProviderConfig` or environment variables (`GEMINI_API_KEY`, `GEMINI_MODEL`).
-   - Secrets are never hard-coded or logged.
+   - Provider credentials and models are configuration-driven via `GeminiProviderConfig` or environment variables (`GEMINI_API_KEY`, `GEMINI_MODEL`).
+   - Credentials are transmitted via the official `x-goog-api-key` HTTP header rather than in URL query parameters.
+   - Secrets are never embedded in URL parameters or logged/leaked in error messages.
 4. **Structured Output & Two-Stage Validation**:
    - Provider outputs are strictly validated in two stages: first via JSON schema / structural validation (`validateStructuralOutput`), and second through Question domain validation (`validateQuestionPayload`).
    - Automated structural validation only certifies schema format; it does NOT certify biblical truth or theological accuracy.
-5. **Lifecycle Gate**:
+5. **Lifecycle Gate & Atomic Persistence**:
    - Generated questions are always persisted as `PENDING_REVIEW`, preserving the human teacher review and approval gate (BAREA-004). AI questions can never be created directly as `APPROVED`.
+   - Batch persistence is executed within a single SQLite transaction (`BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`). If any question insert or status transition fails, the transaction is rolled back, ensuring zero questions from that batch remain persisted.
 6. **Future Provider Substitution**:
    - Alternative providers (e.g. OpenAI, Anthropic, local open-weights models) can be added as `AIProvider` implementations without altering the Question Bank domain, service, or validation layers.
 
 ### Consequences
-- **Positive**: Complete provider decoupling, test suite speed and determinism with zero network dependencies, strict lifecycle safety, and clean credential isolation.
+- **Positive**: Complete provider decoupling, test suite speed and determinism with zero network dependencies, strict lifecycle safety, atomic persistence guarantees, and clean credential isolation.
 - **Negative**: Adds provider adapter interface maintenance and requires mapping model outputs to the common BAREA schema.
 
 ---

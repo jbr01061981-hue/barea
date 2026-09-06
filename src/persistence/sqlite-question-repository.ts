@@ -19,6 +19,7 @@ export interface QuestionRepository {
   update(organizationId: string, id: string, updates: UpdateQuestionPayload): Question | null;
   list(organizationId: string, filter?: QuestionFilter): Question[];
   transitionStatus(organizationId: string, id: string, targetStatus: QuestionStatus): Question | null;
+  transaction<T>(action: () => T): T;
   close(): void;
 }
 
@@ -70,6 +71,18 @@ export class SqliteQuestionRepository implements QuestionRepository {
       CREATE INDEX IF NOT EXISTS idx_questions_org_topic ON questions (organization_id, topic);
       CREATE INDEX IF NOT EXISTS idx_questions_org_diff ON questions (organization_id, difficulty);
     `);
+  }
+
+  transaction<T>(action: () => T): T {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = action();
+      this.db.exec('COMMIT');
+      return result;
+    } catch (err: unknown) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
   }
 
   private _rowToEntity(row: QuestionRow | null | undefined): Question | null {

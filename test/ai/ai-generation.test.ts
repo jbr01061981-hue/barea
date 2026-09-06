@@ -9,6 +9,7 @@ import {
   QuestionBankService,
   AIGenerationService,
   FakeAIProvider,
+  GeminiAIProvider,
   validateGenerationRequest,
   validateStructuralOutput,
   GenerationValidationError,
@@ -419,5 +420,366 @@ test('AI Generation Pipeline Execution & Lifecycle Invariants', async (t) => {
 
     const persisted = questionBankService.listQuestions('church-duplicate-test');
     assert.equal(persisted.length, 0);
+  });
+
+  await t.test('atomic rollback on persistence failure guarantees zero questions remain in database', async () => {
+    const orgId = 'church-atomic-rollback';
+
+    // Queue a valid 3-question batch from LLM
+    fakeProvider.queueResponse({
+      questions: [
+        {
+          stem: 'Atomic Q1',
+          type: 'MULTIPLE_CHOICE',
+          options: ['A1', 'B1'],
+          correctOptionIndices: [0],
+          explanation: 'Exp1',
+          scriptureReference: 'Gen 1:1',
+          topic: 'Creation',
+          difficulty: 'Easy',
+          language: 'en'
+        },
+        {
+          stem: 'Atomic Q2',
+          type: 'MULTIPLE_CHOICE',
+          options: ['A2', 'B2'],
+          correctOptionIndices: [0],
+          explanation: 'Exp2',
+          scriptureReference: 'Gen 1:2',
+          topic: 'Creation',
+          difficulty: 'Easy',
+          language: 'en'
+        },
+        {
+          stem: 'Atomic Q3',
+          type: 'MULTIPLE_CHOICE',
+          options: ['A3', 'B3'],
+          correctOptionIndices: [0],
+          explanation: 'Exp3',
+          scriptureReference: 'Gen 1:3',
+          topic: 'Creation',
+          difficulty: 'Easy',
+          language: 'en'
+        }
+      ]
+    });
+
+    // Mock transitionStatus to throw on the 2nd question after 1st question has been inserted into SQLite
+    const originalTransition = questionBankService.transitionStatus.bind(questionBankService);
+    let transitionCount = 0;
+    questionBankService.transitionStatus = (oId, qId, nextStatus) => {
+      transitionCount++;
+      if (transitionCount === 2) {
+        throw new Error('Simulated SQLite disk/lock failure during question #2 staging');
+      }
+      return originalTransition(oId, qId, nextStatus);
+    };
+
+    try {
+      await assert.rejects(
+        () => service.generateQuizQuestions({
+          organizationId: orgId,
+          topic: 'Creation',
+          count: 3,
+          difficulty: QuestionDifficulty.EASY,
+          language: 'en'
+        }),
+        /Simulated SQLite disk\/lock failure during question #2 staging/
+      );
+
+      // Verify strictly: 0 questions exist in database for this organization
+      const persisted = questionBankService.listQuestions(orgId);
+      assert.equal(persisted.length, 0, 'Zero questions must remain in database after transaction rollback');
+    } finally {
+      // Restore original method
+      questionBankService.transitionStatus = originalTransition;
+    }
+  });
+
+  await t.test('successful batch persists exactly N questions in PENDING_REVIEW', async () => {
+    const orgId = 'church-atomic-success';
+    fakeProvider.queueResponse({
+      questions: [
+        {
+          stem: 'Success Q1',
+          type: 'MULTIPLE_CHOICE',
+          options: ['A1', 'B1'],
+          correctOptionIndices: [0],
+          explanation: 'Exp1',
+          scriptureReference: 'Gen 1:1',
+          topic: 'Creation',
+          difficulty: 'Easy',
+          language: 'en'
+        },
+        {
+          stem: 'Success Q2',
+          type: 'TRUE_FALSE',
+          options: ['True', 'False'],
+          correctOptionIndices: [0],
+          explanation: 'Exp2',
+          scriptureReference: 'Gen 1:2',
+          topic: 'Creation',
+          difficulty: 'Easy',
+          language: 'en'
+        }
+      ]
+    });
+
+    const result = await service.generateQuizQuestions({
+      organizationId: orgId,
+      topic: 'Creation',
+      count: 2,
+      difficulty: QuestionDifficulty.EASY,
+      language: 'en'
+    });
+
+    assert.equal(result.questions.length, 2);
+    assert.equal(result.status, QuestionStatus.PENDING_REVIEW);
+
+    const persisted = questionBankService.listQuestions(orgId);
+    assert.equal(persisted.length, 2);
+    assert.ok(persisted.every((q) => q.status === QuestionStatus.PENDING_REVIEW));
+  });
+});
+
+test('GeminiAIProvider Unit Tests (Deterministic / Mocked Fetch)', async (t) => {
+  const originalFetch = globalThis.fetch;
+
+  await t.test('fails if API key is not configured', async () => {
+    const provider = new GeminiAIProvider({ apiKey: '' });
+    await assert.rejects(
+      () => provider.generateRaw({
+        organizationId: 'church-1',
+        topic: 'Grace',
+        count: 1,
+        difficulty: QuestionDifficulty.EASY,
+        language: 'en'
+      }),
+      /Gemini API key is not configured/
+    );
+  });
+
+  await t.test('defaults to gemini-2.5-flash and uses x-goog-api-key header and structured schema', async () => {
+    let capturedUrl = '';
+    let capturedHeaders: Record<string, string> = {};
+    let capturedBody: Record<string, unknown> = {};
+
+    globalThis.fetch = async (url: string | URL | Request, init?: RequestInit) => {
+      capturedUrl = String(url);
+      capturedHeaders = (init?.headers || {}) as Record<string, string>;
+      capturedBody = JSON.parse((init?.body as string) || '{}');
+
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify({
+                      questions: [
+                        {
+                          stem: 'What is grace?',
+                          type: 'MULTIPLE_CHOICE',
+                          options: ['Unmerited favor', 'Punishment'],
+                          correctOptionIndices: [0],
+                          explanation: 'Ephesians 2:8',
+                          scriptureReference: 'Ephesians 2:8',
+                          topic: 'Grace',
+                          difficulty: 'Easy',
+                          language: 'en'
+                        }
+                      ]
+                    })
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      } as unknown as Response;
+    };
+
+    try {
+      const provider = new GeminiAIProvider({ apiKey: 'test-secret-key-12345' });
+      const raw = await provider.generateRaw({
+        organizationId: 'church-1',
+        topic: 'Grace',
+        count: 1,
+        difficulty: QuestionDifficulty.EASY,
+        language: 'en'
+      });
+
+      // Verify URL does not contain ?key= or secret
+      assert.ok(!capturedUrl.includes('test-secret-key-12345'), 'URL must NOT contain the API key');
+      assert.ok(capturedUrl.includes('/models/gemini-2.5-flash:generateContent'), 'Default model must be gemini-2.5-flash');
+
+      // Verify header contains x-goog-api-key
+      assert.equal(capturedHeaders['x-goog-api-key'], 'test-secret-key-12345');
+      assert.equal(capturedHeaders['Content-Type'], 'application/json');
+
+      // Verify request body contains responseSchema and responseMimeType
+      const genConfig = capturedBody.generationConfig as Record<string, unknown>;
+      assert.equal(genConfig.responseMimeType, 'application/json');
+      assert.ok(genConfig.responseSchema, 'Must include structured output responseSchema');
+
+      // Verify parsed output returned
+      const resultObj = raw as { questions: unknown[] };
+      assert.equal(resultObj.questions.length, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  await t.test('honors explicitly configured model', async () => {
+    let capturedUrl = '';
+
+    globalThis.fetch = async (url: string | URL | Request) => {
+      capturedUrl = String(url);
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({
+          candidates: [
+            {
+              content: {
+                parts: [{ text: JSON.stringify({ questions: [] }) }]
+              }
+            }
+          ]
+        })
+      } as unknown as Response;
+    };
+
+    try {
+      const provider = new GeminiAIProvider({
+        apiKey: 'test-key',
+        model: 'gemini-3.8-flash'
+      });
+
+      await provider.generateRaw({
+        organizationId: 'church-1',
+        topic: 'Faith',
+        count: 1,
+        difficulty: QuestionDifficulty.EASY,
+        language: 'en'
+      });
+
+      assert.ok(capturedUrl.includes('/models/gemini-3.8-flash:generateContent'), 'Custom model must be reflected in URL');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  await t.test('handles non-2xx response and sanitizes errors without leaking credentials', async () => {
+    globalThis.fetch = async () => {
+      return {
+        ok: false,
+        status: 403,
+        statusText: 'Forbidden',
+        text: async () => 'API_KEY_INVALID: The key provided is not authorized.'
+      } as unknown as Response;
+    };
+
+    try {
+      const secretKey = 'ultra-secret-token-abcdef';
+      const provider = new GeminiAIProvider({ apiKey: secretKey });
+
+      await assert.rejects(
+        () => provider.generateRaw({
+          organizationId: 'church-1',
+          topic: 'Prayer',
+          count: 1,
+          difficulty: QuestionDifficulty.EASY,
+          language: 'en'
+        }),
+        (err: unknown) => {
+          assert.ok(err instanceof AIProviderError);
+          assert.match(err.message, /Gemini API error: HTTP 403 Forbidden/);
+          assert.ok(!err.message.includes(secretKey), 'Error message must not leak credentials');
+          return true;
+        }
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  await t.test('handles malformed JSON response safely', async () => {
+    globalThis.fetch = async () => {
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({
+          candidates: [
+            {
+              content: {
+                parts: [{ text: 'NOT VALID JSON <<<' }]
+              }
+            }
+          ]
+        })
+      } as unknown as Response;
+    };
+
+    try {
+      const provider = new GeminiAIProvider({ apiKey: 'test-key' });
+
+      await assert.rejects(
+        () => provider.generateRaw({
+          organizationId: 'church-1',
+          topic: 'Prayer',
+          count: 1,
+          difficulty: QuestionDifficulty.EASY,
+          language: 'en'
+        }),
+        (err: unknown) => {
+          assert.ok(err instanceof AIProviderError);
+          assert.match(err.message, /Failed to call Gemini provider/);
+          return true;
+        }
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  await t.test('handles empty candidate parts response safely', async () => {
+    globalThis.fetch = async () => {
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({
+          candidates: []
+        })
+      } as unknown as Response;
+    };
+
+    try {
+      const provider = new GeminiAIProvider({ apiKey: 'test-key' });
+
+      await assert.rejects(
+        () => provider.generateRaw({
+          organizationId: 'church-1',
+          topic: 'Prayer',
+          count: 1,
+          difficulty: QuestionDifficulty.EASY,
+          language: 'en'
+        }),
+        (err: unknown) => {
+          assert.ok(err instanceof AIProviderError);
+          assert.match(err.message, /Gemini API returned an empty or missing response content part/);
+          return true;
+        }
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
