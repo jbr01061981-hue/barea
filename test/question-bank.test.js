@@ -165,6 +165,25 @@ test('Question Domain & Validation', async (t) => {
     };
     assert.throws(() => validateQuestionPayload(payload2, false), /Duplicate correct option index/);
   });
+
+  await t.test('rejects question creation with explicit APPROVED status', () => {
+    const payload = {
+      organizationId: 'church-1',
+      stem: 'Directly approved question stem',
+      type: QuestionType.MULTIPLE_CHOICE,
+      options: ['A', 'B'],
+      correctOptionIndices: [0],
+      scriptureReference: 'Genesis 1:1',
+      topic: 'Creation',
+      difficulty: QuestionDifficulty.EASY,
+      language: 'en',
+      status: QuestionStatus.APPROVED
+    };
+    assert.throws(
+      () => validateQuestionPayload(payload, false),
+      /Questions cannot be created directly with APPROVED status/
+    );
+  });
 });
 
 test('Question Lifecycle State Transitions', async (t) => {
@@ -214,6 +233,62 @@ test('Question Lifecycle State Transitions', async (t) => {
 test('Question Bank Persistence & Service CRUD Operations', async (t) => {
   const repo = new SqliteQuestionRepository(':memory:');
   const service = new QuestionBankService(repo);
+
+  await t.test('creates question defaulting to DRAFT and rejects explicit APPROVED create in repository/service', () => {
+    // Default creation produces DRAFT
+    const defaultCreated = service.createQuestion({
+      organizationId: 'church-create-test',
+      stem: 'Question created with default status',
+      type: QuestionType.TRUE_FALSE,
+      options: ['True', 'False'],
+      correctOptionIndices: [0],
+      scriptureReference: 'Genesis 1:1',
+      topic: 'Creation',
+      difficulty: QuestionDifficulty.EASY,
+      language: 'en'
+    });
+    assert.equal(defaultCreated.status, QuestionStatus.DRAFT);
+
+    // Explicit DRAFT creation succeeds
+    const explicitDraft = service.createQuestion({
+      organizationId: 'church-create-test',
+      stem: 'Question created with explicit DRAFT status',
+      type: QuestionType.TRUE_FALSE,
+      options: ['True', 'False'],
+      correctOptionIndices: [0],
+      scriptureReference: 'Genesis 1:1',
+      topic: 'Creation',
+      difficulty: QuestionDifficulty.EASY,
+      language: 'en',
+      status: QuestionStatus.DRAFT
+    });
+    assert.equal(explicitDraft.status, QuestionStatus.DRAFT);
+
+    // Direct create with APPROVED status is rejected
+    assert.throws(
+      () => service.createQuestion({
+        organizationId: 'church-create-test',
+        stem: 'Question created with explicit APPROVED status',
+        type: QuestionType.TRUE_FALSE,
+        options: ['True', 'False'],
+        correctOptionIndices: [0],
+        scriptureReference: 'Genesis 1:1',
+        topic: 'Creation',
+        difficulty: QuestionDifficulty.EASY,
+        language: 'en',
+        status: QuestionStatus.APPROVED
+      }),
+      /Questions cannot be created directly with APPROVED status/
+    );
+
+    // APPROVED can only be reached through the legitimate review lifecycle:
+    // DRAFT -> PENDING_REVIEW -> APPROVED
+    const inReview = service.transitionStatus('church-create-test', defaultCreated.id, QuestionStatus.PENDING_REVIEW);
+    assert.equal(inReview.status, QuestionStatus.PENDING_REVIEW);
+
+    const approved = service.transitionStatus('church-create-test', defaultCreated.id, QuestionStatus.APPROVED);
+    assert.equal(approved.status, QuestionStatus.APPROVED);
+  });
 
   await t.test('creates and retrieves question with durable persistence', () => {
     const created = service.createQuestion({
@@ -292,7 +367,7 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
   });
 
   await t.test('filters by topic, difficulty, type, language, status, and search', () => {
-    service.createQuestion({
+    const q1 = service.createQuestion({
       organizationId: 'church-filter-test',
       stem: 'Creation light query',
       type: QuestionType.TRUE_FALSE,
@@ -301,9 +376,10 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
       scriptureReference: 'Genesis 1:3',
       topic: 'Creation',
       difficulty: QuestionDifficulty.EASY,
-      language: 'en',
-      status: QuestionStatus.APPROVED
+      language: 'en'
     });
+    service.transitionStatus('church-filter-test', q1.id, QuestionStatus.PENDING_REVIEW);
+    service.transitionStatus('church-filter-test', q1.id, QuestionStatus.APPROVED);
 
     service.createQuestion({
       organizationId: 'church-filter-test',
@@ -318,7 +394,7 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
       status: QuestionStatus.DRAFT
     });
 
-    service.createQuestion({
+    const q3 = service.createQuestion({
       organizationId: 'church-filter-test',
       stem: 'David and Goliath battle',
       type: QuestionType.MULTIPLE_CHOICE,
@@ -327,9 +403,10 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
       scriptureReference: '1 Samuel 17:40',
       topic: 'Kingdom',
       difficulty: QuestionDifficulty.MEDIUM,
-      language: 'en',
-      status: QuestionStatus.APPROVED
+      language: 'en'
     });
+    service.transitionStatus('church-filter-test', q3.id, QuestionStatus.PENDING_REVIEW);
+    service.transitionStatus('church-filter-test', q3.id, QuestionStatus.APPROVED);
 
     // Filter by topic
     const creationQuestions = service.listQuestions('church-filter-test', { topic: 'Creation' });
@@ -363,9 +440,10 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
       scriptureReference: 'Romans 1:1',
       topic: 'Doctrine',
       difficulty: QuestionDifficulty.EASY,
-      language: 'en',
-      status: QuestionStatus.APPROVED
+      language: 'en'
     });
+    service.transitionStatus('church-A', qA.id, QuestionStatus.PENDING_REVIEW);
+    service.transitionStatus('church-A', qA.id, QuestionStatus.APPROVED);
 
     const qB = service.createQuestion({
       organizationId: 'church-B',
@@ -376,9 +454,10 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
       scriptureReference: 'Romans 1:1',
       topic: 'Doctrine',
       difficulty: QuestionDifficulty.EASY,
-      language: 'en',
-      status: QuestionStatus.APPROVED
+      language: 'en'
     });
+    service.transitionStatus('church-B', qB.id, QuestionStatus.PENDING_REVIEW);
+    service.transitionStatus('church-B', qB.id, QuestionStatus.APPROVED);
 
     // Church B cannot retrieve Church A question
     const crossRetrieve = service.getQuestion('church-B', qA.id);
@@ -395,7 +474,7 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
   });
 
   await t.test('modifying approved question content cannot leave it silently approved (demotes to PENDING_REVIEW)', () => {
-    const created = service.createQuestion({
+    const draft = service.createQuestion({
       organizationId: 'church-review-safe',
       stem: 'Original approved stem question',
       type: QuestionType.MULTIPLE_CHOICE,
@@ -404,9 +483,10 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
       scriptureReference: 'Acts 1:1',
       topic: 'Acts',
       difficulty: QuestionDifficulty.EASY,
-      language: 'en',
-      status: QuestionStatus.APPROVED
+      language: 'en'
     });
+    service.transitionStatus('church-review-safe', draft.id, QuestionStatus.PENDING_REVIEW);
+    const created = service.transitionStatus('church-review-safe', draft.id, QuestionStatus.APPROVED);
 
     assert.equal(created.status, QuestionStatus.APPROVED);
 
@@ -443,7 +523,7 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
   });
 
   await t.test('archiveQuestion soft-deletes question to ARCHIVED status', () => {
-    const created = service.createQuestion({
+    const draft = service.createQuestion({
       organizationId: 'church-archive-test',
       stem: 'Question to be archived',
       type: QuestionType.TRUE_FALSE,
@@ -452,9 +532,10 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
       scriptureReference: 'Genesis 1:1',
       topic: 'Creation',
       difficulty: QuestionDifficulty.EASY,
-      language: 'en',
-      status: QuestionStatus.APPROVED
+      language: 'en'
     });
+    service.transitionStatus('church-archive-test', draft.id, QuestionStatus.PENDING_REVIEW);
+    const created = service.transitionStatus('church-archive-test', draft.id, QuestionStatus.APPROVED);
 
     assert.equal(created.status, QuestionStatus.APPROVED);
 
@@ -486,8 +567,8 @@ test('Question Bank Durable Persistence Across File Reopen', async (t) => {
     const repo1 = new SqliteQuestionRepository(tmpDbPath);
     const service1 = new QuestionBankService(repo1);
 
-    // 2. Create question
-    const created = service1.createQuestion({
+    // 2. Create question through legitimate review lifecycle
+    const draft = service1.createQuestion({
       organizationId: 'church-durable-org',
       stem: 'Is God eternal?',
       type: QuestionType.TRUE_FALSE,
@@ -497,11 +578,13 @@ test('Question Bank Durable Persistence Across File Reopen', async (t) => {
       scriptureReference: 'Psalm 90:2',
       topic: 'Theology',
       difficulty: QuestionDifficulty.EASY,
-      language: 'en',
-      status: QuestionStatus.APPROVED
+      language: 'en'
     });
+    service1.transitionStatus('church-durable-org', draft.id, QuestionStatus.PENDING_REVIEW);
+    const created = service1.transitionStatus('church-durable-org', draft.id, QuestionStatus.APPROVED);
     assert.ok(created.id);
     assert.equal(created.stem, 'Is God eternal?');
+    assert.equal(created.status, QuestionStatus.APPROVED);
 
     // 3. Close repository
     repo1.close();

@@ -61,6 +61,9 @@ function validateQuestionPayload(data, isUpdate = false) {
     if (!Object.values(QuestionStatus).includes(data.status)) {
       throw new DomainValidationError('Invalid question status: ' + data.status);
     }
+    if (!isUpdate && data.status === QuestionStatus.APPROVED) {
+      throw new DomainValidationError('Questions cannot be created directly with APPROVED status. They must follow the review lifecycle.');
+    }
   }
   if (!isUpdate || data.topic !== undefined) {
     if (!normalizeString(data.topic)) throw new DomainValidationError('Question topic/category is required.');

@@ -139,6 +139,7 @@ In BAREA, approved questions represent vetted, theologically accurate, and age-a
 1. **Content Modification Demotion**: Modifying any content attribute (stem, options, correct indices, scripture reference, explanation, topic, difficulty, type, language) on an `APPROVED` question automatically resets the question status to `PENDING_REVIEW` unless an explicit valid status transition (such as `ARCHIVED`) is specified.
 2. **Review Gate Preservation**: Content-modified questions cannot silently remain `APPROVED`. They re-enter the review queue and must be re-verified and re-approved by a human teacher before they can be retrieved as approved Question Bank content or added to active quizzes.
 3. **Soft Deletion**: Questions are soft-deleted by transitioning to `ARCHIVED`. Archived questions can be restored to `DRAFT` for re-editing, but cannot jump directly to `APPROVED`.
+4. **No Direct APPROVED Creation**: Questions can never be created directly with `APPROVED` status. All newly created questions default to `DRAFT` and any attempt to supply `status: APPROVED` during creation is rejected by domain validation. `APPROVED` status can only be achieved by progressing through the legitimate review lifecycle (`DRAFT -> PENDING_REVIEW -> APPROVED`).
 
 ### Consequences
 - **Positive**: Guarantees theological fidelity; prevents unreviewed edits from appearing in live quizzes; enforces consistent lifecycle state transitions.
