@@ -1,22 +1,21 @@
-# AGY TASK — BAREA-004 Teacher Review & Approval
+# AGY CORRECTIVE TASK — BAREA-004 SECURITY AUTHORIZATION BOUNDARY
 
 ## STATUS
 
-**BAREA-004 Design Gate: APPROVED.**
+BAREA-004 PR #6 is OPEN and must remain OPEN.
 
-See `docs/BAREA-004-DESIGN-GATE.md`.
+**This is a corrective pass for a release-blocking security defect found during independent BAREA review.**
 
-Implement BAREA-004 as ONE integrated milestone: establish the real production frontend foundation while building, integrating, and testing the Teacher Review/Approval workflow.
-
-**Do NOT create a throwaway frontend-only milestone.**
-**Do NOT start BAREA-005 or later.**
-**Do NOT merge the PR.**
+Do NOT merge the PR.
+Do NOT close the PR.
+Do NOT start BAREA-005 or any later milestone.
+Do NOT broaden this into a production authentication project.
 
 ## SOURCE OF TRUTH — READ FIRST
 
 Repository: `jbr01061981-hue/barea`
 
-Read current `main` versions of:
+Read the current `main` versions of:
 
 - `AGENTS.md`
 - `docs/BAREA-004-DESIGN-GATE.md`
@@ -26,306 +25,227 @@ Read current `main` versions of:
 - `docs/DECISIONS.md`
 - `docs/FRONTEND-STANDARD.md`
 - `docs/VERIFICATION-GATES.md`
-- existing BAREA-002 Question Bank implementation
-- existing BAREA-003 AI generation implementation
 
-GitHub is authoritative. If repository state materially conflicts with the design gate, STOP and report it.
+Then inspect the current PR #6 implementation and existing BAREA-002 Question Bank and BAREA-003 generation boundaries.
 
-## MULTI-AGENT ORCHESTRATION — REQUIRED
+GitHub is authoritative. Preserve the approved BAREA-004 scope and architecture unless a concrete security defect requires a minimal change.
 
-Do NOT execute this milestone as a single-agent implementation if AGY's sub-agent capabilities are available.
+## BLOCKING DEFECT
 
-Before substantial coding, decompose the work and invoke the available specialized sub-agents that are appropriate to the task. At minimum, seek separate sub-agent input for these responsibilities where the platform supports them:
+The current Teacher Review implementation allows the browser to influence the organization context used by server actions.
 
-1. **UI/UX Design** — review the Teacher Review workflow, information hierarchy, responsive interaction model, accessibility, and BAREA anti-AI-slop visual rules before implementation.
-2. **Frontend Architecture** — review the Next.js/React/TypeScript/Tailwind/React Aria structure, component boundaries, state/data flow, and integration boundaries.
-3. **Implementation** — implement the frontend foundation and Teacher Review experience according to the approved design.
-4. **Testing** — design and execute behavioral/unit/integration coverage for lifecycle, organization isolation, editing, approval, batch transactions, archive, and regeneration.
-5. **Accessibility / Responsive QA** — specifically inspect keyboard/focus semantics, touch usability, mobile/tablet adaptation, and accessibility-critical interactions.
-6. **Browser / Visual QA** — run the actual application in a real browser using realistic local data and inspect the rendered experience at L2/L3, not merely source code or DOM existence.
-7. **Independent Code Review** — after implementation, actively attempt to find defects, security problems, lifecycle bypasses, architectural violations, visual/UX problems, and future-scope leakage.
+Specifically, the current review page accepts an `org` URL search parameter/default and the server actions accept `organizationId` from the caller. That means a caller can potentially select another organization's ID instead of having the server determine the authorized teacher's organization.
 
-### Orchestration rules
+This is a **server-side authorization boundary defect**. Question Bank organization isolation underneath is not sufficient if the Teacher Review server-action boundary trusts browser input.
 
-- The main AGY agent is the orchestrator and remains responsible for the final implementation and report.
-- Give each sub-agent a narrow, explicit responsibility and provide the approved BAREA-004 design/source-of-truth documents as context.
-- Do not ask every sub-agent to redo the entire milestone. Their jobs are complementary.
-- Capture meaningful findings from each sub-agent and reconcile them before declaring the PR ready for independent BAREA review.
-- A sub-agent's statement that something is correct is not proof. Where practical, require evidence such as test output, browser observations, file/line references, or concrete verification results.
-- If a sub-agent identifies a blocker, fix it and re-run the relevant verification rather than simply documenting the problem.
-- If a sub-agent proposes scope beyond BAREA-004, reject/defer it unless the approved design gate explicitly permits it.
-- The independent-review sub-agent must be encouraged to challenge the implementation rather than rubber-stamp the work.
-- Do not let sub-agents silently change approved architecture or milestone scope. Escalate genuine architectural conflicts to the main AGY agent and record any required ADR.
-- Do not claim a verification activity merely because a sub-agent was invoked. Record what was actually executed and the evidence produced.
+The browser must never be the authority for organization identity or authorization.
 
-### Recommended execution sequence
+## REQUIRED SECURITY FIX
 
-Use this sequence where supported by AGY's orchestration capabilities:
+Implement the **minimum server-side development teacher identity/context boundary required for BAREA-004**.
 
-`Design Review -> Frontend Architecture Review -> Implementation -> Automated Testing -> Accessibility/Responsive QA -> Browser/Visual QA -> Independent Code Review -> Fixes/Re-test -> Final AGY Report`
+### 1. Trusted server-side teacher context
 
-Design and architecture review may run before implementation. Testing/QA/review must run against the actual implementation. Independent review should occur after the implementation is substantially complete and again after any material corrective changes when needed.
-
-If AGY cannot invoke one or more requested sub-agent roles, do the work with the available capabilities and explicitly record which roles were unavailable and how the equivalent verification was performed. Do not fabricate sub-agent participation.
-
-## BRANCH / PR
-
-Start from current `main`.
-
-Create feature branch:
-
-`barea-004-teacher-review`
-
-Open one PR against `main` and leave it OPEN. Do not rewrite history, force-push, squash, or merge.
-
-## FRONTEND FOUNDATION
-
-BAREA-004 is the first production frontend milestone. Build the actual frontend foundation as part of Teacher Review.
-
-Required stack:
-
-- Next.js 16
-- React 19
-- TypeScript
-- Tailwind CSS 4
-- Next.js App Router
-- React Aria Components
-- BAREA-owned visual design system/design tokens
-
-Do NOT introduce shadcn/ui, Material UI, Ant Design, Chakra UI, another competing UI suite, or another CSS/styling system.
-
-Do not blindly copy a starter template. Do not build a generic SaaS/AI dashboard. The shell must be production-quality but limited to structure required by BAREA-004. Do not create placeholder routes for future milestones.
-
-## VISUAL / UX
-
-Follow `docs/FRONTEND-STANDARD.md` and the design gate.
-
-Make these visually primary and easy to understand:
-
-- question stem
-- answer options
-- correct answer
-- Scripture reference
-- explanation
-- topic
-- difficulty
-- language
-- review status
-- teacher actions
-
-Avoid gratuitous gradients, glassmorphism, AI/sparkle motifs, excessive cards/pills, ornamental animation, useless dashboard statistics, and dense visual chrome.
-
-Responsive behavior must adapt hierarchy and interaction patterns, not merely shrink desktop layouts.
-
-## REVIEW QUEUE
-
-Implement an organization-scoped queue containing only `PENDING_REVIEW` questions.
+Create a small, explicit server-only mechanism that represents the current development teacher identity and authorized organization for the local BAREA-004 workflow.
 
 Requirements:
 
-- strict organization isolation;
-- deterministic ordering;
-- useful metadata visible;
-- intentional loading, empty, error, and recovery states;
-- no cross-organization exposure.
+- organization context used for Teacher Review reads and mutations MUST be derived server-side;
+- do not accept `organizationId` from a browser action argument as an authority;
+- do not use a URL query parameter as the authorization source;
+- any URL `org` value may be retained only as a navigation/display aid if genuinely useful, but it MUST NOT determine authorization or data access;
+- keep the development identity/context isolated and clearly documented as development-only;
+- do not expose secrets or trusted authorization state to browser JavaScript;
+- do not implement a broad production authentication/authorization system in this corrective pass;
+- fail closed when trusted teacher context is unavailable or unauthorized.
 
-## REVIEW WORKSPACE
+Use the simplest secure design compatible with the existing local Next.js architecture. Do not invent unnecessary infrastructure.
 
-Implement a focused review/edit experience.
+### 2. Server actions
 
-Teacher can inspect and edit:
+Audit every Teacher Review server action in the current implementation.
 
-- stem
-- options
-- correct answer/correct answers
-- explanation
-- Scripture reference
-- topic
-- difficulty
-- language where appropriate
+For every read or mutation involving questions, the organization must come from the trusted server-side teacher context.
 
-Use existing Question domain validation and lifecycle rules.
+This includes, as applicable:
 
-**Saving an edit MUST NOT approve the question.** Verify it remains `PENDING_REVIEW` after saving. Invalid data must not persist.
+- review queue reads;
+- question retrieval;
+- question edits/saves;
+- single approval;
+- batch approval;
+- archive/discard;
+- regeneration.
 
-## HUMAN SCRIPTURE / THEOLOGICAL REVIEW
+A direct invocation of an action MUST NOT be able to select another organization merely by supplying a forged `organizationId`.
 
-Present Scripture reference, stem, answers, and explanation together for human inspection.
+Prefer removing organization identity from public action inputs entirely. If an input must remain for compatibility, it must be treated as untrusted and must never override the trusted server context.
 
-Clearly distinguish automated structural validation from human theological/scriptural review.
+Do not rely on hidden form fields, disabled controls, query parameters, client state, or TypeScript types as authorization mechanisms.
 
-Do not implement an automated theological fact-checking or Scripture truth-certification engine. The teacher remains the approval authority.
+### 3. Review page / client
 
-## SINGLE APPROVAL
+Remove the current pattern in which the page uses `?org=...` as the authoritative organization selector.
 
-Implement a deliberate approval action:
+The rendered review experience should obtain its data from the server-side authorized context.
 
-`PENDING_REVIEW -> APPROVED`
+Client components may display organization-related information returned by the server, but must not choose the organization on which mutations operate.
 
-Approval must be visibly separate from Save/Edit.
+### 4. Preserve existing isolation
 
-Never approve on save, opening, structural validation success, or AI generation.
+Do NOT weaken or bypass the existing BAREA-002 Question Bank organization isolation.
 
-Provide clear success/failure feedback.
+The intended boundary is:
 
-## BATCH APPROVAL
+`trusted server teacher context -> authorized organization -> Question Bank service/repository organization isolation`
 
-Implement selection of multiple pending questions and explicit batch approval.
+not:
 
-Batch approval MUST be transactional/all-or-nothing. If one selected approval fails, the operation must not leave a partially approved batch.
+`browser organizationId -> server action -> database`
 
-Add automated rollback coverage. Do not weaken the existing Question Bank transaction boundary merely to simplify UI integration.
+Keep the existing domain/lifecycle protections intact.
 
-## DISCARD / ARCHIVE
+## REQUIRED REGRESSION TESTS
 
-Use existing `ARCHIVED` for deliberate discard/archive.
+Add automated tests that actively attempt to break the new boundary.
 
-Do not introduce `REJECTED` unless a concrete defect proves `ARCHIVED` insufficient. If that happens, STOP and request a design decision.
+At minimum prove:
 
-Keep destructive/archive actions visually separate from approval.
+1. authorized development teacher can read questions for their own organization;
+2. authorized development teacher can edit/save their own organization's pending question;
+3. authorized development teacher can approve their own organization's question;
+4. authorized development teacher can archive/regenerate within their organization where supported;
+5. a forged organization ID cannot read another organization's review queue;
+6. a forged organization ID cannot retrieve another organization's question;
+7. a forged organization ID cannot edit another organization's question;
+8. a forged organization ID cannot approve another organization's question;
+9. a forged organization ID cannot archive another organization's question;
+10. a forged organization ID cannot regenerate another organization's question;
+11. forged organization input cannot affect batch approval authorization;
+12. missing/invalid trusted teacher context fails closed;
+13. the existing BAREA-002 organization-isolation tests remain green;
+14. the existing BAREA-003 tests remain green.
 
-## REGENERATION
+Tests must exercise the actual server-side action/context boundary, not merely assert that a UI control is hidden.
 
-Use the existing BAREA-003 generation pipeline.
+## SECURITY AUDIT
 
-Regeneration must:
+Actively inspect the implementation for equivalent authorization bypasses, including:
 
-- preserve the original;
-- never silently overwrite it;
-- create a new candidate;
-- leave the new candidate `PENDING_REVIEW`;
-- preserve organization isolation;
-- preserve the human approval gate.
+- query parameters;
+- form fields;
+- client component props;
+- server action arguments;
+- cookies/headers if used;
+- direct imports of server-only context into client code;
+- accidental browser bundling of server credentials or trusted context;
+- error messages that leak another organization's data.
 
-Do not add a new AI provider or expose provider credentials to browser code.
+If a mechanism is used to represent development identity, ensure it cannot be changed by ordinary browser-controlled organization input.
 
-If current BAREA-003 interfaces cannot support safe regeneration without changing established semantics, STOP and report the boundary issue.
+Do not add credentials, API keys, or secrets to the repository.
 
-## ARCHITECTURE BOUNDARIES
+## MULTI-AGENT CORRECTIVE REVIEW — REQUIRED
 
-Use existing Question Bank and AI generation service/domain boundaries wherever possible. Add only minimum application integration required for the real local browser workflow.
+Use available specialized sub-agents rather than treating this as a single-agent fix.
 
-Do not implicitly decide future architecture for production auth, HTTP/API style beyond minimum local integration, WebSockets/SSE, distributed databases, ORM replacement, Cloudflare deployment, participant joining, live quiz, scoring, leaderboard, projector, or quiz authoring.
+At minimum, where capabilities exist, obtain focused input from:
 
-Do not replace SQLite. Do not rewrite BAREA-002/003 except for a concrete defect directly required by this milestone.
+1. **Security / Backend** — attack the server-side identity and organization authorization boundary.
+2. **Testing** — design and execute cross-organization and forged-input regression tests.
+3. **Frontend / Next.js** — verify that client routing/query state cannot influence authorization and that server/client boundaries remain correct.
+4. **Accessibility / Responsive QA** — confirm the security fix did not break the existing Teacher Review interaction at L2/L3.
+5. **Independent Code Review** — actively attempt to find another authorization or scope defect after the fix.
 
-## ACCESSIBILITY
+Record actual sub-agent participation and evidence in `AGY-REPORT.md`. Do not claim a role was performed merely because an agent was invoked.
 
-Accessibility is part of implementation.
+## REQUIRED VERIFICATION
 
-Use React Aria Components where appropriate. Verify semantic controls, keyboard navigation, visible focus, sensible focus movement, accessible labels, sufficient contrast, touch usability, readable text, reduced-motion behavior where motion is used, and screen-reader-friendly structure.
-
-Critical actions must not be mouse-only.
-
-## AUTOMATED TESTS
-
-Add behavioral tests covering at minimum:
-
-1. queue returns only pending questions;
-2. organization isolation;
-3. valid edits persist;
-4. invalid edits are rejected;
-5. pending edits remain pending;
-6. explicit single approval;
-7. save does not approve;
-8. successful batch approval;
-9. batch approval rollback on failure;
-10. archive/discard;
-11. regeneration creates a new pending candidate;
-12. regeneration does not silently replace the original;
-13. existing BAREA-002 suite remains green;
-14. existing BAREA-003 suite remains green;
-15. critical UI interactions have component/end-to-end coverage;
-16. accessibility-critical interactions are tested where practical.
-
-## L2 — ACTUAL LOCAL BROWSER / VISUAL VERIFICATION
-
-Automated tests alone are NOT sufficient.
-
-Start the real application locally and inspect the actual rendered UI in a real browser with realistic seeded/local question data.
-
-Exercise this complete flow:
-
-`PENDING_REVIEW queue -> open -> inspect -> edit -> save -> verify still pending -> approve -> verify approved -> select multiple -> batch approve -> archive -> regenerate -> verify new pending candidate`
-
-Also verify loading, empty, validation-error, failure, success feedback, keyboard navigation, focus behavior, visual hierarchy, readability, and absence of obvious overflow/layout defects.
-
-Do not merely check DOM existence with automation. Inspect the rendered experience.
-
-Record actual browser testing in `AGY-REPORT.md`.
-
-## L3 — RESPONSIVE / MOBILE / TABLET VERIFICATION
-
-Verify the actual rendered Teacher Review experience at desktop, tablet, and mobile viewport sizes.
-
-Verify layout adaptation, question editing, answer editing, approval controls, archive/regeneration actions, dialogs/drawers if used, touch targets, text readability, focus behavior, no unusable horizontal scrolling, and no overlapping/inaccessible controls.
-
-L3 verifies responsive Teacher Review. It does NOT authorize Participant UI implementation.
-
-Record actual viewport sizes and results in `AGY-REPORT.md`.
-
-## QUALITY / SECURITY
-
-Run and record actual results for:
+After implementing the fix, run the complete relevant verification suite, including:
 
 - `npm test`
 - `npm run typecheck`
 - `npm run build`
 - `git diff --check`
-- appropriate dependency/audit checks;
-- no critical `any` introduced;
+- appropriate dependency/security audit checks;
+- no new critical `any`;
 - no BOM artifacts;
 - no committed secrets;
-- no server-only AI credentials in browser bundle;
-- no legacy JavaScript application source;
-- build artifacts remain ignored.
+- no server-only credentials/trusted authorization state in browser bundles.
 
-Do not claim checks that were not actually run.
+Re-run the existing Teacher Review workflow in an actual local browser.
 
-## DOCUMENTATION
+### L2 browser verification
 
-Keep `docs/ROADMAP.md` accurate.
+Verify the real rendered Teacher Review flow still works for the authorized development teacher:
 
-If implementation creates a genuine architectural decision, record it in `docs/DECISIONS.md` as an ADR.
+`queue -> open -> edit -> save -> approve -> batch approval -> archive -> regenerate`
 
-Update `AGY-REPORT.md` with actual implementation details, tests, L2/L3 results, viewport sizes, limitations, and status.
+Also test an attempted cross-organization access path using a forged URL/query value or other browser-controlled input and verify that it cannot change the authorized organization.
 
-Do not mark BAREA-004 COMPLETED before all required gates pass.
+### L3 responsive verification
 
-## STRICT FUTURE SCOPE
+Re-check desktop, tablet, and mobile Teacher Review behavior after the security change. Use actual viewport sizes and record them.
 
-Do NOT implement or begin:
+Do not claim L2/L3 based only on automated DOM tests.
 
-- BAREA-005 Quiz Authoring
-- BAREA-006 Share/Join
-- BAREA-007 Live Quiz / realtime
-- BAREA-008 Participant UI / live host controls
-- BAREA-009 Scoring
-- BAREA-010 Results / Leaderboard
-- BAREA-011 Projector
-- BAREA-012 Church Validation
-- BAREA-013 Pilot
-- production deployment
-- broad authentication system
-- theological truth certification engine
-- new LLM providers
-- unrelated refactoring
+## REPORT
 
-Do not create placeholders for future milestones.
+Update `AGY-REPORT.md` with:
+
+- the original security defect;
+- the attack path that was possible;
+- the exact server-side authorization boundary implemented;
+- how browser-controlled organization input is prevented from overriding it;
+- cross-organization regression test evidence;
+- sub-agent roles actually performed and their findings;
+- `npm test` result;
+- typecheck/build results;
+- security/audit results;
+- L2 browser observations and viewport(s);
+- L3 responsive observations and viewport(s);
+- any limitations, especially the fact that the identity mechanism is development-only;
+- final corrective-pass status.
+
+Do not mark BAREA-004 COMPLETED unless all required gates pass.
+
+## STRICT SCOPE
+
+Allowed:
+
+- minimal server-side development teacher identity/context;
+- secure organization derivation;
+- server-action authorization changes;
+- removal/neutralization of browser-controlled organization authority;
+- focused regression/security tests;
+- required documentation/report updates;
+- fixes directly required to preserve BAREA-004 behavior after the security change.
+
+Not allowed:
+
+- full production authentication;
+- user accounts/roles beyond the minimum development teacher context;
+- participant authentication;
+- BAREA-005 Quiz Authoring;
+- BAREA-006 Share/Join;
+- BAREA-007 Live Quiz/realtime;
+- BAREA-008 Participant UI;
+- BAREA-009 Scoring;
+- BAREA-010 Results/Leaderboard;
+- BAREA-011 Projector;
+- BAREA-012 Church Validation;
+- BAREA-013 Pilot;
+- production deployment;
+- new AI providers;
+- unrelated refactoring.
 
 ## STOP CONDITION
 
-Leave the PR OPEN and stop for independent review only after:
+When the corrective implementation and verification are complete:
 
-- real frontend foundation is implemented;
-- Teacher Review workflow is implemented;
-- requested available sub-agent design/architecture/testing/QA/review work has been performed and findings reconciled;
-- automated tests pass;
-- typecheck passes;
-- build passes;
-- L2 actual browser/visual verification is performed;
-- L3 actual responsive verification is performed;
-- `AGY-REPORT.md` records actual results and sub-agent verification evidence;
-- BAREA-005+ has not started.
-
-Do not self-declare merge GO. Independent verification and user acceptance are required after implementation.
+- keep PR #6 OPEN;
+- do not merge;
+- do not self-declare merge GO;
+- leave the repository in a clean, reviewable state;
+- update `AGY-REPORT.md` with actual evidence;
+- stop for independent BAREA review and user acceptance.
