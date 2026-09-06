@@ -5,7 +5,6 @@ const {
   VALID_STATUS_TRANSITIONS,
   DomainValidationError,
   InvalidLifecycleTransitionError,
-  ApprovedQuestionModificationError,
   validateQuestionPayload,
   assertValidStatusTransition
 } = require('./domain/question');
@@ -20,7 +19,6 @@ module.exports = {
   VALID_STATUS_TRANSITIONS,
   DomainValidationError,
   InvalidLifecycleTransitionError,
-  ApprovedQuestionModificationError,
   validateQuestionPayload,
   assertValidStatusTransition,
   SqliteQuestionRepository,

@@ -72,8 +72,10 @@ fail: 0
 ```
 
 ## Files Changed
-- `src/domain/question.js`: Added validation rule rejecting direct creation with `APPROVED` status.
-- `test/question-bank.test.js`: Added regression tests for creation status invariants and updated all fixtures.
+- `src/domain/question.js`: Added validation rule rejecting direct creation with `APPROVED` status; removed unused `ApprovedQuestionModificationError`.
+- `src/persistence/sqlite-question-repository.js`: Removed unused import of `ApprovedQuestionModificationError`.
+- `src/index.js`: Removed unused export of `ApprovedQuestionModificationError`.
+- `test/question-bank.test.js`: Added regression tests for creation status invariants, updated all fixtures, and removed unused import.
 - `docs/DECISIONS.md`: Documented direct `APPROVED` creation prohibition in ADR-007.
 - `.gitignore`: Added `*.log` to prevent stray log files.
 - `AGY-REPORT.md`: Created detailed corrective task report.

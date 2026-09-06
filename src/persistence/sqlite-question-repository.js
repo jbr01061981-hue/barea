@@ -6,8 +6,7 @@ const {
   QuestionStatus,
   QuestionDifficulty,
   QuestionType,
-  DomainValidationError,
-  ApprovedQuestionModificationError
+  DomainValidationError
 } = require('../domain/question');
 
 class SqliteQuestionRepository {

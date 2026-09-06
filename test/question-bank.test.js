@@ -7,7 +7,6 @@ const {
   QuestionStatus,
   DomainValidationError,
   InvalidLifecycleTransitionError,
-  ApprovedQuestionModificationError,
   validateQuestionPayload,
   assertValidStatusTransition,
   SqliteQuestionRepository,

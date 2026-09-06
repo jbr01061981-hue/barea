@@ -29,12 +29,6 @@ class InvalidLifecycleTransitionError extends Error {
     this.name = 'InvalidLifecycleTransitionError';
   }
 }
-class ApprovedQuestionModificationError extends Error {
-  constructor(msg) {
-    super(msg || 'Approved question content cannot be modified directly while remaining APPROVED. Must transition through PENDING_REVIEW or ARCHIVED.');
-    this.name = 'ApprovedQuestionModificationError';
-  }
-}
 function normalizeString(v) { return typeof v === 'string' ? v.trim() : ''; }
 function validateQuestionPayload(data, isUpdate = false) {
   if (!data || typeof data !== 'object') throw new DomainValidationError('Question data must be an object.');
@@ -133,7 +127,6 @@ module.exports = {
   VALID_STATUS_TRANSITIONS,
   DomainValidationError,
   InvalidLifecycleTransitionError,
-  ApprovedQuestionModificationError,
   validateQuestionPayload,
   assertValidStatusTransition
 };
