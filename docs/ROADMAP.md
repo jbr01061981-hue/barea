@@ -12,7 +12,7 @@ Milestones must be executed in order. No milestone may proceed into application 
 |---|---|---|---|
 | **BAREA-001** | **Foundation** | Documentation, architecture, agent guidelines, ADRs | **COMPLETED** |
 | **BAREA-002** | **Question Bank** | Domain models, storage, tagging, difficulty, search/filter | **COMPLETED** |
-| **BAREA-002A** | **TypeScript Migration Gate** | Migrate existing BAREA-002 implementation to TypeScript without changing behavior | **IN PROGRESS** |
+| **BAREA-002A** | **TypeScript Migration Gate** | Migrate existing BAREA-002 implementation to TypeScript without changing behavior | **COMPLETED** |
 | **BAREA-003** | **AI Quiz Generation** | Structured LLM prompt pipeline, parameter inputs, structural validation | NOT STARTED |
 | **BAREA-004** | **Teacher Review/Approval**| Staging UI, editing, scripture check, approval gate | NOT STARTED |
 | **BAREA-005** | **Quiz Authoring** | Quiz playlist composition, timer & scoring configurations, publishing | NOT STARTED |
@@ -70,7 +70,7 @@ AI Generation
 - Keep the existing CommonJS runtime shape and `node:sqlite` implementation unless a concrete compatibility issue requires a documented decision.
 - Add/retain explicit type contracts for the question domain, repository, service, and public exports.
 - Ensure compiled output and tests are reproducible and the full existing test suite remains green.
-- **Status**: IN PROGRESS.
+- **Status**: COMPLETED.
 - **Deliverable**: TypeScript-based equivalent of the approved BAREA-002 implementation, with no BAREA-003 functionality.
 
 ### BAREA-003: AI Quiz Generation
