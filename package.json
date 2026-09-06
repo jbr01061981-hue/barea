@@ -1,0 +1,17 @@
+{
+  "name": "barea",
+  "version": "0.1.0",
+  "description": "Synchronized church quiz platform",
+  "private": true,
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\" \"src/**/*.test.js\""
+  },
+  "keywords": [
+    "quiz",
+    "church",
+    "education"
+  ],
+  "author": "",
+  "license": "UNLICENSED"
+}
