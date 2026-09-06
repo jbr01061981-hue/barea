@@ -1,204 +1,293 @@
-# AGY TASK — Verification Gates Merge + Local/GitHub Cleanup
+# AGY TASK — BAREA-004 Teacher Review & Approval
 
 ## STATUS
 
-PR #5 is the approved documentation gate for BAREA milestone verification and release workflow.
+**BAREA-004 Design Gate: APPROVED.**
 
-This task is ONLY to complete the controlled PR #5 merge, synchronize the local workspace with GitHub, clean safe stale local artifacts/branches, and leave the repository in a known clean state.
+See `docs/BAREA-004-DESIGN-GATE.md`.
 
-**Do NOT start BAREA-004 implementation.**
-**Do NOT modify application implementation code.**
-**Do NOT invent or add new product scope.**
+Implement BAREA-004 as ONE integrated milestone: establish the real production frontend foundation while building, integrating, and testing the Teacher Review/Approval workflow.
 
----
+**Do NOT create a throwaway frontend-only milestone.**
+**Do NOT start BAREA-005 or later.**
+**Do NOT merge the PR.**
 
-## 1. SOURCE OF TRUTH
+## SOURCE OF TRUTH — READ FIRST
 
 Repository: `jbr01061981-hue/barea`
-PR: `#5`
-Branch: `vg-doc3`
-Base: `main`
 
-Before acting, inspect the actual current PR #5 state and current `main` state.
+Read current `main` versions of:
 
-PR #5 was created for:
 - `AGENTS.md`
+- `docs/BAREA-004-DESIGN-GATE.md`
+- `docs/ROADMAP.md`
+- `docs/REQUIREMENTS.md`
+- `docs/ARCHITECTURE.md`
+- `docs/DECISIONS.md`
+- `docs/FRONTEND-STANDARD.md`
 - `docs/VERIFICATION-GATES.md`
+- existing BAREA-002 Question Bank implementation
+- existing BAREA-003 AI generation implementation
 
-Do not assume SHAs from this prompt are current. Read GitHub and the local repository first.
+GitHub is authoritative. If repository state materially conflicts with the design gate, STOP and report it.
 
----
+## BRANCH / PR
 
-## 2. VERIFY PR #5
+Start from current `main`.
 
-Verify:
+Create feature branch:
 
-- PR #5 exists;
-- it targets `main`;
-- it is not already merged;
-- its changes are limited to the verification-gate documentation described above;
-- no BAREA-004 implementation is present in the PR.
+`barea-004-teacher-review`
 
-If unexpected implementation changes are present, STOP and report them.
+Open one PR against `main` and leave it OPEN. Do not rewrite history, force-push, squash, or merge.
 
----
+## FRONTEND FOUNDATION
 
-## 3. MERGE PR #5
+BAREA-004 is the first production frontend milestone. Build the actual frontend foundation as part of Teacher Review.
 
-After verification, merge PR #5 into `main` using the repository's normal merge workflow.
+Required stack:
 
-Use a normal merge commit.
+- Next.js 16
+- React 19
+- TypeScript
+- Tailwind CSS 4
+- Next.js App Router
+- React Aria Components
+- BAREA-owned visual design system/design tokens
 
-Do NOT:
-- squash;
-- rebase/rewrite history;
-- force-push;
-- modify application implementation;
-- merge unrelated PRs;
-- start BAREA-004.
+Do NOT introduce shadcn/ui, Material UI, Ant Design, Chakra UI, another competing UI suite, or another CSS/styling system.
 
----
+Do not blindly copy a starter template. Do not build a generic SaaS/AI dashboard. The shell must be production-quality but limited to structure required by BAREA-004. Do not create placeholder routes for future milestones.
 
-## 4. SYNCHRONIZE LOCAL WORKSPACE
+## VISUAL / UX
 
-After the merge:
+Follow `docs/FRONTEND-STANDARD.md` and the design gate.
 
-1. switch local checkout to `main`;
-2. fetch the remote repository;
-3. pull the current merged `main`;
-4. verify local `HEAD` matches `origin/main`;
-5. verify the working tree is clean;
-6. verify there are no untracked files that belong to the BAREA project;
-7. verify there are no staged-but-uncommitted changes;
-8. verify the verification-gate documentation is present locally;
-9. verify `AGENTS.md` references the verification-gate process;
-10. verify `docs/ROADMAP.md` still records BAREA-003 as COMPLETED and BAREA-004 onward as NOT STARTED.
+Make these visually primary and easy to understand:
 
-Do not use destructive commands such as `git reset --hard` or mass file deletion unless you first inspect the files and establish that they are safe generated/stale artifacts from this BAREA workspace.
+- question stem
+- answer options
+- correct answer
+- Scripture reference
+- explanation
+- topic
+- difficulty
+- language
+- review status
+- teacher actions
 
----
+Avoid gratuitous gradients, glassmorphism, AI/sparkle motifs, excessive cards/pills, ornamental animation, useless dashboard statistics, and dense visual chrome.
 
-## 5. SAFE LOCAL FILE CLEANUP
+Responsive behavior must adapt hierarchy and interaction patterns, not merely shrink desktop layouts.
 
-Inspect the BAREA workspace for temporary/generated artifacts that are not part of the GitHub repository source of truth.
+## REVIEW QUEUE
 
-Examples to inspect include:
-- build output already covered by `.gitignore`;
-- `node_modules/`;
-- `dist/`;
-- temporary logs;
-- editor/OS temporary files;
-- abandoned task output files;
-- duplicate temporary copies of repository documents.
+Implement an organization-scoped queue containing only `PENDING_REVIEW` questions.
 
-Do NOT delete source files, documentation, configuration, tests, or any file that is tracked by Git.
+Requirements:
 
-For every untracked file:
-- determine whether it is a legitimate project file that should be committed;
-- if legitimate, add it only if it belongs to the current approved repository scope;
-- if it is clearly a temporary/generated/stale artifact, remove it safely;
-- if uncertain, STOP and report it rather than deleting it.
+- strict organization isolation;
+- deterministic ordering;
+- useful metadata visible;
+- intentional loading, empty, error, and recovery states;
+- no cross-organization exposure.
 
-The goal is a clean local workspace, not indiscriminate deletion.
+## REVIEW WORKSPACE
 
----
+Implement a focused review/edit experience.
 
-## 6. BRANCH CLEANUP
+Teacher can inspect and edit:
 
-After local `main` is verified clean:
+- stem
+- options
+- correct answer/correct answers
+- explanation
+- Scripture reference
+- topic
+- difficulty
+- language where appropriate
 
-- delete the local `vg-doc3` branch;
-- delete the remote `vg-doc3` branch after PR #5 is merged;
-- prune stale remote-tracking references;
-- inspect other BAREA branches created during earlier documentation/gate work;
-- delete only branches that are clearly obsolete, empty, merged, or temporary and are not `main` or an active milestone branch;
-- do not delete any branch containing unmerged approved work;
-- if branch safety is uncertain, leave it and report it.
+Use existing Question domain validation and lifecycle rules.
 
-Do not delete `main`.
+**Saving an edit MUST NOT approve the question.** Verify it remains `PENDING_REVIEW` after saving. Invalid data must not persist.
 
----
+## HUMAN SCRIPTURE / THEOLOGICAL REVIEW
 
-## 7. FINAL VALIDATION
+Present Scripture reference, stem, answers, and explanation together for human inspection.
 
-On clean local `main`, run the repository validation appropriate to the current state.
+Clearly distinguish automated structural validation from human theological/scriptural review.
 
-At minimum:
+Do not implement an automated theological fact-checking or Scripture truth-certification engine. The teacher remains the approval authority.
+
+## SINGLE APPROVAL
+
+Implement a deliberate approval action:
+
+`PENDING_REVIEW -> APPROVED`
+
+Approval must be visibly separate from Save/Edit.
+
+Never approve on save, opening, structural validation success, or AI generation.
+
+Provide clear success/failure feedback.
+
+## BATCH APPROVAL
+
+Implement selection of multiple pending questions and explicit batch approval.
+
+Batch approval MUST be transactional/all-or-nothing. If one selected approval fails, the operation must not leave a partially approved batch.
+
+Add automated rollback coverage. Do not weaken the existing Question Bank transaction boundary merely to simplify UI integration.
+
+## DISCARD / ARCHIVE
+
+Use existing `ARCHIVED` for deliberate discard/archive.
+
+Do not introduce `REJECTED` unless a concrete defect proves `ARCHIVED` insufficient. If that happens, STOP and request a design decision.
+
+Keep destructive/archive actions visually separate from approval.
+
+## REGENERATION
+
+Use the existing BAREA-003 generation pipeline.
+
+Regeneration must:
+
+- preserve the original;
+- never silently overwrite it;
+- create a new candidate;
+- leave the new candidate `PENDING_REVIEW`;
+- preserve organization isolation;
+- preserve the human approval gate.
+
+Do not add a new AI provider or expose provider credentials to browser code.
+
+If current BAREA-003 interfaces cannot support safe regeneration without changing established semantics, STOP and report the boundary issue.
+
+## ARCHITECTURE BOUNDARIES
+
+Use existing Question Bank and AI generation service/domain boundaries wherever possible. Add only minimum application integration required for the real local browser workflow.
+
+Do not implicitly decide future architecture for production auth, HTTP/API style beyond minimum local integration, WebSockets/SSE, distributed databases, ORM replacement, Cloudflare deployment, participant joining, live quiz, scoring, leaderboard, projector, or quiz authoring.
+
+Do not replace SQLite. Do not rewrite BAREA-002/003 except for a concrete defect directly required by this milestone.
+
+## ACCESSIBILITY
+
+Accessibility is part of implementation.
+
+Use React Aria Components where appropriate. Verify semantic controls, keyboard navigation, visible focus, sensible focus movement, accessible labels, sufficient contrast, touch usability, readable text, reduced-motion behavior where motion is used, and screen-reader-friendly structure.
+
+Critical actions must not be mouse-only.
+
+## AUTOMATED TESTS
+
+Add behavioral tests covering at minimum:
+
+1. queue returns only pending questions;
+2. organization isolation;
+3. valid edits persist;
+4. invalid edits are rejected;
+5. pending edits remain pending;
+6. explicit single approval;
+7. save does not approve;
+8. successful batch approval;
+9. batch approval rollback on failure;
+10. archive/discard;
+11. regeneration creates a new pending candidate;
+12. regeneration does not silently replace the original;
+13. existing BAREA-002 suite remains green;
+14. existing BAREA-003 suite remains green;
+15. critical UI interactions have component/end-to-end coverage;
+16. accessibility-critical interactions are tested where practical.
+
+## L2 — ACTUAL LOCAL BROWSER / VISUAL VERIFICATION
+
+Automated tests alone are NOT sufficient.
+
+Start the real application locally and inspect the actual rendered UI in a real browser with realistic seeded/local question data.
+
+Exercise this complete flow:
+
+`PENDING_REVIEW queue -> open -> inspect -> edit -> save -> verify still pending -> approve -> verify approved -> select multiple -> batch approve -> archive -> regenerate -> verify new pending candidate`
+
+Also verify loading, empty, validation-error, failure, success feedback, keyboard navigation, focus behavior, visual hierarchy, readability, and absence of obvious overflow/layout defects.
+
+Do not merely check DOM existence with automation. Inspect the rendered experience.
+
+Record actual browser testing in `AGY-REPORT.md`.
+
+## L3 — RESPONSIVE / MOBILE / TABLET VERIFICATION
+
+Verify the actual rendered Teacher Review experience at desktop, tablet, and mobile viewport sizes.
+
+Verify layout adaptation, question editing, answer editing, approval controls, archive/regeneration actions, dialogs/drawers if used, touch targets, text readability, focus behavior, no unusable horizontal scrolling, and no overlapping/inaccessible controls.
+
+L3 verifies responsive Teacher Review. It does NOT authorize Participant UI implementation.
+
+Record actual viewport sizes and results in `AGY-REPORT.md`.
+
+## QUALITY / SECURITY
+
+Run and record actual results for:
 
 - `npm test`
 - `npm run typecheck`
 - `npm run build`
 - `git diff --check`
-- `git status --short`
-- `git branch --show-current`
-- verify `HEAD` equals `origin/main`
+- appropriate dependency/audit checks;
+- no critical `any` introduced;
+- no BOM artifacts;
+- no committed secrets;
+- no server-only AI credentials in browser bundle;
+- no legacy JavaScript application source;
+- build artifacts remain ignored.
 
-Do not claim a check passed unless it was actually executed.
+Do not claim checks that were not actually run.
 
----
+## DOCUMENTATION
 
-## 8. AGY-REPORT.md
+Keep `docs/ROADMAP.md` accurate.
 
-Update `AGY-REPORT.md` with the actual results of this task.
+If implementation creates a genuine architectural decision, record it in `docs/DECISIONS.md` as an ADR.
 
-Record:
-- PR #5 verification result;
-- actual merge commit SHA;
-- actual final `main` SHA;
-- local/remote synchronization result;
-- test/typecheck/build results;
-- local cleanup result;
-- branch cleanup result;
-- final working-tree status;
-- explicit confirmation that BAREA-004 implementation was NOT started.
+Update `AGY-REPORT.md` with actual implementation details, tests, L2/L3 results, viewport sizes, limitations, and status.
 
-Do not fabricate results or SHAs.
+Do not mark BAREA-004 COMPLETED before all required gates pass.
 
-If updating `AGY-REPORT.md` creates a focused documentation commit after the merge, that commit may be pushed to `main`; then re-verify `HEAD` equals `origin/main` and the working tree is clean.
+## STRICT FUTURE SCOPE
 
----
+Do NOT implement or begin:
 
-## 9. STRICT SCOPE BOUNDARY
+- BAREA-005 Quiz Authoring
+- BAREA-006 Share/Join
+- BAREA-007 Live Quiz / realtime
+- BAREA-008 Participant UI / live host controls
+- BAREA-009 Scoring
+- BAREA-010 Results / Leaderboard
+- BAREA-011 Projector
+- BAREA-012 Church Validation
+- BAREA-013 Pilot
+- production deployment
+- broad authentication system
+- theological truth certification engine
+- new LLM providers
+- unrelated refactoring
 
-This task must NOT implement:
-
-- BAREA-004 teacher review UI;
-- question review workflow implementation;
-- approval UI;
-- regeneration UI;
-- frontend application code;
-- HTTP/REST endpoints;
-- authentication/authorization;
-- quiz authoring;
-- quiz publishing;
-- live sessions;
-- participant joining;
-- QR codes;
-- WebSockets/realtime;
-- scoring;
-- leaderboards;
-- analytics;
-- deployment;
-- pilot work;
-- theological fact-checking engine;
-- new LLM providers;
-- unrelated refactoring.
-
----
+Do not create placeholders for future milestones.
 
 ## STOP CONDITION
 
-Stop only when:
+Leave the PR OPEN and stop for independent review only after:
 
-- PR #5 is merged;
-- local checkout is on `main`;
-- local `HEAD` is synchronized with `origin/main`;
-- working tree is clean;
-- safe temporary artifacts have been cleaned;
-- obsolete safe-to-delete branches have been cleaned;
-- verification-gate documentation is present in GitHub and local `main`;
-- tests/typecheck/build pass;
-- `AGY-REPORT.md` records the actual final state;
-- BAREA-004 implementation has NOT started.
+- real frontend foundation is implemented;
+- Teacher Review workflow is implemented;
+- automated tests pass;
+- typecheck passes;
+- build passes;
+- L2 actual browser/visual verification is performed;
+- L3 actual responsive verification is performed;
+- `AGY-REPORT.md` records actual results;
+- BAREA-005+ has not started.
 
-**STOP. Wait for the next explicit task.**
+Do not self-declare merge GO. Independent verification and user acceptance are required after implementation.
