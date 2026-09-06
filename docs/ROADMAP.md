@@ -11,7 +11,7 @@ Milestones must be executed in order. No milestone may proceed into application 
 | Milestone ID | Title | Scope Summary | Status |
 |---|---|---|---|
 | **BAREA-001** | **Foundation** | Documentation, architecture, agent guidelines, ADRs | **COMPLETED** |
-| **BAREA-002** | **Question Bank** | Domain models, storage, tagging, difficulty, search/filter | **IN PROGRESS** |
+| **BAREA-002** | **Question Bank** | Domain models, storage, tagging, difficulty, search/filter | **COMPLETED** |
 | **BAREA-003** | **AI Quiz Generation** | Structured LLM prompt pipeline, parameter inputs, structural validation | NOT STARTED |
 | **BAREA-004** | **Teacher Review/Approval**| Staging UI, editing, scripture check, approval gate | NOT STARTED |
 | **BAREA-005** | **Quiz Authoring** | Quiz playlist composition, timer & scoring configurations, publishing | NOT STARTED |
@@ -53,12 +53,12 @@ AI Generation
 - **Status**: COMPLETED.
 - **Deliverable**: Architectural blueprint and repository baseline.
 
-### BAREA-002: Question Bank (Current Milestone)
+### BAREA-002: Question Bank
 - Database schema and persistence layer for stored, approved questions.
 - Question attributes: stem text, answer options, correct indicator, explanation, scripture reference, topic, difficulty (Easy, Medium, Hard), and language.
 - CRUD APIs, search, and filtering mechanisms.
 - Supports manual question authoring and serves as the destination for approved questions.
-- **Status**: IN PROGRESS.
+- **Status**: COMPLETED.
 - **Deliverable**: Question persistence layer, schema validation, and Question Bank domain service.
 
 ### BAREA-003: AI Quiz Generation
