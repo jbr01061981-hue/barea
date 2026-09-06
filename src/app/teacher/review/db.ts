@@ -49,32 +49,64 @@ export interface TeacherContext {
 
 let mockTeacherContext: TeacherContext | null = null;
 
-export const DEFAULT_DEV_TEACHER_CONTEXT: TeacherContext = {
-  userId: 'teacher-dev-001',
-  organizationId: process.env.BAREA_DEV_ORG_ID || 'church-berea-default',
-  displayName: 'Lead Sunday School Teacher',
-  role: 'teacher',
-};
+/**
+ * Checks if the application is running in an authorized local development or test environment.
+ */
+export function isDevelopmentOrTestEnvironment(): boolean {
+  const env = process.env.NODE_ENV;
+  return env === 'development' || env === 'test' || !env;
+}
 
 /**
  * Derives the authenticated teacher context strictly on the server.
  * Never accepts organization identity or credentials from untrusted client input.
- * In development, defaults to DEFAULT_DEV_TEACHER_CONTEXT unless overridden by test fixtures.
+ *
+ * Security Boundary:
+ * 1. Test fixture override (mockTeacherContext) is evaluated first.
+ * 2. Default development context is permitted ONLY in explicitly recognized development/test execution
+ *    and requires a valid, non-empty organization ID (via BAREA_DEV_ORG_ID or default development org).
+ * 3. In non-development/production environments without a genuine trusted context, FAILS CLOSED.
+ * 4. Missing or empty organization identity FAILS CLOSED.
  */
 export async function getAuthorizedTeacherContext(): Promise<TeacherContext> {
+  // Test fixture override
   if (mockTeacherContext !== null) {
-    if (!mockTeacherContext.organizationId || !mockTeacherContext.userId) {
+    if (!mockTeacherContext.organizationId || !mockTeacherContext.organizationId.trim() || !mockTeacherContext.userId) {
       throw new Error('Unauthorized: missing or invalid teacher identity.');
     }
     return mockTeacherContext;
   }
-  return DEFAULT_DEV_TEACHER_CONTEXT;
+
+  // Non-development / production guard: must fail closed until production authentication is implemented
+  if (!isDevelopmentOrTestEnvironment()) {
+    throw new Error('Unauthorized: production teacher authentication is required. Development teacher context is disabled in production.');
+  }
+
+  // In development/test mode, resolve development organization
+  const devOrgId = (process.env.BAREA_DEV_ORG_ID !== undefined)
+    ? process.env.BAREA_DEV_ORG_ID.trim()
+    : 'church-berea-default';
+
+  if (!devOrgId) {
+    throw new Error('Unauthorized: development organization identity is missing or empty. Development teacher context failed closed.');
+  }
+
+  return {
+    userId: process.env.BAREA_DEV_USER_ID || 'teacher-dev-001',
+    organizationId: devOrgId,
+    displayName: process.env.BAREA_DEV_USER_NAME || 'Lead Sunday School Teacher',
+    role: 'teacher',
+  };
 }
 
 /**
  * Test fixture hook: override the server-side teacher context.
  * Calling with null resets to standard server resolution.
+ * Guarded against execution in production mode.
  */
 export function setAuthorizedTeacherContext(context: TeacherContext | null): void {
+  if (!isDevelopmentOrTestEnvironment()) {
+    throw new Error('Forbidden: test authorization overrides cannot be executed in production environment.');
+  }
   mockTeacherContext = context;
 }

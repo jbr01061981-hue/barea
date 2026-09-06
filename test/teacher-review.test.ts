@@ -25,6 +25,7 @@ import {
   setQuestionBankService,
   setAIGenerationService,
   setAuthorizedTeacherContext,
+  getAuthorizedTeacherContext,
 } from '../src/app/teacher/review/db';
 
 test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (t) => {
@@ -417,5 +418,115 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
     const approveRes = await approveQuestionAction('any-id');
     assert.equal(approveRes.success, false);
     assert.match(approveRes.error || '', /unauthorized/i);
+  });
+
+  await t.test('16. security: production / non-development mode fails closed immediately', async () => {
+    // Reset test override to test default runtime resolution
+    setAuthorizedTeacherContext(null);
+
+    const envMap = process.env as Record<string, string | undefined>;
+    const prevNodeEnv = envMap.NODE_ENV;
+    try {
+      envMap.NODE_ENV = 'production';
+      await assert.rejects(
+        async () => getAuthorizedTeacherContext(),
+        /production teacher authentication is required/i
+      );
+
+      // Verify server action fails closed in production
+      const queueRes = await getPendingQuestionsAction();
+      assert.equal(queueRes.success, false);
+      assert.match(queueRes.error || '', /production teacher authentication is required/i);
+
+      // Verify test hook is forbidden in production
+      assert.throws(
+        () => setAuthorizedTeacherContext({ userId: 'x', organizationId: 'y', displayName: 'd', role: 'teacher' }),
+        /Forbidden/i
+      );
+    } finally {
+      if (prevNodeEnv !== undefined) {
+        envMap.NODE_ENV = prevNodeEnv;
+      } else {
+        delete envMap.NODE_ENV;
+      }
+      // Re-enable test fixture override
+      setAuthorizedTeacherContext({
+        userId: 'teacher-alpha',
+        organizationId: orgA,
+        displayName: 'Teacher Alpha',
+        role: 'teacher',
+      });
+    }
+  });
+
+  await t.test('17. security: development configuration with missing or whitespace-only org ID fails closed', async () => {
+    setAuthorizedTeacherContext(null);
+
+    const envMap = process.env as Record<string, string | undefined>;
+    const prevNodeEnv = envMap.NODE_ENV;
+    const prevDevOrg = envMap.BAREA_DEV_ORG_ID;
+    try {
+      envMap.NODE_ENV = 'development';
+      envMap.BAREA_DEV_ORG_ID = '   '; // Whitespace only
+
+      await assert.rejects(
+        async () => getAuthorizedTeacherContext(),
+        /development organization identity is missing or empty/i
+      );
+
+      const queueRes = await getPendingQuestionsAction();
+      assert.equal(queueRes.success, false);
+      assert.match(queueRes.error || '', /missing or empty/i);
+    } finally {
+      if (prevNodeEnv !== undefined) {
+        envMap.NODE_ENV = prevNodeEnv;
+      } else {
+        delete envMap.NODE_ENV;
+      }
+      if (prevDevOrg !== undefined) {
+        envMap.BAREA_DEV_ORG_ID = prevDevOrg;
+      } else {
+        delete envMap.BAREA_DEV_ORG_ID;
+      }
+      setAuthorizedTeacherContext({
+        userId: 'teacher-alpha',
+        organizationId: orgA,
+        displayName: 'Teacher Alpha',
+        role: 'teacher',
+      });
+    }
+  });
+
+  await t.test('18. security: valid development configuration returns expected dev context', async () => {
+    setAuthorizedTeacherContext(null);
+
+    const envMap = process.env as Record<string, string | undefined>;
+    const prevNodeEnv = envMap.NODE_ENV;
+    const prevDevOrg = envMap.BAREA_DEV_ORG_ID;
+    try {
+      envMap.NODE_ENV = 'development';
+      envMap.BAREA_DEV_ORG_ID = 'church-berea-configured';
+
+      const ctx = await getAuthorizedTeacherContext();
+      assert.equal(ctx.organizationId, 'church-berea-configured');
+      assert.equal(ctx.role, 'teacher');
+    } finally {
+      if (prevNodeEnv !== undefined) {
+        envMap.NODE_ENV = prevNodeEnv;
+      } else {
+        delete envMap.NODE_ENV;
+      }
+      if (prevDevOrg !== undefined) {
+        envMap.BAREA_DEV_ORG_ID = prevDevOrg;
+      } else {
+        delete envMap.BAREA_DEV_ORG_ID;
+      }
+      setAuthorizedTeacherContext({
+        userId: 'teacher-alpha',
+        organizationId: orgA,
+        displayName: 'Teacher Alpha',
+        role: 'teacher',
+      });
+    }
   });
 });
