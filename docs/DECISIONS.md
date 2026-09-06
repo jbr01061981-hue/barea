@@ -14,6 +14,9 @@ This document tracks architectural principles, established decisions, and open t
 - [ADR-006: Question Bank Durable Storage & Organizational Isolation](#adr-006-question-bank-durable-storage--organizational-isolation)
 - [ADR-007: Approved Question Immutability & Content Modification Invariants](#adr-007-approved-question-immutability--content-modification-invariants)
 - [ADR-008: TypeScript as BAREA Application Language](#adr-008-typescript-as-barea-application-language)
+- [ADR-009: AI LLM Gateway Provider Port & Architecture](#adr-009-ai-llm-gateway-provider-port--architecture)
+- [ADR-010: BAREA Frontend Application Stack](#adr-010-barea-frontend-application-stack)
+- [ADR-011: BAREA Design System and UI Component Strategy](#adr-011-barea-design-system-and-ui-component-strategy)
 - [Open Technical Decisions](#open-technical-decisions)
 
 ---
@@ -211,10 +214,74 @@ BAREA-003 introduces the server-side AI quiz generation pipeline. The project re
 
 ---
 
+## ADR-010: BAREA Frontend Application Stack
+
+### Status
+**ACCEPTED (PRE-BAREA-004)**
+
+### Context
+BAREA requires a web application serving three distinct presentation contexts: a teacher/host console, a mobile participant experience, and a projector/big-screen experience. The frontend must be maintainable across multiple milestones and automated development agents, strongly typed, responsive, accessible, and suitable for both interactive workflows and presentation-oriented screens.
+
+### Decision
+1. **Next.js 16** is the standard frontend application framework for BAREA.
+2. **React 19** is the UI runtime/library standard.
+3. **TypeScript** is mandatory for frontend application code, consistent with ADR-008.
+4. **Tailwind CSS 4** is the standard styling system.
+5. Use the **Next.js App Router** for application routing and composition.
+6. The frontend architecture must support the three BAREA presentation roles without forcing them into one generic responsive dashboard: Teacher/Host Console, Mobile Participant, and Projector/Presentation View.
+7. Frontend implementation must remain compatible with the server-authoritative architecture and future real-time transport decisions; this ADR does not select HTTP API design, WebSocket/SSE transport, authentication, deployment platform, or distributed data infrastructure.
+8. Do not introduce a second frontend framework or a competing CSS system without a new ADR or explicit revision of this decision.
+
+### Rationale
+- Next.js provides a mature React application structure while allowing server and client rendering to be selected per surface.
+- React and TypeScript provide a consistent language/model across the future interactive surfaces.
+- Tailwind CSS provides responsive styling and design-token capabilities without imposing a prebuilt visual identity.
+- The stack is web-native and therefore appropriate for phones, tablets, desktop browsers, and modern browser-based projector/TV environments.
+
+### Consequences
+- **Positive**: One coherent frontend platform across BAREA surfaces; strong TypeScript alignment; responsive styling; freedom to create a distinctive BAREA visual language; mature ecosystem.
+- **Negative**: Next.js adds framework conventions and build complexity; the team must deliberately design separate ergonomics for teacher, participant, and projector experiences.
+
+---
+
+## ADR-011: BAREA Design System and UI Component Strategy
+
+### Status
+**ACCEPTED (PRE-BAREA-004)**
+
+### Context
+BAREA's primary risk is not lack of UI components; it is allowing a generic template or AI-generated component aesthetic to become the product's visual identity. The platform must feel purpose-built for church quiz preparation and live participation while remaining accessible and usable across mobile, web, and large-screen contexts.
+
+### Decision
+1. **BAREA owns its visual design system.** The project's visual language, design tokens, layout rules, typography, spacing, color semantics, motion, responsive behavior, and component styling are BAREA-specific.
+2. **React Aria Components** is the preferred behavioral/accessibility component foundation. Components should remain visually unopinionated and be styled by BAREA rather than adopting a third-party visual theme.
+3. **shadcn/ui is not a BAREA frontend standard.** Do not use shadcn/ui as the project's component library or visual design language. Individual implementation ideas may be studied when useful, but BAREA components must not inherit a generic shadcn visual identity by default.
+4. Do not standardize on Material UI, Ant Design, Chakra UI, or another opinionated visual component suite for the core BAREA product without a new ADR.
+5. Accessibility is a functional requirement. Keyboard navigation, focus management, semantics, touch interaction, contrast, reduced-motion behavior, and assistive-technology compatibility must be considered in component design and testing.
+6. **Design for the actual viewing context rather than merely shrinking one layout.**
+   - Teacher/Host: desktop/tablet productivity and content-review workflow.
+   - Participant: mobile-first, large touch targets, low cognitive load, fast interaction.
+   - Projector/Presentation: large typography, high contrast, viewing-distance readability, minimal UI chrome.
+7. Avoid generic "AI SaaS" visual patterns unless they have a concrete product purpose. In particular, do not add decorative gradients, excessive glassmorphism, gratuitous cards, dashboard-statistic tiles, decorative AI/sparkle motifs, excessive pill badges, ornamental animations, or visual elements solely because they are common in generated templates.
+8. **Content hierarchy takes precedence over decoration.** For quiz and review experiences, question text, answers, Scripture references, correctness, difficulty, status, and teacher actions must remain visually primary.
+9. Use centralized BAREA design tokens and reusable primitives instead of scattering arbitrary styling values throughout feature code.
+10. UI components must be tested for behavior and accessibility independently of their visual styling where practical. End-to-end tests must cover critical teacher, participant, and projector flows as those surfaces are implemented.
+
+### Rationale
+This approach separates three concerns: React Aria provides robust interaction and accessibility behavior; Tailwind CSS provides implementation-level styling; BAREA controls the actual visual identity. This minimizes dependency on recognizable template aesthetics and makes the UI intentionally designed for the three BAREA viewport roles.
+
+### Consequences
+- **Positive**: Distinctive product identity; reduced template/AI-slop risk; strong accessibility foundation; reusable behavior; appropriate ergonomics for mobile, teacher, and projector contexts.
+- **Negative**: More design work is owned by BAREA; the project cannot rely on a pre-designed visual library to make arbitrary screens look consistent automatically.
+
+---
+
 ## Open Technical Decisions
 
 The following technical selections remain intentionally deferred:
 
-1. **Application Framework**: Specific backend/frontend framework(s) and application composition.
-2. **Real-Time Communication Transport**: Specific protocol/library implementation.
-3. **Database & Data Layer for Distributed Environments**: Relational database engine, schema management, and live session state storage for multi-server deployment.
+1. **Real-Time Communication Transport**: Specific protocol/library implementation.
+2. **Database & Data Layer for Distributed Environments**: Relational database engine, schema management, and live session state storage for multi-server deployment.
+3. **HTTP/API Contract**: Specific API style and validation/transport implementation.
+4. **Authentication/Authorization**: Teacher/host authentication implementation and authorization model.
+5. **Deployment/Hosting**: Production hosting platform and infrastructure composition.
