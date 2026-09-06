@@ -1,10 +1,10 @@
-# AGY — BAREA-004 FINAL SECURITY CORRECTION
+# AGY — BAREA-004 FINAL MICRO SECURITY CORRECTION
 
 ## STATUS
 
 PR #6 (`barea-004-teacher-review`) is OPEN.
 
-This is a **small final security correction** after independent BAREA review. The original IDOR issue has been remediated. Do NOT redesign BAREA-004.
+This is the **final small security correction** after independent BAREA review. The IDOR/tenant authorization boundary is already fixed. Do NOT redesign BAREA-004.
 
 **DO NOT MERGE.**
 **DO NOT START BAREA-005 OR ANY LATER MILESTONE.**
@@ -22,146 +22,146 @@ Read the current `main` versions of:
 - `docs/FRONTEND-STANDARD.md`
 - `docs/VERIFICATION-GATES.md`
 
-Then inspect the current PR #6 head and `AGY-REPORT.md`.
+Then inspect the current PR #6 head, `src/app/teacher/review/db.ts`, all Teacher Review server actions, and `AGY-REPORT.md`.
 
-## REVIEW FINDING — REMAINING BLOCKER
+## REMAINING BLOCKER
 
-The previous corrective pass successfully removed browser-controlled `organizationId` authority and removed `?org=` as an authorization selector.
+The latest implementation added a development/test environment guard, but `isDevelopmentOrTestEnvironment()` currently treats an **unset `NODE_ENV`** as authorized development/test execution:
 
-However, `getAuthorizedTeacherContext()` currently returns `DEFAULT_DEV_TEACHER_CONTEXT` whenever no test override exists. That default uses `BAREA_DEV_ORG_ID || 'church-berea-default'` and is not explicitly restricted to development execution.
+`env === 'development' || env === 'test' || !env`
 
-The implementation/report also describes this as failing closed, but the normal path currently falls back to a default teacher context rather than requiring an explicitly authorized development context.
+It also permits a hard-coded development organization fallback (`church-berea-default`) when `BAREA_DEV_ORG_ID` is absent.
 
-This does not satisfy the required **development-only + fail-closed** boundary.
+This means an ambiguous/unset runtime environment can silently receive a development teacher identity. That does not satisfy the required security invariant:
 
-## REQUIRED FIX — KEEP IT SMALL
+`no explicit trusted teacher context -> no Teacher Review access`
 
-Harden the existing teacher-context mechanism only. Do not redesign the application.
+## REQUIRED FIX — MICRO SCOPE ONLY
 
-### 1. Explicit development-only guard
+Harden only the existing teacher-context resolution.
 
-The default development teacher context may be used **only in an explicitly recognized development/test execution mode**.
+### 1. Remove implicit authorization for unset NODE_ENV
 
-Use the existing Next.js/Node environment conventions already present in the repository. Do not invent a production authentication system.
+Do NOT treat an unset/unknown `NODE_ENV` as development.
 
 Required behavior:
 
-- explicit development/test mode + valid development organization configuration -> development teacher context is allowed;
-- non-development/production mode without a genuine trusted teacher context -> FAIL CLOSED;
-- missing/empty/invalid organization identity -> FAIL CLOSED;
-- never silently substitute `'church-berea-default'` outside explicitly permitted development/test execution.
+- `NODE_ENV=development` -> development context may be used, subject to valid configuration;
+- `NODE_ENV=test` -> test execution may use the test fixture mechanism; normal development fallback must not become a production bypass;
+- `NODE_ENV=production` -> fail closed without genuine production authentication;
+- unset/unknown `NODE_ENV` -> fail closed unless there is an explicitly recognized test harness/context that is already trusted server-side.
 
-Do not make production secure by merely checking a browser-controlled value.
+Use the repository's existing environment conventions. Do not add a production authentication system.
 
-### 2. Test override isolation
+### 2. Remove implicit organization fallback for development runtime
 
-The existing `setAuthorizedTeacherContext()` hook is for tests.
+When the development context is being used, require an explicit valid `BAREA_DEV_ORG_ID` rather than silently substituting `church-berea-default`.
 
-Ensure the test override cannot become a browser-controlled authorization mechanism or production bypass.
+Trim and validate the configured organization ID. Missing, empty, whitespace-only, or invalid values must fail closed.
 
-Keep test-only mechanisms clearly separated from runtime authorization.
+Do not weaken the existing `BAREA_DEV_USER_ID` / display-name behavior unless required by this correction.
 
-### 3. Error semantics
+### 3. Preserve the existing IDOR fix
 
-Use a clear unauthorized error type/message where appropriate, consistent with the existing project conventions.
+Do NOT restore:
 
-The important invariant is:
+- browser-supplied `organizationId` action arguments;
+- `?org=` as an authorization mechanism;
+- hidden form fields/client state as authorization;
+- any other browser-controlled tenant selector.
 
-`no trusted teacher context -> no Teacher Review data access or mutation`
+Every Teacher Review server action must continue deriving organization identity from trusted server-side context.
 
-Do not leak another organization's existence through errors.
+### 4. Preserve test isolation
 
-### 4. Preserve the already-fixed IDOR boundary
+`setAuthorizedTeacherContext()` remains a test fixture hook only.
 
-Do NOT restore `organizationId` to public Server Action inputs.
+It must remain unavailable in production and must not be reachable as a browser-controlled authorization mechanism.
 
-Do NOT restore `?org=` as an authority.
+Keep the implementation simple and compatible with the current tests.
 
-All Teacher Review actions must continue deriving organization identity from the trusted server context.
+## REQUIRED FOCUSED TESTS
 
-Question Bank organization isolation and lifecycle protections must remain unchanged.
+Add/update tests proving all of the following:
 
-## REQUIRED REGRESSION TESTS
+1. `NODE_ENV=development` + explicit valid `BAREA_DEV_ORG_ID` returns the expected development context;
+2. `NODE_ENV=development` + missing/empty/whitespace `BAREA_DEV_ORG_ID` fails closed;
+3. `NODE_ENV=production` without genuine trusted teacher authentication fails closed;
+4. **unset `NODE_ENV` without a trusted test override fails closed**;
+5. unknown/non-standard `NODE_ENV` without trusted authentication fails closed;
+6. browser/query organization input cannot activate or change the trusted context;
+7. existing cross-tenant read/edit/approve/batch/archive/regenerate tests remain green;
+8. existing BAREA-002 and BAREA-003 tests remain green.
 
-Add focused tests for the remaining blocker:
-
-1. explicitly permitted development mode with valid configuration returns the expected development teacher context;
-2. development configuration with missing/empty organization ID fails closed;
-3. non-development/production mode without trusted teacher context fails closed;
-4. a browser/query-supplied organization value cannot activate or change the trusted context;
-5. test override works only through the test fixture mechanism and cannot be supplied by the client;
-6. existing cross-tenant read/edit/approve/batch/archive/regenerate tests remain green;
-7. existing BAREA-002 organization-isolation tests remain green;
-8. existing BAREA-003 tests remain green.
-
-Tests must exercise the actual server-side context function/actions, not merely UI behavior.
+The tests must exercise the actual server-side context/action boundary.
 
 ## SECURITY AUDIT
 
-Inspect the final implementation for:
+Specifically inspect for:
 
-- `BAREA_DEV_ORG_ID` use;
-- `NODE_ENV` / runtime-environment checks;
-- hard-coded development defaults;
-- query parameters and form inputs;
-- cookies/headers if used;
-- test hooks;
-- client bundles;
-- server-only imports;
-- accidental exposure of trusted context or credentials.
+- `NODE_ENV` default/fallback behavior;
+- `BAREA_DEV_ORG_ID` fallback behavior;
+- hard-coded tenant IDs;
+- query/form/client tenant inputs;
+- test hooks crossing into runtime authorization;
+- server-only context/credentials entering client bundles.
 
-Specifically prove that an ordinary browser cannot select another organization and cannot turn on the development identity mechanism.
+The final invariant must be:
+
+`ordinary browser input cannot choose tenant + ambiguous runtime cannot silently activate development tenant identity.`
 
 ## VERIFICATION
 
-Run:
+Run and record actual results for:
 
 - `npm test`
 - `npm run typecheck`
 - `npm run build`
 - `npm run build:next`
 - `git diff --check`
-- dependency/security audit appropriate to the repository;
+- dependency/security audit;
 - BOM check;
 - secret scan;
-- check for new `any` in `src/`;
-- verify no server-only credentials/trusted authorization mechanism is bundled client-side.
+- `any` check in `src/`;
+- client-bundle/server-only boundary check.
 
-Re-run L2 browser verification and L3 responsive verification.
+Re-run actual browser verification:
 
-For L2 specifically verify:
+### L2
 
-- authorized development teacher can complete the existing Teacher Review workflow;
-- `?org=foreign-org` has no authorization effect;
-- direct foreign question-ID attacks fail closed;
-- no victim-organization data is rendered.
+Verify the authorized development Teacher Review workflow still functions and that:
 
-For L3 re-check desktop, tablet, and mobile behavior at the established BAREA-004 viewport ranges.
+- `?org=foreign-org` has zero authorization effect;
+- foreign question IDs cannot be accessed;
+- no victim organization data is rendered.
+
+### L3
+
+Re-check the established desktop, tablet, and mobile BAREA-004 viewports and confirm the correction did not break the experience.
 
 ## MULTI-AGENT REVIEW
 
-Use available specialized agents for this focused correction:
+Use available specialized agents for this micro-correction:
 
-1. Security/Backend — attack the environment guard and teacher-context boundary.
-2. Testing — validate production/non-development fail-closed behavior and existing cross-tenant tests.
-3. Frontend/Next.js — verify no browser-controlled value can influence authorization.
-4. Independent Review — attempt to find a bypass after the fix.
+1. Security/Backend — attack unset/unknown environment and organization fallback behavior.
+2. Testing — verify the new fail-closed cases and existing cross-tenant suite.
+3. Frontend/Next.js — confirm browser input cannot influence authorization.
+4. Independent Review — attempt one final bypass after the fix.
 
-Record actual participation and evidence in `AGY-REPORT.md`. Do not claim an agent performed work merely because it was invoked.
+Record actual participation and evidence in `AGY-REPORT.md`. Do not fabricate agent participation.
 
 ## REPORT
 
 Update `AGY-REPORT.md` with:
 
 - remaining blocker;
-- exact fix;
-- environment/fail-closed behavior;
-- focused regression results;
+- exact micro-fix;
+- explicit environment matrix and fail-closed behavior;
+- test results;
 - security audit results;
-- sub-agent evidence;
+- actual sub-agent evidence;
 - L2/L3 evidence;
-- final test/typecheck/build results;
-- explicit statement that development teacher context is development/test-only.
+- final status.
 
 ## STOP CONDITION
 
@@ -172,4 +172,4 @@ When complete:
 - do not close the PR;
 - do not start BAREA-005;
 - leave a clean working tree;
-- stop for fresh independent BAREA review and GO/NO-GO decision.
+- stop for fresh independent BAREA review and final GO/NO-GO.
