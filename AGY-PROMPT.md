@@ -31,6 +31,43 @@ Read current `main` versions of:
 
 GitHub is authoritative. If repository state materially conflicts with the design gate, STOP and report it.
 
+## MULTI-AGENT ORCHESTRATION — REQUIRED
+
+Do NOT execute this milestone as a single-agent implementation if AGY's sub-agent capabilities are available.
+
+Before substantial coding, decompose the work and invoke the available specialized sub-agents that are appropriate to the task. At minimum, seek separate sub-agent input for these responsibilities where the platform supports them:
+
+1. **UI/UX Design** — review the Teacher Review workflow, information hierarchy, responsive interaction model, accessibility, and BAREA anti-AI-slop visual rules before implementation.
+2. **Frontend Architecture** — review the Next.js/React/TypeScript/Tailwind/React Aria structure, component boundaries, state/data flow, and integration boundaries.
+3. **Implementation** — implement the frontend foundation and Teacher Review experience according to the approved design.
+4. **Testing** — design and execute behavioral/unit/integration coverage for lifecycle, organization isolation, editing, approval, batch transactions, archive, and regeneration.
+5. **Accessibility / Responsive QA** — specifically inspect keyboard/focus semantics, touch usability, mobile/tablet adaptation, and accessibility-critical interactions.
+6. **Browser / Visual QA** — run the actual application in a real browser using realistic local data and inspect the rendered experience at L2/L3, not merely source code or DOM existence.
+7. **Independent Code Review** — after implementation, actively attempt to find defects, security problems, lifecycle bypasses, architectural violations, visual/UX problems, and future-scope leakage.
+
+### Orchestration rules
+
+- The main AGY agent is the orchestrator and remains responsible for the final implementation and report.
+- Give each sub-agent a narrow, explicit responsibility and provide the approved BAREA-004 design/source-of-truth documents as context.
+- Do not ask every sub-agent to redo the entire milestone. Their jobs are complementary.
+- Capture meaningful findings from each sub-agent and reconcile them before declaring the PR ready for independent BAREA review.
+- A sub-agent's statement that something is correct is not proof. Where practical, require evidence such as test output, browser observations, file/line references, or concrete verification results.
+- If a sub-agent identifies a blocker, fix it and re-run the relevant verification rather than simply documenting the problem.
+- If a sub-agent proposes scope beyond BAREA-004, reject/defer it unless the approved design gate explicitly permits it.
+- The independent-review sub-agent must be encouraged to challenge the implementation rather than rubber-stamp the work.
+- Do not let sub-agents silently change approved architecture or milestone scope. Escalate genuine architectural conflicts to the main AGY agent and record any required ADR.
+- Do not claim a verification activity merely because a sub-agent was invoked. Record what was actually executed and the evidence produced.
+
+### Recommended execution sequence
+
+Use this sequence where supported by AGY's orchestration capabilities:
+
+`Design Review -> Frontend Architecture Review -> Implementation -> Automated Testing -> Accessibility/Responsive QA -> Browser/Visual QA -> Independent Code Review -> Fixes/Re-test -> Final AGY Report`
+
+Design and architecture review may run before implementation. Testing/QA/review must run against the actual implementation. Independent review should occur after the implementation is substantially complete and again after any material corrective changes when needed.
+
+If AGY cannot invoke one or more requested sub-agent roles, do the work with the available capabilities and explicitly record which roles were unavailable and how the equivalent verification was performed. Do not fabricate sub-agent participation.
+
 ## BRANCH / PR
 
 Start from current `main`.
@@ -282,12 +319,13 @@ Leave the PR OPEN and stop for independent review only after:
 
 - real frontend foundation is implemented;
 - Teacher Review workflow is implemented;
+- requested available sub-agent design/architecture/testing/QA/review work has been performed and findings reconciled;
 - automated tests pass;
 - typecheck passes;
 - build passes;
 - L2 actual browser/visual verification is performed;
 - L3 actual responsive verification is performed;
-- `AGY-REPORT.md` records actual results;
+- `AGY-REPORT.md` records actual results and sub-agent verification evidence;
 - BAREA-005+ has not started.
 
 Do not self-declare merge GO. Independent verification and user acceptance are required after implementation.
