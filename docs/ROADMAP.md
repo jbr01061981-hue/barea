@@ -12,6 +12,7 @@ Milestones must be executed in order. No milestone may proceed into application 
 |---|---|---|---|
 | **BAREA-001** | **Foundation** | Documentation, architecture, agent guidelines, ADRs | **COMPLETED** |
 | **BAREA-002** | **Question Bank** | Domain models, storage, tagging, difficulty, search/filter | **COMPLETED** |
+| **BAREA-002A** | **TypeScript Migration Gate** | Migrate existing BAREA-002 implementation to TypeScript without changing behavior | **IN PROGRESS** |
 | **BAREA-003** | **AI Quiz Generation** | Structured LLM prompt pipeline, parameter inputs, structural validation | NOT STARTED |
 | **BAREA-004** | **Teacher Review/Approval**| Staging UI, editing, scripture check, approval gate | NOT STARTED |
 | **BAREA-005** | **Quiz Authoring** | Quiz playlist composition, timer & scoring configurations, publishing | NOT STARTED |
@@ -41,6 +42,7 @@ AI Generation
 - **Structural validation** is strictly an automated schema check for syntax, required fields, and format compliance; it does not certify biblical truth or theological accuracy.
 - **Human teacher review** is strictly required to verify scriptural fidelity and age-appropriateness.
 - **Milestone dependency**: AI generation (BAREA-003) places drafts into a staging state (PENDING_REVIEW). Generated questions cannot bypass review or directly enter the Question Bank or active quizzes without the teacher review/approval gate (BAREA-004).
+- **TypeScript gate**: BAREA-002A must be completed and independently verified before BAREA-003 application implementation begins.
 
 ---
 
@@ -60,6 +62,16 @@ AI Generation
 - Supports manual question authoring and serves as the destination for approved questions.
 - **Status**: COMPLETED.
 - **Deliverable**: Question persistence layer, schema validation, and Question Bank domain service.
+
+### BAREA-002A: TypeScript Migration Gate
+- Establish TypeScript as the BAREA application language before further application milestones.
+- Migrate the existing BAREA-002 `.js` source and tests to `.ts` while preserving externally observable behavior and the approved-content lifecycle invariants.
+- Add the minimum TypeScript compiler/type-definition tooling needed for a clean, reproducible build.
+- Keep the existing CommonJS runtime shape and `node:sqlite` implementation unless a concrete compatibility issue requires a documented decision.
+- Add/retain explicit type contracts for the question domain, repository, service, and public exports.
+- Ensure compiled output and tests are reproducible and the full existing test suite remains green.
+- **Status**: IN PROGRESS.
+- **Deliverable**: TypeScript-based equivalent of the approved BAREA-002 implementation, with no BAREA-003 functionality.
 
 ### BAREA-003: AI Quiz Generation
 - Core MVP AI generation pipeline with structured output enforcement.
