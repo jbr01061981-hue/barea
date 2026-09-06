@@ -169,6 +169,36 @@ BAREA-002 established the first executable domain and persistence layer in JavaS
 
 ---
 
+## ADR-009: AI LLM Gateway Provider Port & Architecture
+
+### Status
+**ACCEPTED (BAREA-003)**
+
+### Context
+BAREA-003 introduces the server-side AI quiz generation pipeline. The project requires high-quality, structured biblical questions generated on demand, while avoiding tight coupling to any single proprietary LLM provider SDK or cloud API. Automated testing must be deterministic and must not depend on live credentials or external network access.
+
+### Decision
+1. **Port/Adapter Architecture**: The AI generation pipeline connects to LLMs through a strongly-typed port interface (`AIProvider`), which defines `generateRaw(request: GenerationRequest): Promise<unknown>`.
+2. **Provider Implementations**:
+   - `FakeAIProvider`: In-memory deterministic mock provider for automated unit, validation, and failure-mode testing without network or credentials.
+   - `GeminiAIProvider`: Production adapter for Google Gemini API (`gemini-1.5-flash` by default) using native fetch and standard HTTP endpoints without heavy third-party SDK dependencies.
+3. **Configuration & Credentials**:
+   - Provider credentials and models are purely configuration-driven via `GeminiProviderConfig` or environment variables (`GEMINI_API_KEY`, `GEMINI_MODEL`).
+   - Secrets are never hard-coded or logged.
+4. **Structured Output & Two-Stage Validation**:
+   - Provider outputs are strictly validated in two stages: first via JSON schema / structural validation (`validateStructuralOutput`), and second through Question domain validation (`validateQuestionPayload`).
+   - Automated structural validation only certifies schema format; it does NOT certify biblical truth or theological accuracy.
+5. **Lifecycle Gate**:
+   - Generated questions are always persisted as `PENDING_REVIEW`, preserving the human teacher review and approval gate (BAREA-004). AI questions can never be created directly as `APPROVED`.
+6. **Future Provider Substitution**:
+   - Alternative providers (e.g. OpenAI, Anthropic, local open-weights models) can be added as `AIProvider` implementations without altering the Question Bank domain, service, or validation layers.
+
+### Consequences
+- **Positive**: Complete provider decoupling, test suite speed and determinism with zero network dependencies, strict lifecycle safety, and clean credential isolation.
+- **Negative**: Adds provider adapter interface maintenance and requires mapping model outputs to the common BAREA schema.
+
+---
+
 ## Open Technical Decisions
 
 The following technical selections remain intentionally deferred:
@@ -176,4 +206,3 @@ The following technical selections remain intentionally deferred:
 1. **Application Framework**: Specific backend/frontend framework(s) and application composition.
 2. **Real-Time Communication Transport**: Specific protocol/library implementation.
 3. **Database & Data Layer for Distributed Environments**: Relational database engine, schema management, and live session state storage for multi-server deployment.
-4. **AI LLM Gateway**: Specific model provider and API integration for question generation.

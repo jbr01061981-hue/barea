@@ -21,3 +21,21 @@ export {
 export {
   QuestionBankService
 } from './service/question-bank-service';
+
+export {
+  type GenerationRequest,
+  type GeneratedQuestionItem,
+  type GeneratedQuestionBatch,
+  type GenerationResult,
+  GenerationValidationError,
+  StructuralValidationError,
+  AIProviderError,
+  validateGenerationRequest,
+  validateStructuralOutput,
+  type AIProvider,
+  FakeAIProvider,
+  GeminiAIProvider,
+  type GeminiProviderConfig,
+  AIGenerationService,
+  type AIGenerationServiceOptions
+} from './ai/index';

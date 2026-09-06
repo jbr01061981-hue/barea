@@ -1,111 +1,159 @@
-# AGY Post-Merge Report — BAREA-002A TypeScript Migration Gate
+# AGY Execution Report — BAREA-003 AI Quiz Generation
 
 ## 1. Executive Summary
-PR #3 has been verified, merged into `main`, and all post-merge cleanup and validation tasks specified in `AGY-PROMPT.md` are complete.
+Implemented milestone **BAREA-003: AI Quiz Generation** on dedicated branch `barea-003-ai-generation`.
 
-- **PR #3 Merge Status**: **MERGED**
-- **Merge Commit SHA on `main`**: `702d9804b4c53bfa76fbe360e22ea8f121d51fe7`
-- **Reviewed Head Commit on PR**: `327824f186f1b6ca80abebd2734f7cf7dd1225a9`
-- **Branch Deletion**:
-  - Local branch `barea-ts-migration` deleted.
-  - Remote branch `origin/barea-ts-migration` deleted and references pruned.
-- **Roadmap Status**:
-  - `BAREA-001` = **COMPLETED**
-  - `BAREA-002` = **COMPLETED**
-  - `BAREA-002A` = **COMPLETED**
-  - `BAREA-003` = **NOT STARTED**
-- **Invariants Preserved**: All 25 tests pass on merged `main`, verifying that the Question Bank domain rules, lifecycle transitions, CommonJS runtime contract, and durable `node:sqlite` persistence remain 100% operational.
-- **BAREA-003 Status**: Strictly **NOT STARTED** (no AI generation, UI, HTTP API, auth, WebSockets, or live quiz code exists).
+The milestone establishes a strongly typed, server-authoritative AI quiz generation pipeline:
+- **Strongly Typed Request Contract**: Enforces count limits (1–20), question-level difficulty, question types (`MULTIPLE_CHOICE`, `TRUE_FALSE`, `MULTI_SELECT`), language, and topic/passage context.
+- **Structured Output / JSON Schema**: Defined formal JSON Schema (`src/ai/schema/generated-question-schema.json`) and implemented strict two-stage structural validation before domain validation.
+- **Provider Port & Adapter Architecture**: Port interface `AIProvider` decoupled from concrete SDKs. Implemented `FakeAIProvider` for deterministic zero-network testing and `GeminiAIProvider` for Google Gemini integration. Recorded in **ADR-009**.
+- **Question Bank Staging**: All successfully generated questions are staged in the Question Bank as `PENDING_REVIEW` (never `APPROVED`), preserving the BAREA human-in-the-loop teacher review gate (BAREA-004).
+- **Fail-Closed Persistence**: Generation failures, schema mismatches, count mismatches, or domain errors persist zero questions.
+- **Tenant Isolation**: `organizationId` is strictly preserved through request, generation, and storage.
+- **Zero Scope Creep**: Strictly no BAREA-004+ functionality (no teacher review UI, approval UI, HTTP/REST endpoints, authentication, WebSockets, or live quiz code).
 
 ---
 
-## 2. Post-Merge Branch State
-- **Active Branch**: `main`
-- **Tracking**: `origin/main` (up to date)
-- **Local Branches**: `main`, `barea-001-foundation`
-- **Remote Branches**: `origin/main`, `origin/barea-001-foundation`
-- **Obsolete Migration Branch**: Completely removed from both local and remote.
+## 2. Environment & Baseline
+- **Repository**: `jbr01061981-hue/barea`
+- **Branch**: `barea-003-ai-generation`
+- **Base Branch**: `main`
+- **Baseline Commit Inspected**: `400ebc368ff66e51bf41846503c513be51888ba3`
+- **Node.js Version**: `v24.18.0`
+- **npm Version**: `12.0.2`
+- **TypeScript Version**: `7.0.2`
 
 ---
 
-## 3. Post-Merge Validation Results on `main`
+## 3. Architecture & Implementation
 
-### A. Clean Dependency Installation (`npm install`)
-```text
-up to date, audited 5 packages in 1s
-found 0 vulnerabilities
-```
+### A. Provider Port / Adapter (`src/ai/provider/`)
+- `AIProvider` port interface with `generateRaw(request: GenerationRequest): Promise<unknown>`.
+- `FakeAIProvider`: Deterministic, in-memory generator for automated testing and error simulation.
+- `GeminiAIProvider`: Real LLM adapter targeting Google Gemini API (`gemini-1.5-flash`) via standard fetch and structured JSON response formatting. Accepts credentials via `GEMINI_API_KEY` environment variable or `GeminiProviderConfig`.
+- Documented in `docs/DECISIONS.md` under **ADR-009: AI LLM Gateway Provider Port & Architecture**.
 
-### B. TypeScript Compilation & Strict Type-Check (`npm run typecheck` & `npm run build`)
+### B. Schemas & Two-Stage Validation (`src/ai/schema/`)
+- `generated-question-schema.json`: Formal JSON Schema for batch output.
+- `validateGenerationRequest`: Validates count (1–20), organizationId, topic/passage, difficulty, and type.
+- `validateStructuralOutput`: Validates JSON structure, required fields, option arrays, and integer indices.
+- Two-stage pipeline: Structural validation -> Question domain validation (`validateQuestionPayload`) -> Question Bank persistence.
+
+### C. Service Layer (`src/ai/service/`)
+- `AIGenerationService`: Orchestrates validation, provider invocation, schema checking, domain checking, count verification, and Question Bank staging as `PENDING_REVIEW`.
+- Clean error classes: `GenerationValidationError`, `StructuralValidationError`, `AIProviderError`.
+
+---
+
+## 4. Exact Files Changed / Added
+- `src/ai/schema/generated-question-schema.json`: Formal JSON schema.
+- `src/ai/schema/types.ts`: TypeScript contracts, interfaces, and error classes.
+- `src/ai/schema/validator.ts`: Request and structural output validators.
+- `src/ai/provider/ai-provider.ts`: Port interface `AIProvider`.
+- `src/ai/provider/fake-ai-provider.ts`: Deterministic mock provider.
+- `src/ai/provider/gemini-ai-provider.ts`: Google Gemini provider adapter.
+- `src/ai/service/ai-generation-service.ts`: Core AI generation service.
+- `src/ai/index.ts`: Module exports.
+- `src/index.ts`: Root public exports updated with AI types and services.
+- `test/ai/ai-generation.test.ts`: Complete AI generation automated test suite (22 new tests).
+- `test/question-bank.test.ts`: Updated CommonJS export assertions.
+- `docs/DECISIONS.md`: Added ADR-009.
+- `AGY-REPORT.md`: Updated execution report.
+
+---
+
+## 5. Automated Validation Results
+
+### A. TypeScript Strict Type-Check (`npm run typecheck`)
 ```text
 > barea@0.1.0 typecheck
 > tsc --noEmit
-(Exited 0 with 0 errors)
+```
+Result: Exited 0 with 0 errors. Verified **0 occurrences of `any`** in `src/`.
 
+### B. TypeScript Compilation (`npm run build`)
+```text
 > barea@0.1.0 build
 > tsc
-(Exited 0 with 0 errors, generated dist/)
 ```
+Result: Exited 0 with 0 errors. Clean CommonJS artifacts generated in `dist/`.
 
-### C. Full Automated Test Suite (`npm test`)
+### C. Automated Test Suite (`npm test`)
 ```text
 > barea@0.1.0 test
 > tsc -p tsconfig.test.json && node --test "dist/test/**/*.test.js"
 
+▶ AI Generation Request Validation
+  ✔ accepts valid request with count 1 (2.1024ms)
+  ✔ accepts valid request with count 20 (0.2052ms)
+  ✔ rejects count 0 (0.4704ms)
+  ✔ rejects count greater than 20 (0.1509ms)
+  ✔ rejects invalid difficulty (0.1399ms)
+  ✔ rejects invalid question type (0.1714ms)
+  ✔ rejects missing topic and passageReference (0.1405ms)
+  ✔ rejects missing organizationId (0.1652ms)
+✔ AI Generation Request Validation (5.2537ms)
+▶ Structured Output Validation
+  ✔ accepts structurally valid question batch (0.4894ms)
+  ✔ rejects missing questions array (0.1731ms)
+  ✔ rejects missing required field stem (0.1284ms)
+  ✔ rejects invalid question type (0.1264ms)
+  ✔ rejects out of bounds correctOptionIndices (0.1024ms)
+✔ Structured Output Validation (1.5168ms)
+▶ AI Generation Pipeline Execution & Lifecycle Invariants
+  ✔ generates questions and stages them as PENDING_REVIEW (3.0086ms)
+  ✔ enforces exact count matching and rejects count mismatch (0.3353ms)
+  ✔ provider failure persists zero questions (fail-closed) (0.4566ms)
+  ✔ provider attempting to pass status: APPROVED cannot bypass lifecycle (0.4855ms)
+  ✔ enforces strict organization isolation (0.979ms)
+  ✔ rejects duplicate correct option indices for MULTI_SELECT (0.3471ms)
+✔ AI Generation Pipeline Execution & Lifecycle Invariants (7.1482ms)
 ▶ Question Domain & Validation
-  ✔ accepts valid MCQ question payload (0.6745ms)
-  ✔ accepts valid TRUE_FALSE question payload (0.1241ms)
-  ✔ accepts valid MULTI_SELECT question payload (0.1397ms)
-  ✔ rejects empty organizationId (0.3421ms)
-  ✔ rejects empty stem (0.1231ms)
-  ✔ rejects invalid difficulty (0.155ms)
-  ✔ rejects invalid question type (0.1196ms)
-  ✔ rejects out of bounds correctOptionIndices (0.1077ms)
-  ✔ rejects duplicate correctOptionIndices in MULTI_SELECT (0.1604ms)
-  ✔ rejects question creation with explicit APPROVED status (0.2063ms)
-✔ Question Domain & Validation (4.1435ms)
+  ✔ accepts valid MCQ question payload (1.708ms)
+  ✔ accepts valid TRUE_FALSE question payload (0.1561ms)
+  ✔ accepts valid MULTI_SELECT question payload (0.146ms)
+  ✔ rejects empty organizationId (0.4363ms)
+  ✔ rejects empty stem (0.1725ms)
+  ✔ rejects invalid difficulty (0.148ms)
+  ✔ rejects invalid question type (0.1262ms)
+  ✔ rejects out of bounds correctOptionIndices (0.1273ms)
+  ✔ rejects duplicate correctOptionIndices in MULTI_SELECT (0.2083ms)
+  ✔ rejects question creation with explicit APPROVED status (0.2358ms)
+✔ Question Domain & Validation (4.9643ms)
 ▶ Question Lifecycle State Transitions
-  ✔ valid transitions succeed (0.1396ms)
-  ✔ invalid transitions are rejected (0.1372ms)
-✔ Question Lifecycle State Transitions (0.4539ms)
+  ✔ valid transitions succeed (0.204ms)
+  ✔ invalid transitions are rejected (0.2273ms)
+✔ Question Lifecycle State Transitions (0.7009ms)
 ▶ Question Bank Persistence & Service CRUD Operations
-  ✔ creates question defaulting to DRAFT and rejects explicit APPROVED create in repository/service (1.6408ms)
-  ✔ creates and retrieves question with durable persistence (0.7665ms)
-  ✔ updates question content and preserves domain invariants (0.3225ms)
-  ✔ validates lifecycle transition in service (0.4594ms)
-  ✔ filters by topic, difficulty, type, language, status, and search (0.8939ms)
-  ✔ enforces strict organizational ownership isolation (0.635ms)
-  ✔ modifying approved question content cannot leave it silently approved (demotes to PENDING_REVIEW) (0.6291ms)
-  ✔ archiveQuestion soft-deletes question to ARCHIVED status (0.4743ms)
-✔ Question Bank Persistence & Service CRUD Operations (7.0097ms)
-✔ Question Bank Durable Persistence Across File Reopen (22.0719ms)
-✔ CommonJS Runtime Contract & Public Exports (3.0974ms)
-ℹ tests 25
+  ✔ creates question defaulting to DRAFT and rejects explicit APPROVED create in repository/service (2.2932ms)
+  ✔ creates and retrieves question with durable persistence (1.0275ms)
+  ✔ updates question content and preserves domain invariants (0.4486ms)
+  ✔ validates lifecycle transition in service (0.5408ms)
+  ✔ filters by topic, difficulty, type, language, status, and search (1.1004ms)
+  ✔ enforces strict organizational ownership isolation (1.0295ms)
+  ✔ modifying approved question content cannot leave it silently approved (demotes to PENDING_REVIEW) (0.8524ms)
+  ✔ archiveQuestion soft-deletes question to ARCHIVED status (0.6937ms)
+✔ Question Bank Persistence & Service CRUD Operations (9.7338ms)
+✔ Question Bank Durable Persistence Across File Reopen (28.3773ms)
+✔ CommonJS Runtime Contract & Public Exports (8.1796ms)
+ℹ tests 47
 ℹ suites 0
-ℹ pass 25
+ℹ pass 47
 ℹ fail 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 121.5497
+ℹ duration_ms 168.8215
 ```
 
-### D. Codebase & Integrity Checks
-- **No legacy `.js` source/test files**: Verified 0 `.js` files in `src/` or `test/`.
-- **Zero `any` in `src/`**: Verified 0 occurrences of `any` across the entire application codebase.
-- **Zero BOM artifacts**: Scanned all tracked files, 0 UTF-8 BOM characters found.
-- **`dist/` ignored**: Verified `dist/` is listed in `.gitignore` and untracked.
+### D. Code & Secret Audit
+- `git diff --check`: Clean (0 whitespace/formatting errors).
+- Automated BOM audit: 0 files containing UTF-8 BOM.
+- Secret check: No API keys, credentials, or tokens committed.
 
 ---
 
-## 4. Roadmap Synchronization
-- Updated `docs/ROADMAP.md` to reflect `BAREA-002A` status as **COMPLETED**.
-- Verified all subsequent milestones (`BAREA-003` through `BAREA-013`) remain strictly **NOT STARTED**.
-
----
-
-## 5. Final Confirmation
-- TypeScript is now the official and only application language for BAREA.
-- PR #3 has been merged and closed.
-- Working tree is clean.
-- BAREA-003 has **NOT** been started.
+## 6. Scope & Lifecycle Boundary Attestation
+- **Human Review Preserved**: All AI-generated questions enter the Question Bank as `PENDING_REVIEW`. Direct creation of `APPROVED` questions remains prohibited by domain validation.
+- **Theological Boundary**: No automated theological certification is claimed. Structural validation checks format only.
+- **No BAREA-004+ Code**: No teacher review UI, approval UI, quiz authoring, live sessions, HTTP endpoints, or WebSocket transport was implemented.
