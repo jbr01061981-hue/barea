@@ -83,7 +83,7 @@ export function EditorClient({
     setIsSaving(true);
 
     try {
-      const res = await updateQuestionAction(question.organizationId, question.id, {
+      const res = await updateQuestionAction(question.id, {
         stem,
         options,
         correctOptionIndices,
@@ -113,7 +113,7 @@ export function EditorClient({
     setIsApproving(true);
 
     try {
-      const res = await approveQuestionAction(question.organizationId, question.id);
+      const res = await approveQuestionAction(question.id);
       if (!res.success) {
         setErrorMessage(res.error || 'Failed to approve question.');
       } else {
@@ -134,7 +134,7 @@ export function EditorClient({
     setIsArchiving(true);
 
     try {
-      const res = await archiveQuestionAction(question.organizationId, question.id);
+      const res = await archiveQuestionAction(question.id);
       if (!res.success) {
         setErrorMessage(res.error || 'Failed to archive question.');
       } else {
@@ -152,7 +152,6 @@ export function EditorClient({
 
     try {
       const res = await regenerateQuestionAction(
-        question.organizationId,
         question.id,
         instructions
       );

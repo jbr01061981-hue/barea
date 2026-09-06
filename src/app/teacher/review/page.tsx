@@ -1,4 +1,4 @@
-import { getQuestionBankService } from './db';
+import { getQuestionBankService, getAuthorizedTeacherContext } from './db';
 import { QuestionStatus } from '../../../domain/question';
 import { QueueClient } from './queue-client';
 
@@ -7,15 +7,17 @@ export const dynamic = 'force-dynamic';
 export default async function TeacherReviewPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ org?: string; id?: string }>;
+  searchParams?: Promise<{ id?: string }>;
 }) {
   const params = await searchParams;
-  const organizationId = params?.org || 'church-default';
   const initialActiveId = params?.id;
+
+  // Derive teacher context strictly on the server; browser input cannot influence tenant identity
+  const teacherContext = await getAuthorizedTeacherContext();
   const bankService = getQuestionBankService();
 
-  // Fetch only PENDING_REVIEW questions for this organization
-  const pendingQuestions = bankService.listQuestions(organizationId, {
+  // Fetch only PENDING_REVIEW questions for this authorized organization
+  const pendingQuestions = bankService.listQuestions(teacherContext.organizationId, {
     status: QuestionStatus.PENDING_REVIEW,
   });
 
@@ -23,7 +25,8 @@ export default async function TeacherReviewPage({
     <div className="py-2">
       <QueueClient
         initialQuestions={pendingQuestions}
-        organizationId={organizationId}
+        organizationName={teacherContext.displayName}
+        organizationId={teacherContext.organizationId}
         initialActiveId={initialActiveId}
       />
     </div>

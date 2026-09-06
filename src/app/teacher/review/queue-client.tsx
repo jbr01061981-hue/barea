@@ -11,12 +11,14 @@ import { batchApproveQuestionsAction } from './actions';
 export interface QueueClientProps {
   initialQuestions: Question[];
   organizationId: string;
+  organizationName?: string;
   initialActiveId?: string;
 }
 
 export function QueueClient({
   initialQuestions,
   organizationId,
+  organizationName,
   initialActiveId,
 }: QueueClientProps) {
   const [questions, setQuestions] = useState<Question[]>(initialQuestions);
@@ -58,7 +60,7 @@ export function QueueClient({
     const idsToApprove = Array.from(selectedIds);
 
     try {
-      const res = await batchApproveQuestionsAction(organizationId, idsToApprove);
+      const res = await batchApproveQuestionsAction(idsToApprove);
       if (!res.success) {
         setErrorMessage(res.error || 'Batch approval failed. No questions were approved.');
       } else {
@@ -128,7 +130,7 @@ export function QueueClient({
             Pending Review Queue
           </h1>
           <p className="text-xs text-slate-500">
-            Organization: <span className="font-semibold text-slate-700">{organizationId}</span> •{' '}
+            Organization: <span className="font-semibold text-slate-700">{organizationName || organizationId}</span> •{' '}
             {questions.length} questions awaiting teacher verification
           </p>
         </div>

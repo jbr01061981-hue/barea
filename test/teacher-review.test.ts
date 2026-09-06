@@ -24,9 +24,10 @@ import {
 import {
   setQuestionBankService,
   setAIGenerationService,
+  setAuthorizedTeacherContext,
 } from '../src/app/teacher/review/db';
 
-test('Teacher Review Workflow & Actions (BAREA-004)', async (t) => {
+test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (t) => {
   const repo = new SqliteQuestionRepository(':memory:');
   const bankService = new QuestionBankService(repo);
   const fakeProvider = new FakeAIProvider();
@@ -41,12 +42,13 @@ test('Teacher Review Workflow & Actions (BAREA-004)', async (t) => {
   t.after(() => {
     setQuestionBankService(null);
     setAIGenerationService(null);
+    setAuthorizedTeacherContext(null);
   });
 
   const orgA = 'church-review-alpha';
   const orgB = 'church-review-beta';
 
-  // Seed sample question directly through domain lifecycle
+  // Seed sample questions directly through domain lifecycle
   const draft1 = bankService.createQuestion({
     organizationId: orgA,
     stem: 'What was the first thing God created?',
@@ -88,23 +90,47 @@ test('Teacher Review Workflow & Actions (BAREA-004)', async (t) => {
     difficulty: QuestionDifficulty.EASY,
     language: 'en',
   });
-  bankService.transitionStatus(orgB, draftB.id, QuestionStatus.PENDING_REVIEW);
+  const pendingB = bankService.transitionStatus(orgB, draftB.id, QuestionStatus.PENDING_REVIEW)!;
 
-  await t.test('1. queue returns only pending questions for the specified organization', async () => {
-    const resA = await getPendingQuestionsAction(orgA);
+  // Set trusted context to Org A teacher initially
+  setAuthorizedTeacherContext({
+    userId: 'teacher-alpha',
+    organizationId: orgA,
+    displayName: 'Teacher Alpha',
+    role: 'teacher',
+  });
+
+  await t.test('1. queue returns only pending questions for the server-authorized organization', async () => {
+    const resA = await getPendingQuestionsAction();
     assert.ok(resA.success);
     assert.equal(resA.data?.length, 2);
     assert.ok(resA.data?.every((q: Question) => q.status === QuestionStatus.PENDING_REVIEW));
     assert.ok(resA.data?.every((q: Question) => q.organizationId === orgA));
 
-    const resB = await getPendingQuestionsAction(orgB);
+    // Switch context to Org B
+    setAuthorizedTeacherContext({
+      userId: 'teacher-beta',
+      organizationId: orgB,
+      displayName: 'Teacher Beta',
+      role: 'teacher',
+    });
+
+    const resB = await getPendingQuestionsAction();
     assert.ok(resB.success);
     assert.equal(resB.data?.length, 1);
     assert.equal(resB.data?.[0].organizationId, orgB);
+
+    // Reset back to Org A
+    setAuthorizedTeacherContext({
+      userId: 'teacher-alpha',
+      organizationId: orgA,
+      displayName: 'Teacher Alpha',
+      role: 'teacher',
+    });
   });
 
   await t.test('2. saving an edit updates content and preserves PENDING_REVIEW state (never approves)', async () => {
-    const editRes = await updateQuestionAction(orgA, pending1.id, {
+    const editRes = await updateQuestionAction(pending1.id, {
       stem: 'According to Genesis 1:3, what was created first?',
       explanation: 'God said, Let there be light.',
     });
@@ -115,28 +141,28 @@ test('Teacher Review Workflow & Actions (BAREA-004)', async (t) => {
     // Critical BAREA-004 invariant: edit does NOT approve
     assert.equal(editRes.data?.status, QuestionStatus.PENDING_REVIEW);
 
-    const verified = await getQuestionByIdAction(orgA, pending1.id);
+    const verified = await getQuestionByIdAction(pending1.id);
     assert.equal(verified.data?.status, QuestionStatus.PENDING_REVIEW);
   });
 
   await t.test('3. rejects invalid edit payload and leaves question unchanged', async () => {
-    const badRes = await updateQuestionAction(orgA, pending1.id, {
+    const badRes = await updateQuestionAction(pending1.id, {
       stem: '', // Empty stem is invalid
     });
     assert.equal(badRes.success, false);
     assert.match(badRes.error || '', /Question stem text is required and cannot be empty/);
 
-    const verified = await getQuestionByIdAction(orgA, pending1.id);
+    const verified = await getQuestionByIdAction(pending1.id);
     assert.notEqual(verified.data?.stem, '');
   });
 
   await t.test('4. explicit single approval transitions PENDING_REVIEW -> APPROVED', async () => {
-    const approveRes = await approveQuestionAction(orgA, pending1.id);
+    const approveRes = await approveQuestionAction(pending1.id);
     assert.ok(approveRes.success);
     assert.equal(approveRes.data?.status, QuestionStatus.APPROVED);
 
     // Verified removed from pending queue
-    const queue = await getPendingQuestionsAction(orgA);
+    const queue = await getPendingQuestionsAction();
     assert.equal(queue.data?.length, 1);
     assert.equal(queue.data?.[0].id, pending2.id);
   });
@@ -171,12 +197,12 @@ test('Teacher Review Workflow & Actions (BAREA-004)', async (t) => {
     });
     const pB = bankService.transitionStatus(orgA, qB.id, QuestionStatus.PENDING_REVIEW)!;
 
-    const batchRes = await batchApproveQuestionsAction(orgA, [pA.id, pB.id]);
+    const batchRes = await batchApproveQuestionsAction([pA.id, pB.id]);
     assert.ok(batchRes.success);
     assert.equal(batchRes.data?.approvedCount, 2);
 
-    const checkA = await getQuestionByIdAction(orgA, pA.id);
-    const checkB = await getQuestionByIdAction(orgA, pB.id);
+    const checkA = await getQuestionByIdAction(pA.id);
+    const checkB = await getQuestionByIdAction(pB.id);
     assert.equal(checkA.data?.status, QuestionStatus.APPROVED);
     assert.equal(checkB.data?.status, QuestionStatus.APPROVED);
   });
@@ -197,21 +223,21 @@ test('Teacher Review Workflow & Actions (BAREA-004)', async (t) => {
     });
     const pC = bankService.transitionStatus(orgA, qC.id, QuestionStatus.PENDING_REVIEW)!;
 
-    const failBatchRes = await batchApproveQuestionsAction(orgA, [pC.id, 'non-existent-id']);
+    const failBatchRes = await batchApproveQuestionsAction([pC.id, 'non-existent-id']);
     assert.equal(failBatchRes.success, false);
 
     // Crucial rollback verification: pC must STILL be PENDING_REVIEW
-    const checkC = await getQuestionByIdAction(orgA, pC.id);
+    const checkC = await getQuestionByIdAction(pC.id);
     assert.equal(checkC.data?.status, QuestionStatus.PENDING_REVIEW);
   });
 
   await t.test('7. archive action sets question status to ARCHIVED', async () => {
-    const archiveRes = await archiveQuestionAction(orgA, pending2.id);
+    const archiveRes = await archiveQuestionAction(pending2.id);
     assert.ok(archiveRes.success);
     assert.equal(archiveRes.data?.status, QuestionStatus.ARCHIVED);
 
     // Verified removed from pending queue
-    const queue = await getPendingQuestionsAction(orgA);
+    const queue = await getPendingQuestionsAction();
     assert.ok(!queue.data?.some((q: Question) => q.id === pending2.id));
   });
 
@@ -230,7 +256,6 @@ test('Teacher Review Workflow & Actions (BAREA-004)', async (t) => {
     });
     const pOrig = bankService.transitionStatus(orgA, qOrig.id, QuestionStatus.PENDING_REVIEW)!;
 
-    // Queue provider response for regeneration
     fakeProvider.queueResponse({
       questions: [
         {
@@ -247,16 +272,150 @@ test('Teacher Review Workflow & Actions (BAREA-004)', async (t) => {
       ],
     });
 
-    const regenRes = await regenerateQuestionAction(orgA, pOrig.id, 'Focus on God so loved the world');
+    const regenRes = await regenerateQuestionAction(pOrig.id, 'Focus on God so loved the world');
     assert.ok(regenRes.success);
     assert.ok(regenRes.data);
     assert.notEqual(regenRes.data.id, pOrig.id, 'New candidate must have a distinct ID');
     assert.equal(regenRes.data.stem, 'Regenerated Alternative Question');
     assert.equal(regenRes.data.status, QuestionStatus.PENDING_REVIEW);
+    assert.equal(regenRes.data.organizationId, orgA);
 
     // Verify original question is intact
-    const originalCheck = await getQuestionByIdAction(orgA, pOrig.id);
+    const originalCheck = await getQuestionByIdAction(pOrig.id);
     assert.equal(originalCheck.data?.stem, 'Original Question');
     assert.equal(originalCheck.data?.status, QuestionStatus.PENDING_REVIEW);
+  });
+
+  // =========================================================================
+  // SECURITY AUTHORIZATION & CROSS-ORGANIZATION REGRESSION TESTS
+  // =========================================================================
+
+  await t.test('9. security: teacher from Org A cannot retrieve a question belonging to Org B', async () => {
+    // Authorized as Org A teacher
+    setAuthorizedTeacherContext({
+      userId: 'teacher-alpha',
+      organizationId: orgA,
+      displayName: 'Teacher Alpha',
+      role: 'teacher',
+    });
+
+    const crossRead = await getQuestionByIdAction(pendingB.id);
+    assert.equal(crossRead.success, false);
+    assert.match(crossRead.error || '', /not found/i);
+  });
+
+  await t.test('10. security: teacher from Org A cannot edit a question belonging to Org B', async () => {
+    setAuthorizedTeacherContext({
+      userId: 'teacher-alpha',
+      organizationId: orgA,
+      displayName: 'Teacher Alpha',
+      role: 'teacher',
+    });
+
+    const crossEdit = await updateQuestionAction(pendingB.id, {
+      stem: 'ATTACKER OVERWRITE STEM',
+    });
+    assert.equal(crossEdit.success, false);
+
+    // Verify Org B question in bank was NOT modified
+    const untouched = bankService.getQuestion(orgB, pendingB.id);
+    assert.equal(untouched?.stem, 'Who built the ark?');
+  });
+
+  await t.test('11. security: teacher from Org A cannot approve a question belonging to Org B', async () => {
+    setAuthorizedTeacherContext({
+      userId: 'teacher-alpha',
+      organizationId: orgA,
+      displayName: 'Teacher Alpha',
+      role: 'teacher',
+    });
+
+    const crossApprove = await approveQuestionAction(pendingB.id);
+    assert.equal(crossApprove.success, false);
+
+    // Verify Org B question is still PENDING_REVIEW
+    const untouched = bankService.getQuestion(orgB, pendingB.id);
+    assert.equal(untouched?.status, QuestionStatus.PENDING_REVIEW);
+  });
+
+  await t.test('12. security: teacher from Org A cannot include Org B question in batch approval (fails closed)', async () => {
+    // Org A pending question
+    const qA = bankService.createQuestion({
+      organizationId: orgA,
+      stem: 'Org A Question for Mixed Batch',
+      type: QuestionType.MULTIPLE_CHOICE,
+      options: ['1', '2'],
+      correctOptionIndices: [0],
+      explanation: 'Exp',
+      scriptureReference: 'Gen 1',
+      topic: 'Topic',
+      difficulty: QuestionDifficulty.EASY,
+      language: 'en',
+    });
+    const pA = bankService.transitionStatus(orgA, qA.id, QuestionStatus.PENDING_REVIEW)!;
+
+    setAuthorizedTeacherContext({
+      userId: 'teacher-alpha',
+      organizationId: orgA,
+      displayName: 'Teacher Alpha',
+      role: 'teacher',
+    });
+
+    // Attempt batch with Org A question and Org B question
+    const mixedBatchRes = await batchApproveQuestionsAction([pA.id, pendingB.id]);
+    assert.equal(mixedBatchRes.success, false);
+
+    // All-or-nothing rollback: neither question was approved
+    const checkA = bankService.getQuestion(orgA, pA.id);
+    const checkB = bankService.getQuestion(orgB, pendingB.id);
+    assert.equal(checkA?.status, QuestionStatus.PENDING_REVIEW);
+    assert.equal(checkB?.status, QuestionStatus.PENDING_REVIEW);
+  });
+
+  await t.test('13. security: teacher from Org A cannot archive a question belonging to Org B', async () => {
+    setAuthorizedTeacherContext({
+      userId: 'teacher-alpha',
+      organizationId: orgA,
+      displayName: 'Teacher Alpha',
+      role: 'teacher',
+    });
+
+    const crossArchive = await archiveQuestionAction(pendingB.id);
+    assert.equal(crossArchive.success, false);
+
+    // Verify Org B question is NOT archived
+    const untouched = bankService.getQuestion(orgB, pendingB.id);
+    assert.equal(untouched?.status, QuestionStatus.PENDING_REVIEW);
+  });
+
+  await t.test('14. security: teacher from Org A cannot regenerate a question belonging to Org B', async () => {
+    setAuthorizedTeacherContext({
+      userId: 'teacher-alpha',
+      organizationId: orgA,
+      displayName: 'Teacher Alpha',
+      role: 'teacher',
+    });
+
+    const crossRegen = await regenerateQuestionAction(pendingB.id, 'Malicious prompt injection');
+    assert.equal(crossRegen.success, false);
+    assert.match(crossRegen.error || '', /not found/i);
+  });
+
+  await t.test('15. security: missing or invalid server teacher context fails closed', async () => {
+    // Invalidate teacher context
+    setAuthorizedTeacherContext({
+      userId: '',
+      organizationId: '',
+      displayName: 'Invalid',
+      role: 'teacher',
+    });
+
+    const queueRes = await getPendingQuestionsAction();
+    assert.equal(queueRes.success, false);
+    assert.match(queueRes.error || '', /unauthorized/i);
+
+    const approveRes = await approveQuestionAction('any-id');
+    assert.equal(approveRes.success, false);
+    assert.match(approveRes.error || '', /unauthorized/i);
   });
 });

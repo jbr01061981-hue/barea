@@ -1,93 +1,48 @@
-# AGY Execution Report — BAREA-004 Teacher Review & Approval
+# AGY Execution Report — BAREA-004 Teacher Review & Approval (Security Corrective Pass)
 
-## 1. Executive Summary
+## 1. Executive Summary & Defect Remediation
 
-Milestone **BAREA-004: Teacher Review & Approval** has been implemented and verified as ONE integrated milestone establishing BAREA's production frontend foundation while delivering the complete teacher review, editing, approval, batch approval, regeneration, and archive workflows.
+Milestone **BAREA-004: Teacher Review & Approval** has undergone a focused security corrective pass resolving the server-side authorization boundary defect identified during independent review.
 
-### Verified Deliverables
-1. **Production Frontend Stack & Foundation**:
-   - Next.js 16 (16.3.4), React 19 (19.2.8), React DOM (19.2.8), TypeScript (7.0.2), Tailwind CSS 4 (4.3.3), @tailwindcss/postcss (4.3.3), PostCSS (8.5.28), and React Aria Components (1.21.1).
-   - Pure Next.js App Router architecture (src/app/) with BAREA-owned design tokens and CSS variables (src/app/globals.css).
-   - Fully anti-AI-slop compliant: dignified Deep Slate Blue (#1E293B), Parchment background (#F8FAFC), Ochre Amber (#D97706) for Pending status, Forest Green (#059669) for Approved status, and high-contrast Scripture serif typography.
-   - Zero third-party visual themes: no shadcn/ui, no Material UI, no Ant Design, no Chakra UI.
-2. **Review Queue**:
-   - Organization-scoped queue fetching exclusively PENDING_REVIEW questions.
-   - Strict organization isolation and deterministic ordering.
-   - Triage row/card representations displaying stem, options count, type, Scripture reference, topic, difficulty, status, and review actions.
-   - Intentional empty queue state (Review Queue Clear) and batch action bar.
-3. **Review Workspace & Human Theological Inspection**:
-   - Side-by-side desktop layout (60% content editing / 40% Scripture & theological inspection) and clean single-column stacked mobile flow.
-   - Editing for stem, options, correct option index toggling, explanation, Scripture reference, topic, difficulty, and language.
-   - **Non-Negotiable Lifecycle Invariant**: Saving an edit updates draft content while strictly preserving PENDING_REVIEW status (never approves). Tested and verified.
-   - Scripture reference, stem, answers, and explanation presented together for theological review, explicitly distinguishing automated format/schema validation (Format Valid) from human theological discernment (Human Verification Gate).
-4. **Deliberate Approval & Transactional Batch Approval**:
-   - Explicit single approval button (PENDING_REVIEW -> APPROVED) with visual isolation from Save/Edit.
-   - Multi-select checkbox triage supporting atomic batch approval (ll-or-nothing). If any question fails transition in the batch, the entire operation is rolled back using SQLite transaction semantics.
-5. **Regeneration & Archive Workflows**:
-   - Regeneration delegates to existing BAREA-003 AIGenerationService, creating a brand-new candidate question in PENDING_REVIEW without overwriting or altering the original question.
-   - Discard/Archive soft-deletes the question into ARCHIVED status.
-6. **Multi-Agent Orchestration & Reconciled Findings**:
-   - Consulted ui_ux_designer subagent for visual tokens, accessible typography, 44px touch targets, and anti-AI-slop guardrails.
-   - Consulted rontend_architect subagent for Next.js App Router layout, Server Actions boundaries, React Aria primitives, and zero secret leakage.
-   - Automated testing suite expanded to 67 tests (100% passing).
-   - Performed L2 real browser visual inspection and L3 responsive mobile/tablet inspection with realistic seeded church quiz questions.
+### Blocking Defect Identified
+1. **Insecure Caller Authority (IDOR / Multi-tenant isolation bypass)**:
+   - Server Actions in src/app/teacher/review/actions.ts previously accepted organizationId from the caller. A malicious client could pass an arbitrary foreign organizationId to read, edit, approve, batch-approve, archive, or regenerate questions belonging to another church.
+   - The review page previously inspected ?org=... URL search parameters, allowing client-side impersonation and organization switching.
+
+### Corrective Implementation
+1. **Trusted Server-Side Teacher Context**:
+   - Implemented getAuthorizedTeacherContext() in src/app/teacher/review/db.ts.
+   - Derives teacher identity, display name, and authorized organizationId strictly on the server (using server-authoritative configuration DEFAULT_DEV_TEACHER_CONTEXT or test override).
+   - Fails closed (UnauthorizedError) if teacher context or organization identity is missing or invalid.
+2. **Hardened Server Actions**:
+   - Completely stripped organizationId arguments from all public Server Actions:
+     - getPendingQuestionsAction()
+     - getQuestionByIdAction(questionId)
+     - updateQuestionAction(questionId, updates)
+     - pproveQuestionAction(questionId)
+     - atchApproveQuestionsAction(questionIds)
+     - rchiveQuestionAction(questionId)
+     - egenerateQuestionAction(originalQuestionId, instructions)
+   - Every read and write query derives organizationId strictly from wait getAuthorizedTeacherContext().
+   - Forged or foreign question IDs return Not Found / fail closed without leaking cross-tenant data or existence.
+3. **Client UI Decoupling**:
+   - page.tsx now derives authorized organization strictly on the server and passes organizationName and organizationId strictly as read-only presentation metadata.
+   - All URL ?org=... handling was eliminated; browser query parameters have 0 influence on server data access or mutations.
+   - queue-client.tsx and editor-client.tsx invoke server actions without passing tenant identifiers.
 
 ---
 
-## 2. Environment & Baseline
+## 2. Multi-Agent Orchestration & Reconciled Findings
 
-- **Repository**: jbr01061981-hue/barea
-- **Active Branch**: area-004-teacher-review
-- **Target Branch**: main
-- **Base Commit**: 926de96c07045b1143e2871c2b5b143e36b6b2be
-- **Node.js**: 24.18.0
-- **npm**: 12.0.2
-- **Next.js**: 16.3.4 (Turbopack)
-- **React**: 19.2.8
-- **TypeScript**: 7.0.2
-- **Tailwind CSS**: 4.3.3
-- **React Aria Components**: 1.21.1
-
----
-
-## 3. Architecture & File Structure
-
-`	ext
-src/
-├── app/
-│   ├── globals.css                # Tailwind 4 imports, BAREA design tokens, font styles
-│   ├── layout.tsx                 # Root layout with church-first header, main container, footer
-│   ├── page.tsx                   # Root redirect to /teacher/review
-│   └── teacher/
-│       └── review/
-│           ├── actions.ts         # Server Actions (pending list, update, approve, batch, archive, regen)
-│           ├── db.ts              # Service instantiation & testing dependency injection hooks
-│           ├── editor-client.tsx  # Teacher Review Workspace (side-by-side editing & Scripture inspection)
-│           ├── queue-client.tsx   # Review Queue triage (desktop table, mobile cards, batch approve)
-│           └── page.tsx           # Dynamic Server Component fetching pending questions
-├── domain/                        # BAREA-002 Question domain entity, types, and validators
-├── persistence/                   # BAREA-002 SQLite repository with atomic transactions
-├── service/                       # BAREA-002 QuestionBankService
-├── ai/                            # BAREA-003 AI generation service and providers
-└── ui/
-    ├── button.tsx                 # BAREA-styled React Aria <Button> (primary, secondary, outline, danger)
-    ├── checkbox.tsx               # BAREA-styled React Aria <Checkbox> with indeterminate support
-    ├── text-field.tsx             # BAREA-styled React Aria <TextField> / <TextArea>
-    └── review-status.tsx          # BAREA status badges (Pending, Approved, Draft, Archived)
-`
-
----
-
-## 4. Subagent Orchestration & Reconciled Guidance
-
-| Subagent Role | Contribution / Guidance | Reconciled Implementation Result |
+| Subagent Role | Focus & Input | Reconciled Implementation Result |
 |---|---|---|
-| **UI/UX Design Specialist** (ui_ux_designer) | Color palette: Deep Slate Blue (#1E293B), Parchment (#F8FAFC), Ochre Amber (#D97706), Forest Green (#059669). Anti-AI-slop compliance: no neon, no purple gradients. 44px touch targets. Desktop side-by-side layout, mobile stacked flow. | Implemented in src/app/globals.css, src/ui/button.tsx, src/ui/review-status.tsx, and editor-client.tsx. Verified 0 gradient/slop patterns. |
-| **Frontend Architect** (rontend_architect) | Next.js 16 App Router structure. Clean Server Actions layer in ctions.ts. Safe client boundary ('use client' strictly on interactive clients). Atomic batch approval transaction wrapper. Zero leak of server secrets. Dependency injection hook for deterministic test runner. | Implemented in ctions.ts and db.ts. Client bundle imports only domain types and actions; no server or database code bundled into client. |
+| **Security Architect & Auditor** (security_auditor) | Audited Server Actions and recommended removing organizationId from public signatures, enforcing server-derived tenant resolution, and designing 7 attack vectors. | Implemented getAuthorizedTeacherContext() in db.ts, refactored all action signatures in ctions.ts, and verified fail-closed behavior. |
+| **Frontend Architect** (rontend_architect) | Verified Server Components/Actions boundaries, clean separation between display-only props and mutation authorization, and zero secret leakage to browser bundles. | page.tsx renders server-side context to client components as display-only props. Client bundle contains no database or server logic. |
+| **UI/UX Design Specialist** (ui_ux_designer) | Verified that removing client-side org selection preserves high-contrast church-first aesthetics, accessible labels, and 44px touch targets. | Organization display maintained in header banner as non-interactive label (Lead Sunday School Teacher • church-berea-default). |
 
 ---
 
-## 5. Automated Validation Results
+## 3. Automated Validation Results
 
 ### A. TypeScript Strict Type-Check (
 pm run typecheck)
@@ -103,33 +58,22 @@ pm run build)
 > barea@0.1.0 build
 > tsc
 `
-**Result**: Exited 0 with **0 errors**. Clean CommonJS and declaration output in dist/.
+**Result**: Exited 0 with **0 errors**. Clean CommonJS output in dist/.
 
 ### C. Next.js Production Build (
 pm run build:next)
 `	ext
-> barea@0.1.0 build:next
-> next build
-
 ▲ Next.js 16.3.4 (Turbopack)
-✓ Running next.config.js took 31ms
-  Creating an optimized production build ...
-✓ Compiled successfully in 789ms
-  Running TypeScript ...
-  Finished TypeScript in 386ms ...
-  Collecting page data using 5 workers ...
-  Generating static pages using 5 workers (3/3) in 682ms
-  Finalizing page optimization ...
-
+✓ Running next.config.js took 47ms
+✓ Compiled successfully in 6.3s
+  Finished TypeScript in 714ms ...
+✓ Generating static pages using 5 workers (3/3) in 878ms
 Route (app)
 ┌ ○ /
 ├ ○ /_not-found
 └ ƒ /teacher/review
-
-○  (Static)   prerendered as static content
-ƒ  (Dynamic)  server-rendered on demand
 `
-**Result**: Exited 0 with **0 errors**. All App Router pages and assets successfully compiled.
+**Result**: Exited 0 with **0 errors**.
 
 ### D. Automated Test Suite (
 pm test)
@@ -146,67 +90,75 @@ pm test)
 ▶ Question Bank Persistence & Service CRUD Operations (8 tests) ... ✔ pass
 ✔ Question Bank Durable Persistence Across File Reopen ... ✔ pass
 ✔ CommonJS Runtime Contract & Public Exports ... ✔ pass
-▶ Teacher Review Workflow & Actions (BAREA-004)
-  ✔ 1. queue returns only pending questions for the specified organization (1.2307ms)
-  ✔ 2. saving an edit updates content and preserves PENDING_REVIEW state (never approves) (1.2401ms)
-  ✔ 3. rejects invalid edit payload and leaves question unchanged (0.5006ms)
-  ✔ 4. explicit single approval transitions PENDING_REVIEW -> APPROVED (0.6066ms)
-  ✔ 5. batch approval transitions multiple questions atomically (1.5029ms)
-  ✔ 6. batch approval rolls back completely if any transition fails (all-or-nothing) (0.6729ms)
-  ✔ 7. archive action sets question status to ARCHIVED (0.5305ms)
-  ✔ 8. regeneration generates a new candidate without modifying or overwriting the original (1.686ms)
-✔ Teacher Review Workflow & Actions (BAREA-004) (13.8845ms)
+▶ Teacher Review Workflow, Actions & Security Boundary (BAREA-004)
+  ✔ 1. queue returns only pending questions for the server-authorized organization (1.0222ms)
+  ✔ 2. saving an edit updates content and preserves PENDING_REVIEW state (never approves) (1.0203ms)
+  ✔ 3. rejects invalid edit payload and leaves question unchanged (0.4051ms)
+  ✔ 4. explicit single approval transitions PENDING_REVIEW -> APPROVED (0.5372ms)
+  ✔ 5. batch approval transitions multiple questions atomically (1.0237ms)
+  ✔ 6. batch approval rolls back completely if any transition fails (all-or-nothing) (0.5122ms)
+  ✔ 7. archive action sets question status to ARCHIVED (0.4981ms)
+  ✔ 8. regeneration generates a new candidate without modifying or overwriting the original (1.3734ms)
+  ✔ 9. security: teacher from Org A cannot retrieve a question belonging to Org B (0.2787ms)
+  ✔ 10. security: teacher from Org A cannot edit a question belonging to Org B (0.3188ms)
+  ✔ 11. security: teacher from Org A cannot approve a question belonging to Org B (0.227ms)
+  ✔ 12. security: teacher from Org A cannot include Org B question in batch approval (fails closed) (0.6007ms)
+  ✔ 13. security: teacher from Org A cannot archive a question belonging to Org B (0.1715ms)
+  ✔ 14. security: teacher from Org A cannot regenerate a question belonging to Org B (0.1969ms)
+  ✔ 15. security: missing or invalid server teacher context fails closed (0.2969ms)
+✔ Teacher Review Workflow, Actions & Security Boundary (BAREA-004) (13.5528ms)
 
-ℹ tests 67
+ℹ tests 74
 ℹ suites 0
-ℹ pass 67
+ℹ pass 74
 ℹ fail 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 274.5923
+ℹ duration_ms 257.1802
 `
 
-### E. Code Quality, BOM & Whitespace Audit
+### E. Whitespace, BOM & Secret Audit
 - git diff --check: Clean (0 whitespace errors).
-- BOM Audit: 0 files with UTF-8 byte-order marks.
-- Secret Audit: Verified no API keys or credentials committed.
-- Build output .next/ and dist/ remain strictly ignored.
+- BOM check: 0 files with UTF-8 byte-order mark.
+- Secret audit: 0 credentials or secrets committed.
 
 ---
 
-## 6. L2 Browser & Visual Verification
+## 4. L2 Browser & Visual Security Verification
 
 - **Production Server**: Next.js 16 runtime on port 3456.
-- **Seeded Dataset**: Realistic biblical quiz questions (Acts 17:11 Berean examination, Matthew 5:9 Beatitudes peacemakers).
-- **Verified Complete Workflow**:
-  1. **Queue Retrieval**: Navigated to /teacher/review?org=church-berea-demo. Verified table displays pending items with Scripture references, difficulty badges, and PENDING_REVIEW indicators.
-  2. **Review & Edit Inspection**: Opened workbench for question 53b1b96a-6b3c-4d5a-b6eb-3b53f221f849. Verified stem, options, correct radio/checkbox, explanation, and Scripture reference rendered.
-  3. **Scripture & Theological Inspection**: Verified card displaying Scripture Reference: Acts 17:11, Format Valid badge, and explicit Human Verification Gate disclaimer.
-  4. **Save Edits Invariant**: Edited stem and explanation; verified question saved successfully while remaining strictly PENDING_REVIEW (never approved).
-  5. **Explicit Single Approval**: Triggered Approve to Question Bank. Verified state transitioned cleanly to APPROVED.
-  6. **Atomic Batch Approval**: Selected multiple pending questions; executed batch approval; verified all selected questions transitioned atomically into Question Bank.
-  7. **Regeneration**: Invoked Regenerate Candidate with custom instructions. Verified original question remained intact while a new pending question candidate was generated and staged in the queue.
-  8. **Archive / Discard**: Invoked Discard / Archive Question. Verified status transitioned to ARCHIVED.
+- **Seeded Multi-Tenant Data**:
+  - Authorized dev org (church-berea-default): Matthew 6:33 pending question.
+  - Victim org (church-victim-corp): Exodus 20:1-17 confidential pending question.
+- **Verification Performed**:
+  1. **Authorized Queue Load**: Teacher accesses /teacher/review. Page renders Matthew 6:33 question under Lead Sunday School Teacher • church-berea-default.
+  2. **Cross-Tenant URL Injection Attack**: Caller attempts to access /teacher/review?org=church-victim-corp.
+     - Result: Browser query parameter is completely ignored by server data access.
+     - The victim church's confidential questions are NOT rendered or leaked.
+     - DOM displays only the authorized dev teacher's data.
+  3. **Direct Server Action Invocations**:
+     - Attempting getQuestionByIdAction(victimQuestionId) returns { success: false, error: 'Question ... not found.' }.
+     - Attempting updateQuestionAction(victimQuestionId, ...) fails closed; victim database record remains untouched.
+     - Attempting pproveQuestionAction(victimQuestionId) fails closed; victim question status remains PENDING_REVIEW.
+     - Attempting atchApproveQuestionsAction([devQId, victimQId]) triggers complete transaction rollback; zero questions approved.
+     - Attempting rchiveQuestionAction(victimQuestionId) fails closed; victim question is not archived.
+     - Attempting egenerateQuestionAction(victimQuestionId) fails closed before AI generation is called.
 
 ---
 
-## 7. L3 Responsive Mobile & Tablet Verification
+## 5. L3 Responsive Mobile & Tablet Verification
 
 | Viewport Size | Device Context | Verified Visual & Interaction Behaviors |
 |---|---|---|
-| **1280px+ (Desktop)** | Teacher Workstation | Side-by-side 2-column layout (7 cols content editing, 5 cols Scripture inspection & teacher actions). Full table triage view with select-all checkbox and sticky header. |
-| **768px – 1024px (Tablet)** | iPad / Android Tablet | Fluid 2-column responsive layout, touch-friendly 44px min targets on buttons and form inputs, legible 14px/16px font sizing. |
-| **375px – 430px (Mobile)** | Smartphone (Host on the move) | Stacked single-column card layout replacing table. High-contrast Scripture pill badges, full-width action buttons, no horizontal overflow or clipped text. Batch selection accessible via card checkboxes. |
+| **1280px+ (Desktop)** | Teacher Workstation | Side-by-side 2-column layout (7 cols content editing, 5 cols Scripture inspection & teacher actions). Organization badge clearly displayed in toolbar. |
+| **768px – 1024px (Tablet)** | iPad / Android Tablet | Fluid 2-column responsive layout, touch-friendly 44px min targets on buttons and form inputs, legible font hierarchy. |
+| **375px – 430px (Mobile)** | Smartphone (Host on the move) | Stacked single-column card layout replacing table. Organization title wraps cleanly. Zero horizontal scroll. |
 
 ---
 
-## 8. Milestone Scope & Roadmap Status
+## 6. Scope & Roadmap Status
 
-- **BAREA-004 Status**: **IMPLEMENTED & VERIFIED — PR OPEN FOR INDEPENDENT REVIEW**.
-- **Human Review Gate**: Strictly enforced across UI, Server Actions, and Question domain.
-- **Milestone Discipline**:
-  - BAREA-005 (Quiz Authoring) has **NOT** been started.
-  - BAREA-006 through BAREA-013 have **NOT** been started.
-  - No future milestone routes, placeholders, live transports, or scoring engines introduced.
-- **PR Status**: Feature branch area-004-teacher-review pushed to origin. PR open against main for independent review. **PR remains unmerged.**
+- **PR Status**: PR [#6](https://github.com/jbr01061981-hue/barea/pull/6) remains **OPEN and UNMERGED**.
+- **Limitations**: The teacher context mechanism is development-only for local BAREA-004 verification. Full production authentication and multi-user RBAC remain scheduled for future production phases.
+- **Milestone Discipline**: BAREA-005 (Quiz Authoring) and subsequent milestones (BAREA-006 through BAREA-013) have **NOT** been started.

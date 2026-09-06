@@ -8,7 +8,11 @@ import {
   type Question,
   type UpdateQuestionPayload
 } from '../../../domain/question';
-import { getQuestionBankService, getAIGenerationService } from './db';
+import {
+  getQuestionBankService,
+  getAIGenerationService,
+  getAuthorizedTeacherContext,
+} from './db';
 
 function safeRevalidate(path: string) {
   try {
@@ -24,12 +28,15 @@ export interface ActionResponse<T = unknown> {
   error?: string;
 }
 
-export async function getPendingQuestionsAction(
-  organizationId: string
-): Promise<ActionResponse<Question[]>> {
+/**
+ * Returns pending review questions strictly scoped to the server-authorized teacher's organization.
+ * Client input cannot override or influence the organization context.
+ */
+export async function getPendingQuestionsAction(): Promise<ActionResponse<Question[]>> {
   try {
+    const context = await getAuthorizedTeacherContext();
     const bankService = getQuestionBankService();
-    const all = bankService.listQuestions(organizationId, {
+    const all = bankService.listQuestions(context.organizationId, {
       status: QuestionStatus.PENDING_REVIEW,
     });
     return { success: true, data: all };
@@ -39,13 +46,17 @@ export async function getPendingQuestionsAction(
   }
 }
 
+/**
+ * Retrieves a single question by ID, enforcing that it belongs strictly to the server-authorized organization.
+ * Forged IDs from other organizations return Not Found to prevent tenant disclosure.
+ */
 export async function getQuestionByIdAction(
-  organizationId: string,
   questionId: string
 ): Promise<ActionResponse<Question>> {
   try {
+    const context = await getAuthorizedTeacherContext();
     const bankService = getQuestionBankService();
-    const q = bankService.getQuestion(organizationId, questionId);
+    const q = bankService.getQuestion(context.organizationId, questionId);
     if (!q) {
       return { success: false, error: `Question ${questionId} not found.` };
     }
@@ -56,8 +67,11 @@ export async function getQuestionByIdAction(
   }
 }
 
+/**
+ * Updates a question's content, enforcing server-derived organization authority.
+ * Saving preserves PENDING_REVIEW state (ADR-007).
+ */
 export async function updateQuestionAction(
-  organizationId: string,
   questionId: string,
   updates: {
     stem?: string;
@@ -72,11 +86,12 @@ export async function updateQuestionAction(
   }
 ): Promise<ActionResponse<Question>> {
   try {
+    const context = await getAuthorizedTeacherContext();
     const bankService = getQuestionBankService();
-    
+
     // In accordance with ADR-007 / domain contract:
     // Updating question content must preserve PENDING_REVIEW state (never automatically approve).
-    const updated = bankService.updateQuestion(organizationId, questionId, updates);
+    const updated = bankService.updateQuestion(context.organizationId, questionId, updates);
     if (!updated) {
       return { success: false, error: `Failed to update question ${questionId}.` };
     }
@@ -88,15 +103,18 @@ export async function updateQuestionAction(
   }
 }
 
+/**
+ * Explicit single approval (PENDING_REVIEW -> APPROVED), scoped to server-derived organization.
+ */
 export async function approveQuestionAction(
-  organizationId: string,
   questionId: string
 ): Promise<ActionResponse<Question>> {
   try {
+    const context = await getAuthorizedTeacherContext();
     const bankService = getQuestionBankService();
     // Explicit transition: PENDING_REVIEW -> APPROVED
     const approved = bankService.transitionStatus(
-      organizationId,
+      context.organizationId,
       questionId,
       QuestionStatus.APPROVED
     );
@@ -111,8 +129,10 @@ export async function approveQuestionAction(
   }
 }
 
+/**
+ * Transactional batch approval (all-or-nothing), scoped strictly to server-derived organization.
+ */
 export async function batchApproveQuestionsAction(
-  organizationId: string,
   questionIds: string[]
 ): Promise<ActionResponse<{ approvedCount: number }>> {
   try {
@@ -120,13 +140,14 @@ export async function batchApproveQuestionsAction(
       return { success: false, error: 'No question IDs provided for batch approval.' };
     }
 
+    const context = await getAuthorizedTeacherContext();
     const bankService = getQuestionBankService();
 
     // MUST be transactional: all or nothing
     bankService.transaction(() => {
       for (const id of questionIds) {
         const res = bankService.transitionStatus(
-          organizationId,
+          context.organizationId,
           id,
           QuestionStatus.APPROVED
         );
@@ -144,13 +165,16 @@ export async function batchApproveQuestionsAction(
   }
 }
 
+/**
+ * Soft-deletes a question to ARCHIVED, scoped strictly to server-derived organization.
+ */
 export async function archiveQuestionAction(
-  organizationId: string,
   questionId: string
 ): Promise<ActionResponse<Question>> {
   try {
+    const context = await getAuthorizedTeacherContext();
     const bankService = getQuestionBankService();
-    const archived = bankService.archiveQuestion(organizationId, questionId);
+    const archived = bankService.archiveQuestion(context.organizationId, questionId);
     if (!archived) {
       return { success: false, error: `Failed to archive question ${questionId}.` };
     }
@@ -162,14 +186,17 @@ export async function archiveQuestionAction(
   }
 }
 
+/**
+ * Regenerates an alternative question candidate, preserving the original and scoping strictly to server-derived organization.
+ */
 export async function regenerateQuestionAction(
-  organizationId: string,
   originalQuestionId: string,
   teacherInstructions?: string
 ): Promise<ActionResponse<Question>> {
   try {
+    const context = await getAuthorizedTeacherContext();
     const bankService = getQuestionBankService();
-    const original = bankService.getQuestion(organizationId, originalQuestionId);
+    const original = bankService.getQuestion(context.organizationId, originalQuestionId);
     if (!original) {
       return { success: false, error: `Original question ${originalQuestionId} not found.` };
     }
@@ -178,7 +205,7 @@ export async function regenerateQuestionAction(
 
     // Generate 1 new question candidate preserving the topic/passage/difficulty/language
     const result = await aiService.generateQuizQuestions({
-      organizationId,
+      organizationId: context.organizationId,
       topic: original.topic,
       passageReference: original.scriptureReference,
       difficulty: original.difficulty,
