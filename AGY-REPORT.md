@@ -18,6 +18,8 @@ The milestone establishes a strongly typed, server-authoritative AI quiz generat
 - **Repository**: `jbr01061981-hue/barea`
 - **Branch**: `barea-003-ai-generation`
 - **Base Branch**: `main`
+- **PR**: [#4](https://github.com/jbr01061981-hue/barea/pull/4) — `feat: implement AI Quiz Generation pipeline (BAREA-003)`
+- **PR Status**: **OPEN** (unmerged)
 - **Baseline Commit Inspected**: `400ebc368ff66e51bf41846503c513be51888ba3`
 - **Node.js Version**: `v24.18.0`
 - **npm Version**: `12.0.2`
