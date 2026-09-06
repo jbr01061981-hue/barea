@@ -1,78 +1,115 @@
-# AGY-PROMPT — BAREA-002 Final Corrective Fix
+# AGY TASK — Merge Approved BAREA-002A and Clean Up
 
-Task: fix the remaining approval-gate defect in PR #2.
+## STATUS
 
-Read this file and execute exactly. Do not start BAREA-003 or implement any later milestone.
+BAREA-002A has completed independent review and is **APPROVED FOR MERGE**.
 
-## Blocking defect
+Repository: `jbr01061981-hue/barea`
+PR: `#3`
+Branch: `barea-ts-migration`
+Approved head: `327824f186f1b6ca80abebd2734f7cf7dd1225a9`
 
-`SqliteQuestionRepository.create()` currently permits a caller to create a question directly with `status: APPROVED`, bypassing:
+Do NOT start BAREA-003 during this task.
 
-`DRAFT -> PENDING_REVIEW -> APPROVED`
+## 1. VERIFY BEFORE MERGE
 
-This must be impossible.
+1. Confirm PR #3 is OPEN and UNMERGED.
+2. Confirm the PR head contains the approved BAREA-002A TypeScript migration.
+3. Do not merge if the PR head has changed unexpectedly from the approved implementation. If it has changed, STOP and report the difference.
 
-## Required fix
+## 2. MERGE
 
-Normal question creation must never produce `APPROVED` content directly.
+Merge PR #3 into `main` using the repository's normal GitHub merge workflow.
 
-Preferred behavior:
-- New questions are created as `DRAFT`.
-- Explicit `status: APPROVED` on create is rejected with the project's normal domain-validation error.
-- No bypass flag or privileged creation path.
-- Legitimate approval remains `DRAFT -> PENDING_REVIEW -> APPROVED`.
+Do not add unrelated changes during the merge.
 
-## Tests
+## 3. SYNCHRONIZE LOCAL MAIN
 
-Add a service/public-path regression test proving direct APPROVED creation is rejected.
+After the merge:
 
-Ensure normal creation produces `DRAFT`.
+1. Switch to `main`.
+2. Fetch from `origin`.
+3. Pull the merged `origin/main`.
+4. Confirm local `main` is synchronized with `origin/main`.
 
-Update existing fixtures that currently create questions directly as APPROVED. Where an approved state is required, create as DRAFT and transition through PENDING_REVIEW -> APPROVED.
+## 4. CLEAN UP THE MIGRATION BRANCH
 
-Run the complete test suite with:
+After confirming the merge succeeded:
 
-`npm test`
+1. Delete local branch `barea-ts-migration`.
+2. Delete remote branch `origin/barea-ts-migration`.
+3. Prune stale remote references.
 
-All tests must pass.
+Do not delete `main` or any other branch.
 
-## Preserve
+## 5. POST-MERGE VALIDATION
 
-Do not regress:
-- Easy / Medium / Hard question-level difficulty
-- MULTIPLE_CHOICE / TRUE_FALSE / MULTI_SELECT
-- lifecycle rules
-- approved-edit demotion to PENDING_REVIEW
-- archive/soft-delete behavior
-- organization isolation
-- SQLite persistence
-- search/filtering
-- approved-only retrieval
+On the merged `main`, actually run:
 
-## Scope
+- `npm install`
+- `npm run typecheck`
+- `npm run build`
+- `npm test`
 
-Do not implement AI, LLM integration, teacher review UI, quiz authoring, live quiz, participant joining, QR, projector, scoring, leaderboard, analytics, or unrelated architecture changes.
+Record the exact results.
 
-If `ApprovedQuestionModificationError` is unused, remove the unused class/import/export rather than adding behavior around it.
+Also verify:
 
-## Git
+- TypeScript is now the application language.
+- No migrated BAREA-002 `.js` source/test files have returned.
+- `dist/` remains ignored.
+- The approved BAREA-002 Question Bank behavior remains intact.
+- No BAREA-003+ functionality exists.
+- No AI/LLM, UI, HTTP API, authentication, WebSocket, realtime quiz, or quiz-authoring implementation was added.
 
-Stay on `barea-002-question-bank` and update existing PR #2. Make a focused corrective commit, push it, and do not merge.
+## 6. ROADMAP
 
-## AGY-REPORT.md
+Update `docs/ROADMAP.md` on `main` so the milestone status accurately reflects:
 
-At completion, create or update `AGY-REPORT.md` in the repository with:
+- `BAREA-001` = COMPLETED
+- `BAREA-002` = COMPLETED
+- `BAREA-002A` = COMPLETED
+- `BAREA-003` = NOT STARTED
 
-- task completed
-- exact commit SHA
-- files changed
-- direct-APPROVED creation behavior
-- tests added/updated
-- exact `npm test` result
-- final `git status`
-- confirmation PR #2 remains OPEN and unmerged
-- confirmation no BAREA-003+ functionality was added
+Do not mark BAREA-003 active or completed.
 
-Do not rely on terminal output alone; write the complete report into `AGY-REPORT.md` and commit it.
+## 7. AGY-REPORT.md
 
-Stop after completing this task.
+Update `AGY-REPORT.md` with the post-merge cleanup report, including:
+
+- PR #3 merge status;
+- merge commit SHA;
+- resulting `main` commit;
+- branch deletion results;
+- validation commands and exact results;
+- roadmap update;
+- final working-tree status;
+- confirmation that BAREA-003 remains NOT STARTED.
+
+Do not fabricate any SHA or result.
+
+## 8. STRICT SCOPE
+
+This task is ONLY:
+
+**Merge approved BAREA-002A → synchronize main → clean obsolete migration branch → validate → update roadmap/report → stop.**
+
+Do NOT:
+
+- start BAREA-003;
+- implement AI/LLM;
+- add UI/frontend;
+- add HTTP APIs;
+- add authentication;
+- add WebSockets/realtime transport;
+- add quiz authoring;
+- redesign architecture;
+- perform unrelated refactoring.
+
+## STOP CONDITION
+
+When PR #3 is merged, local `main` is synchronized with `origin/main`, the obsolete migration branch is removed, validation passes, `docs/ROADMAP.md` is updated, `AGY-REPORT.md` is updated, and the working tree is clean:
+
+**STOP.**
+
+Do not begin BAREA-003.

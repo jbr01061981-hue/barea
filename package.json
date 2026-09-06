@@ -3,9 +3,12 @@
   "version": "0.1.0",
   "description": "Synchronized church quiz platform",
   "private": true,
-  "main": "src/index.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
-    "test": "node --test \"test/**/*.test.js\" \"src/**/*.test.js\""
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist/test/**/*.test.js\""
   },
   "keywords": [
     "quiz",
@@ -13,5 +16,9 @@
     "education"
   ],
   "author": "",
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "typescript": "^7.0.2"
+  }
 }

@@ -13,6 +13,7 @@ This document tracks architectural principles, established decisions, and open t
 - [ADR-005: Separate Viewport Presentation Roles](#adr-005-separate-viewport-presentation-roles)
 - [ADR-006: Question Bank Durable Storage & Organizational Isolation](#adr-006-question-bank-durable-storage--organizational-isolation)
 - [ADR-007: Approved Question Immutability & Content Modification Invariants](#adr-007-approved-question-immutability--content-modification-invariants)
+- [ADR-008: TypeScript as BAREA Application Language](#adr-008-typescript-as-barea-application-language)
 - [Open Technical Decisions](#open-technical-decisions)
 
 ---
@@ -147,11 +148,32 @@ In BAREA, approved questions represent vetted, theologically accurate, and age-a
 
 ---
 
+## ADR-008: TypeScript as BAREA Application Language
+
+### Status
+**ACCEPTED (PRE-BAREA-003)**
+
+### Context
+BAREA-002 established the first executable domain and persistence layer in JavaScript. The upcoming BAREA milestones will introduce AI contracts, service boundaries, HTTP APIs, real-time state, shared client/server models, and multiple presentation surfaces. The project also requires maintainable public contracts and safe refactoring across work performed by multiple automated agents.
+
+### Decision
+1. **TypeScript is the standard application language for BAREA going forward.** New BAREA application code must use `.ts`/`.tsx` as appropriate rather than `.js`.
+2. Migrate the existing BAREA-002 JavaScript implementation to TypeScript before BAREA-003 begins, preserving behavior and public contracts.
+3. Keep the migration deliberately small: use TypeScript for compile-time type safety and explicit domain/repository/service contracts, while retaining the existing CommonJS runtime shape and Node.js built-in SQLite implementation unless a compatibility issue requires a documented change.
+4. TypeScript compiler output is the runtime artifact; source remains under `src/` and compiled output under `dist/`. Tests must continue to run in CI/local development against the compiled output or an explicitly justified TypeScript test runner.
+5. Avoid framework selection, frontend scaffolding, ORM adoption, database replacement, real-time transport selection, or AI provider selection as part of this decision.
+
+### Consequences
+- **Positive**: Stronger domain contracts, earlier error detection, safer refactoring, clearer interfaces for future agents, and better maintainability as BAREA expands.
+- **Negative**: Adds a compile step and development dependencies for TypeScript and Node.js type definitions; the existing BAREA-002 source must be migrated carefully without changing behavior.
+
+---
+
 ## Open Technical Decisions
 
-The following technical selections are intentionally deferred to future milestones:
+The following technical selections remain intentionally deferred:
 
-1. **Application Runtime & Framework**: Choice of backend and frontend frameworks.
-2. **Real-Time Communication Transport**: Specific protocol implementation for low-latency state synchronization.
-3. **Database & Data Layer**: Relational database engine, schema management, and live session state storage for distributed multi-server environments.
+1. **Application Framework**: Specific backend/frontend framework(s) and application composition.
+2. **Real-Time Communication Transport**: Specific protocol/library implementation.
+3. **Database & Data Layer for Distributed Environments**: Relational database engine, schema management, and live session state storage for multi-server deployment.
 4. **AI LLM Gateway**: Specific model provider and API integration for question generation.
