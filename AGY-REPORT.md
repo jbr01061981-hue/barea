@@ -24,6 +24,7 @@ The corrective pass addresses both review findings:
 - **Base Branch**: `main`
 - **PR**: [#4](https://github.com/jbr01061981-hue/barea/pull/4) — `feat: implement AI Quiz Generation pipeline (BAREA-003)`
 - **PR Status**: **OPEN** (unmerged, left for independent review)
+- **Head Commit SHA**: `2b6b695a763c436033e79543ae3a05864adf1975`
 - **Node.js Version**: `v24.18.0`
 - **npm Version**: `12.0.2`
 - **TypeScript Version**: `7.0.2`
