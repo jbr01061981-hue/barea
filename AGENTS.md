@@ -42,6 +42,7 @@ Every implementation decision must respect these foundational pillars:
 - Keep docs/DECISIONS.md updated with Architecture Decision Records (ADRs) whenever establishing architectural choices or recording open decisions.
 - Keep docs/ROADMAP.md synchronized with task statuses.
 - Read `docs/FRONTEND-STANDARD.md` before implementing or reviewing any frontend work.
+- Read `docs/VERIFICATION-GATES.md` before declaring a meaningful milestone complete.
 
 ### TypeScript Standard
 - **BAREA application code is TypeScript-first.** New application code must use `.ts`/`.tsx` as appropriate.
@@ -60,6 +61,15 @@ Every implementation decision must respect these foundational pillars:
 - Avoid generic AI/SaaS visual patterns and decorative UI without a concrete product purpose.
 - Follow `docs/FRONTEND-STANDARD.md` and ADR-010/ADR-011 for the full rules.
 
+### Verification & Release Gate Standard
+- Every meaningful milestone must follow Design -> Implementation -> Independent Verification -> Real-World Verification -> Acceptance -> Merge -> Post-Merge Verification.
+- Do not accept an AGY execution report as sufficient evidence of completion.
+- Independently inspect the actual implementation and actively attempt to find defects.
+- Use the required verification level from `docs/VERIFICATION-GATES.md`.
+- User-facing UI requires actual visual/browser verification; responsive behavior requires mobile/tablet verification; deployment-dependent behavior requires cloud verification; production readiness may require real church/pilot verification.
+- A milestone is not complete until the required verification levels pass and an explicit **GO** decision is recorded.
+- A **NO-GO** result blocks advancement until corrections are made and independently re-verified.
+
 ### Git & Branch Workflow
 - Feature branches must follow the naming convention: `barea-<milestone-number>-<short-description>` (e.g., `barea-001-foundation`).
 - Commits must adhere to Conventional Commits (e.g., `feat`, `fix`, `docs`, `chore`, `refactor`).
@@ -73,4 +83,5 @@ Refer to [docs/ROADMAP.md](./docs/ROADMAP.md) for the active milestone:
 - **Active**: BAREA-004 Teacher Review/Approval.
 - **Purpose**: Build the teacher review/approval capability for AI-generated PENDING_REVIEW questions, within the approved architectural boundaries.
 - **Frontend reference**: `docs/FRONTEND-STANDARD.md` and ADR-010/ADR-011.
+- **Verification reference**: `docs/VERIFICATION-GATES.md`.
 - **Constraint**: Do not start BAREA-005 or later functionality unless the roadmap explicitly advances to it.
