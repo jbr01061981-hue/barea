@@ -59,19 +59,24 @@ export function isDevelopmentEnvironment(): boolean {
 
 /**
  * Checks if the application is running in a recognized automated test execution environment.
- * Requires NODE_ENV === 'test', the '--test' CLI flag in process.argv, or Node test runner options in process.execArgv.
- * Does NOT perform arbitrary substring matching on process.argv.
+ * Requires NODE_ENV === 'test' or direct invocation with the exact '--test' argument.
+ *
+ * Security invariant:
+ * Arbitrary process.argv or process.execArgv values (e.g. '--test-evil', '--test=attacker',
+ * 'contest', 'testing-suite', etc.) NEVER satisfy test environment detection.
  */
 export function isTestEnvironment(): boolean {
-  if (process.env.NODE_ENV === 'test') return true;
-
-  // Node.js built-in test runner sub-processes receive test runner flags in execArgv
-  if (Array.isArray(process.execArgv) && process.execArgv.some(arg => arg === '--test' || arg.startsWith('--test-') || arg.startsWith('--test='))) {
+  if (process.env.NODE_ENV === 'test') {
     return true;
   }
 
-  // Direct CLI invocation of the test runner
+  // Exact CLI invocation of the test runner: `node --test`
   if (Array.isArray(process.argv) && process.argv.includes('--test')) {
+    return true;
+  }
+
+  // Exact Node.js process argument: `--test`
+  if (Array.isArray(process.execArgv) && process.execArgv.includes('--test')) {
     return true;
   }
 
