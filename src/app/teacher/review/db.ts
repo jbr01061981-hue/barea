@@ -58,29 +58,15 @@ export function isDevelopmentEnvironment(): boolean {
 }
 
 /**
- * Checks if the application is running in a recognized automated test execution environment.
- * Requires NODE_ENV === 'test' or direct invocation with the exact '--test' argument.
+ * Checks if the application is running in an explicitly authorized automated test execution environment.
+ * Requires process.env.NODE_ENV === 'test'.
  *
  * Security invariant:
- * Arbitrary process.argv or process.execArgv values (e.g. '--test-evil', '--test=attacker',
- * 'contest', 'testing-suite', etc.) NEVER satisfy test environment detection.
+ * Runtime process arguments (process.argv, process.execArgv) are untrusted runtime inputs
+ * and are NEVER used to establish or infer trusted test environment authorization.
  */
 export function isTestEnvironment(): boolean {
-  if (process.env.NODE_ENV === 'test') {
-    return true;
-  }
-
-  // Exact CLI invocation of the test runner: `node --test`
-  if (Array.isArray(process.argv) && process.argv.includes('--test')) {
-    return true;
-  }
-
-  // Exact Node.js process argument: `--test`
-  if (Array.isArray(process.execArgv) && process.execArgv.includes('--test')) {
-    return true;
-  }
-
-  return false;
+  return process.env.NODE_ENV === 'test';
 }
 
 /**

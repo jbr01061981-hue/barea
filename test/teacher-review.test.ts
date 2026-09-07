@@ -603,7 +603,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
     }
   });
 
-  await t.test('21. security: arbitrary CLI argv or execArgv containing test-looking strings cannot activate test authorization', async () => {
+  await t.test('21. security: arbitrary CLI argv or execArgv (including --test, --test-evil, --test=attacker) cannot activate test authorization', async () => {
     // Save original state
     const originalArgv = [...process.argv];
     const originalExecArgv = [...process.execArgv];
@@ -617,17 +617,19 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
       role: 'teacher' as const,
     };
 
+    // Every pattern must fail to activate test authorization
     const maliciousArgvPatterns = [
+      ['--test'],
+      ['--test-evil'],
+      ['--test=attacker'],
       ['--arg-with-test'],
       ['contest'],
       ['testing-suite'],
-      ['--test-evil'],
       ['--test-attacker'],
       ['--test-not-real'],
-      ['--test=attacker'],
       ['--test-fake'],
       ['--test-anything'],
-      ['--arg-with-test', 'contest', 'testing-suite', '--test-evil', '--test-attacker', '--test=attacker'],
+      ['--test', '--test-evil', '--test=attacker', '--arg-with-test', 'contest', 'testing-suite'],
     ];
 
     try {
@@ -668,7 +670,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
           /Forbidden: test authorization overrides cannot be executed/i
         );
 
-        // Test 3: Production environment + untrusted patterns
+        // Test 3: Production environment + untrusted patterns in argv and execArgv
         envMap.NODE_ENV = 'production';
         process.argv = ['node', 'server.js', ...pattern];
         process.execArgv = [...pattern];
@@ -683,7 +685,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
           /Forbidden: test authorization overrides cannot be executed/i
         );
 
-        // Test 4: Staging / unknown environment + untrusted patterns
+        // Test 4: Staging / unknown environment + untrusted patterns in argv and execArgv
         envMap.NODE_ENV = 'staging';
         process.argv = ['node', 'server.js', ...pattern];
         process.execArgv = [...pattern];
@@ -692,20 +694,6 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
         await assert.rejects(
           async () => getAuthorizedTeacherContext(),
           /runtime environment \(staging\) is not authorized/i
-        );
-        assert.throws(
-          () => setAuthorizedTeacherContext(attackerContext),
-          /Forbidden: test authorization overrides cannot be executed/i
-        );
-
-        // Test 5: Production + exact '--test' argument (production strictly overrides fixture hooks)
-        envMap.NODE_ENV = 'production';
-        process.argv = ['node', '--test', 'server.js'];
-        process.execArgv = ['--test'];
-
-        await assert.rejects(
-          async () => getAuthorizedTeacherContext(),
-          /production teacher authentication is required/i
         );
         assert.throws(
           () => setAuthorizedTeacherContext(attackerContext),
@@ -729,7 +717,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
     }
   });
 
-  await t.test('22. security: genuine Node test execution detection functions correctly without string heuristics', async () => {
+  await t.test('22. security: genuine repository test execution uses trusted NODE_ENV=test and establishes fixture context', async () => {
     const originalArgv = [...process.argv];
     const originalExecArgv = [...process.execArgv];
     const envMap = process.env as Record<string, string | undefined>;
@@ -745,43 +733,23 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
     try {
       setAuthorizedTeacherContext(null);
 
-      // Case A: NODE_ENV === 'test' (primary standard for automated test suites)
+      // Trusted environment declaration: NODE_ENV === 'test'
       delete envMap.NODE_ENV;
       envMap.NODE_ENV = 'test';
-      process.argv = ['node', 'test/teacher-review.test.js'];
+      process.argv = ['node', 'dist/test/teacher-review.test.js'];
       process.execArgv = [];
+
       assert.equal(isTestEnvironment(), true);
 
+      // Verify legitimate test fixture can set and get context
       setAuthorizedTeacherContext(fixtureContext);
-      const ctxA = await getAuthorizedTeacherContext();
-      assert.equal(ctxA.userId, 'teacher-fixture');
-      assert.equal(ctxA.organizationId, 'church-fixture');
+      const ctx = await getAuthorizedTeacherContext();
+      assert.equal(ctx.userId, 'teacher-fixture');
+      assert.equal(ctx.organizationId, 'church-fixture');
+      assert.equal(ctx.role, 'teacher');
 
+      // Verify clearing fixture context reverts properly
       setAuthorizedTeacherContext(null);
-
-      // Case B: Direct CLI invocation with exact '--test' argument
-      delete envMap.NODE_ENV;
-      process.argv = ['node', '--test', 'dist/test/teacher-review.test.js'];
-      process.execArgv = [];
-      assert.equal(isTestEnvironment(), true);
-
-      setAuthorizedTeacherContext(fixtureContext);
-      const ctxB = await getAuthorizedTeacherContext();
-      assert.equal(ctxB.userId, 'teacher-fixture');
-      assert.equal(ctxB.organizationId, 'church-fixture');
-
-      setAuthorizedTeacherContext(null);
-
-      // Case C: Exact '--test' argument in execArgv
-      delete envMap.NODE_ENV;
-      process.argv = ['node', 'test.js'];
-      process.execArgv = ['--test'];
-      assert.equal(isTestEnvironment(), true);
-
-      setAuthorizedTeacherContext(fixtureContext);
-      const ctxC = await getAuthorizedTeacherContext();
-      assert.equal(ctxC.userId, 'teacher-fixture');
-      assert.equal(ctxC.organizationId, 'church-fixture');
     } finally {
       process.argv = originalArgv;
       process.execArgv = originalExecArgv;
