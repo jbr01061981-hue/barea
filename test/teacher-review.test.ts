@@ -26,6 +26,7 @@ import {
   setAIGenerationService,
   setAuthorizedTeacherContext,
   getAuthorizedTeacherContext,
+  isTestEnvironment,
 } from '../src/app/teacher/review/db';
 
 test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (t) => {
@@ -586,6 +587,109 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
       assert.equal(queueRes.success, false);
       assert.match(queueRes.error || '', /runtime environment \(staging\) is not authorized/i);
     } finally {
+      if (prevNodeEnv !== undefined) {
+        envMap.NODE_ENV = prevNodeEnv;
+      } else {
+        delete envMap.NODE_ENV;
+      }
+      setAuthorizedTeacherContext({
+        userId: 'teacher-alpha',
+        organizationId: orgA,
+        displayName: 'Teacher Alpha',
+        role: 'teacher',
+      });
+    }
+  });
+
+  await t.test('21. security: arbitrary CLI argv containing "test" cannot activate test environment', async () => {
+    // Save original state
+    const originalArgv = [...process.argv];
+    const originalExecArgv = [...process.execArgv];
+    const envMap = process.env as Record<string, string | undefined>;
+    const prevNodeEnv = envMap.NODE_ENV;
+
+    try {
+      // Clear test override
+      setAuthorizedTeacherContext(null);
+
+      // Set non-test environment and inject arbitrary argv containing "test"
+      delete envMap.NODE_ENV;
+      process.argv = ['node', 'server.js', '--arg-with-test', 'contest', 'testing-suite'];
+      process.execArgv = [];
+
+      // isTestEnvironment must NOT return true for arbitrary argv substrings
+      assert.equal(isTestEnvironment(), false);
+
+      // In production mode with arbitrary "test" in argv, must fail closed
+      envMap.NODE_ENV = 'production';
+      assert.equal(isTestEnvironment(), false);
+      await assert.rejects(
+        async () => getAuthorizedTeacherContext(),
+        /production teacher authentication is required/i
+      );
+
+      // In unknown/unset NODE_ENV with arbitrary "test" in argv, must fail closed
+      delete envMap.NODE_ENV;
+      assert.equal(isTestEnvironment(), false);
+      await assert.rejects(
+        async () => getAuthorizedTeacherContext(),
+        /runtime environment \(unset\) is not authorized/i
+      );
+
+      // Even attempting to set a test fixture override must fail with Forbidden
+      assert.throws(
+        () => setAuthorizedTeacherContext({
+          userId: 'attacker',
+          organizationId: 'org-attacker',
+          displayName: 'Attacker',
+          role: 'teacher',
+        }),
+        /Forbidden: test authorization overrides cannot be executed/i
+      );
+    } finally {
+      process.argv = originalArgv;
+      process.execArgv = originalExecArgv;
+      if (prevNodeEnv !== undefined) {
+        envMap.NODE_ENV = prevNodeEnv;
+      } else {
+        delete envMap.NODE_ENV;
+      }
+      setAuthorizedTeacherContext({
+        userId: 'teacher-alpha',
+        organizationId: orgA,
+        displayName: 'Teacher Alpha',
+        role: 'teacher',
+      });
+    }
+  });
+
+  await t.test('22. security: genuine Node test execution detection still functions correctly', async () => {
+    const originalArgv = [...process.argv];
+    const originalExecArgv = [...process.execArgv];
+    const envMap = process.env as Record<string, string | undefined>;
+    const prevNodeEnv = envMap.NODE_ENV;
+
+    try {
+      delete envMap.NODE_ENV;
+
+      // Case A: CLI invocation with exact --test flag
+      process.argv = ['node', '--test', 'test.js'];
+      process.execArgv = [];
+      assert.equal(isTestEnvironment(), true);
+
+      // Case B: Runner child-process with test options in execArgv
+      process.argv = ['node', 'test.js'];
+      process.execArgv = ['--test-isolation=process', '--test-concurrency=0'];
+      assert.equal(isTestEnvironment(), true);
+
+      // Case C: NODE_ENV === 'test'
+      process.argv = ['node', 'app.js'];
+      process.execArgv = [];
+      envMap.NODE_ENV = 'test';
+      assert.equal(isTestEnvironment(), true);
+    } finally {
+      process.argv = originalArgv;
+      process.execArgv = originalExecArgv;
       if (prevNodeEnv !== undefined) {
         envMap.NODE_ENV = prevNodeEnv;
       } else {

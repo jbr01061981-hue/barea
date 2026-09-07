@@ -1,33 +1,26 @@
-# AGY Execution Report — BAREA-004 Teacher Review & Approval (Final Micro Security Hardening)
+# AGY Execution Report — BAREA-004 Teacher Review & Approval (Micro Security Correction #5)
 
 ## 1. Executive Summary & Defect Remediation
 
-Milestone **BAREA-004: Teacher Review & Approval** has undergone its final micro security correction to strictly eliminate implicit authorization for unset `NODE_ENV` and eliminate silent organization fallbacks in development mode.
+Milestone **BAREA-004: Teacher Review & Approval** has undergone micro security correction #5 to replace broad CLI argument substring matching with precise Node test-runner detection.
 
 ### Remaining Blocker Identified
-- In the previous iteration, `isDevelopmentOrTestEnvironment()` treated an **unset `NODE_ENV`** (`!env`) as development/test execution: `env === 'development' || env === 'test' || !env`.
-- It also permitted a hard-coded development organization fallback (`'church-berea-default'`) when `BAREA_DEV_ORG_ID` was unconfigured or missing.
-- Consequently, an ambiguous runtime environment could silently activate development teacher identity, violating the required security invariant:
-  *`no explicit trusted teacher context -> no Teacher Review access`*
+- In `src/app/teacher/review/db.ts`, `isTestEnvironment()` previously inspected `process.argv` using:
+  `process.argv.some(arg => arg.includes('test'))`
+- This broad substring match meant that an arbitrary CLI argument containing the substring `"test"` (such as `--arg-with-test` or `contest`) could inadvertently activate test environment mode in non-test runtime contexts.
 
 ### Remediation Implemented
-1. **Removed Implicit Authorization for Unset `NODE_ENV`**:
-   - Split environment checks into explicit functions in [src/app/teacher/review/db.ts](file:///C:/Users/Mr.Babu%20Rao/BAREA/src/app/teacher/review/db.ts):
-     - `isDevelopmentEnvironment()`: strictly requires `process.env.NODE_ENV === 'development'`.
-     - `isTestEnvironment()`: strictly requires `process.env.NODE_ENV === 'test'` or Node test runner flags (`process.execArgv.includes('--test')` / `process.argv.some(a => a.includes('test'))`).
-   - If `NODE_ENV` is unset or unknown (e.g. `'staging'`), and no trusted test override exists, `getAuthorizedTeacherContext()` immediately fails closed:
-     `Error: Unauthorized: runtime environment (unset) is not authorized for development teacher context. Explicit trusted teacher authentication is required.`
-   - In `production` (`process.env.NODE_ENV === 'production'`), it immediately throws:
-     `Error: Unauthorized: production teacher authentication is required. Development teacher context is disabled in production.`
-2. **Removed Silent Organization Fallback for Development Runtime**:
-   - In explicit development mode (`NODE_ENV === 'development'`), `BAREA_DEV_ORG_ID` is strictly required and whitespace-trimmed.
-   - If missing, empty, or whitespace-only, it fails closed without substituting `'church-berea-default'`:
-     `Error: Unauthorized: BAREA_DEV_ORG_ID is missing or empty. Development teacher context requires an explicit organization configuration and fails closed.`
-3. **Preserved IDOR & Action Authorization**:
-   - All server actions in `src/app/teacher/review/actions.ts` continue deriving organization identity strictly from trusted server context. No client-supplied `organizationId` parameter is accepted.
-   - Query string (`?org=...`) has 0 influence on server authorization or database queries.
-4. **Preserved Test Fixture Isolation**:
-   - `setAuthorizedTeacherContext()` remains a test-only fixture hook and throws `Forbidden` if executed in `production` or unauthorized environments.
+1. **Precise Node Test-Runner Detection**:
+   - In [src/app/teacher/review/db.ts](file:///C:/Users/Mr.Babu%20Rao/BAREA/src/app/teacher/review/db.ts), replaced arbitrary `process.argv` substring matching with exact checks:
+     - `process.env.NODE_ENV === 'test'`
+     - `process.execArgv` containing exact Node test-runner flags (`--test`, or starting with `--test-` / `--test=`, as passed by `node --test` to worker sub-processes)
+     - `process.argv.includes('--test')` for direct CLI invocations of `node --test`
+   - Arbitrary CLI arguments containing `"test"` can no longer satisfy `isTestEnvironment()`.
+2. **Preserved All Prior Security Boundaries**:
+   - Explicit `NODE_ENV=development` requirement and whitespace-trimmed `BAREA_DEV_ORG_ID` (no silent org fallbacks).
+   - Production, unset, and unknown (`'staging'`) environments fail closed immediately.
+   - All server actions strictly derive organization context from trusted server context; browser `?org=...` inputs have zero authorization effect.
+   - Test fixture hook `setAuthorizedTeacherContext()` throws `Forbidden` if called in production or unauthorized environments.
 
 ---
 
@@ -110,37 +103,42 @@ Route (app)
   ✔ 18. security: valid development configuration returns expected dev context
   ✔ 19. security: unset NODE_ENV without a trusted test override strictly fails closed
   ✔ 20. security: unknown/non-standard NODE_ENV without trusted authentication fails closed
+  ✔ 21. security: arbitrary CLI argv containing "test" cannot activate test environment
+  ✔ 22. security: genuine Node test execution detection still functions correctly
 ✔ Teacher Review Workflow, Actions & Security Boundary (BAREA-004)
 
-ℹ tests 79
+ℹ tests 81
 ℹ suites 0
-ℹ pass 79
+ℹ pass 81
 ℹ fail 0
-ℹ duration_ms 248ms
+ℹ duration_ms 307ms
 ```
 
 ### E. Code Quality, BOM & Secret Audit
 - `git diff --check`: Clean (0 formatting or whitespace errors).
 - BOM check: 0 files with UTF-8 byte-order mark.
 - Secret audit: 0 credentials, secrets, or keys committed.
+- Static check: 0 occurrences of `: any` in `src/`.
 
 ---
 
 ## 5. L2 Browser & Visual Security Verification
 
-- **Runtime Context**: Next.js 16 development server running on local port 3456 with `NODE_ENV=development` and explicit `BAREA_DEV_ORG_ID=church-berea-default`.
+- **Runtime Context**: Next.js 16 development server running on local port 3457 with `NODE_ENV=development` and explicit `BAREA_DEV_ORG_ID=church-berea-default`.
 - **Live Verification Observations**:
   1. `GET /teacher/review` -> HTTP 200. Successfully renders Pending Review Queue with authorized church identity `Lead Sunday School Teacher`.
-  2. `GET /teacher/review?org=victim-church-999` -> HTTP 200.
+  2. `GET /teacher/review?org=victim-org-override` -> HTTP 200.
      - Response inspection confirmed:
        - `HAS_AUTHORIZED_ORG: true` (`church-berea-default`)
        - `HAS_VICTIM_ORG_IN_PROPS: false`
-       - `HAS_VICTIM_ORG_IN_DATA: false`
-     - Query parameter has **zero authorization effect**. No victim organization questions or data rendered.
+       - Zero victim organization data rendered.
+     - Query parameter has **zero authorization effect**.
   3. Server execution with missing/empty `BAREA_DEV_ORG_ID`:
      - Fails closed with HTTP 500 error: `Unauthorized: BAREA_DEV_ORG_ID is missing or empty. Development teacher context requires an explicit organization configuration and fails closed.`
   4. Server execution with `NODE_ENV=production`:
      - Fails closed with HTTP 500 error: `Unauthorized: production teacher authentication is required. Development teacher context is disabled in production.`
+  5. Arbitrary CLI arguments (e.g. `--arg-with-test`, `contest`):
+     - Verified `isTestEnvironment()` returns `false`, preventing test authorization override bypasses.
 
 ---
 
@@ -155,6 +153,8 @@ Route (app)
 ## 7. Scope & Roadmap Status
 
 - **PR Status**: PR [#6](https://github.com/jbr01061981-hue/barea/pull/6) remains **OPEN and UNMERGED**.
-- **Security Invariant Satisfied**:
-  `ordinary browser input cannot choose tenant + ambiguous runtime cannot silently activate development tenant identity.`
+- **Security Invariants Satisfied**:
+  1. Arbitrary CLI arguments cannot activate test environment mode.
+  2. Ordinary browser input cannot choose tenant (`?org=` has zero effect).
+  3. Ambiguous runtime cannot silently activate development tenant identity.
 - **Milestone Discipline**: BAREA-005 (Quiz Authoring) and subsequent milestones (BAREA-006 through BAREA-013) have **NOT** been started.
