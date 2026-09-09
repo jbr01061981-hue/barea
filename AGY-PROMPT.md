@@ -1,328 +1,338 @@
-# AGY — BAREA-005 PR #7 — FINAL VERIFICATION & CONDITIONAL MERGE
+# AGY — BAREA-006 SHARE/JOIN — DESIGN GATE & MULTI-AGENT REVIEW
 
 ## STATUS
 
-PR #7 has completed the requested remediation pass and is now awaiting one final independent review.
+**BAREA-005 is COMPLETED — MERGED.**
 
-**Do not assume the reported remediation is correct. Verify the actual GitHub head.**
+Begin **BAREA-006 Share/Join design work only**. Do not implement application code until the design gate has passed independent review and received an explicit GO.
 
-Current expected PR:
-- PR: `#7`
-- Branch: `barea-005-quiz-authoring`
-- Reported head: `b4516c2`
-- Base: `main`
+Current roadmap boundary:
+- BAREA-006: Share/Join — NOT STARTED
+- BAREA-007: Live Quiz — NOT STARTED
+- BAREA-008+: NOT STARTED
 
-Do not start BAREA-006 or BAREA-007.
+BAREA-006 scope from `docs/ROADMAP.md`:
+- session creation with room access codes;
+- dynamic QR code generation for projector/mobile entry;
+- low-friction mobile landing flow;
+- nickname entry and validation;
+- duplicate-name handling;
+- session resumption.
+
+Do **not** implement BAREA-007 live state machine, WebSockets/realtime transport, synchronized timers, scoring, leaderboard, podium, or participant game-answer APIs in this milestone.
 
 ---
 
-# 1. MANDATORY SUB-AGENT FINAL REVIEW
+# 1. MANDATORY MULTI-AGENT DESIGN CHALLENGE
 
-Before any merge decision, MUST use available specialized sub-agents for a fresh final challenge.
+Before proposing or writing implementation code, MUST use available specialized sub-agents to independently challenge the BAREA-006 design.
 
-Use these independent roles:
+Use these roles:
 
-1. **Security Red Team**
-   - attempt tenant-isolation bypasses;
-   - attempt approval/lifecycle bypasses;
-   - attempt protected-field injection;
-   - attempt snapshot mutation/deletion;
-   - inspect answer-secrecy boundary;
-   - inspect server-action/runtime validation.
+1. **Security Architect / Red Team**
+   - threat-model room codes and join URLs;
+   - participant/session-token security;
+   - session enumeration/brute force resistance;
+   - tenant isolation;
+   - authorization boundaries between teacher/host and participant;
+   - nickname abuse/inappropriate input;
+   - replay, fixation, impersonation, and session-resumption attacks;
+   - verify that no correct answers or future live-game secrets are exposed.
 
-2. **SQLite / Persistence Specialist**
-   - inspect the real production repository wiring;
-   - inspect schema constraints, triggers, foreign keys, transactions;
-   - verify `BEGIN IMMEDIATE` publication semantics;
-   - verify TOCTOU behavior;
-   - verify rollback/failure injection.
+2. **SQLite / Persistence Architect**
+   - design session/participant persistence;
+   - organization/session ownership constraints;
+   - uniqueness and lifecycle rules;
+   - transaction boundaries and concurrent joins;
+   - room-code generation/storage;
+   - token persistence or hashing strategy;
+   - foreign keys, indexes, and cleanup/expiry strategy.
 
 3. **QA / Test Architect**
-   - verify the real test count;
-   - verify the 30 adversarial cases are genuinely executed;
-   - verify tests use production repository/service paths rather than weak substitutes;
-   - verify no dead/unused setup remains.
+   - define an adversarial test matrix before implementation;
+   - duplicate nickname races;
+   - invalid/expired/unknown room codes;
+   - cross-tenant access;
+   - session-resumption edge cases;
+   - malformed runtime payloads;
+   - concurrent joins;
+   - deterministic randomness/time seams;
+   - identify where integration tests must exercise real production repositories/services.
 
 4. **TypeScript / Code Quality Specialist**
-   - audit changed `src/` and relevant tests for `any`, unsafe casts, dead code, and false quality claims;
-   - compare source with AGY-REPORT.
+   - define strong domain contracts;
+   - runtime validation strategy;
+   - reject unsafe casts and `any` shortcuts;
+   - inspect serialization boundaries;
+   - identify ownership/lifecycle risks in repositories and services.
 
 5. **Frontend / Next.js Specialist**
-   - inspect teacher quiz routes and draft/published separation;
-   - check server/client boundary;
-   - check that published quiz views are read-only;
-   - check for accidental participant/live-game scope creep.
+   - design the mobile join route and teacher/host sharing surface;
+   - QR generation/rendering strategy;
+   - server/client boundaries;
+   - URL routing and safe navigation;
+   - accessibility and mobile-first UX;
+   - ensure participant pages receive only data appropriate to BAREA-006.
 
-6. **Independent Release Reviewer**
-   - compare final implementation against `docs/BAREA-005-DESIGN-GATE.md`;
-   - identify any remaining implementation/design divergence;
-   - provide a final GO/NO-GO recommendation.
+6. **Independent Product/Architecture Reviewer**
+   - compare the proposal against `docs/ROADMAP.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, and existing BAREA-001..005 implementation;
+   - identify scope drift;
+   - challenge assumptions about unauthenticated participant access;
+   - provide a design GO/NO-GO recommendation.
 
-Record only actual sub-agent participation and findings. Never fabricate agent IDs, reviews, or results.
+Record only actual sub-agent participation, findings, and recommendations. **Never fabricate agent IDs, transcripts, tool results, or conclusions.**
 
----
-
-# 2. VERIFY THE ACTUAL PR HEAD
-
-Fetch PR #7 and verify:
-
-- current head SHA;
-- changed-file list;
-- mergeable status;
-- PR state;
-- actual diff.
-
-Do not rely solely on the reported `b4516c2`. If the head moved, use the actual current head.
+After the initial design is revised, run the same six roles again for a **post-remediation design verification pass**.
 
 ---
 
-# 3. VERIFY THE REMEDIATIONS DIRECTLY IN CODE
+# 2. REQUIRED DESIGN ARTIFACT
 
-### A. Production `any`
+Create/update a dedicated design gate document:
 
-Confirm `src/persistence/sqlite-quiz-repository.ts` contains no `any`/`as any` in the final head.
+`docs/BAREA-006-DESIGN-GATE.md`
 
-Perform an actual source audit across changed production `src/` files.
+It must be a design specification, not implementation code.
 
-Do not declare zero occurrences unless the search proves it.
+The document must define at minimum:
 
-### B. Test repository wiring
+### A. Canonical BAREA-006 workflow
 
-Confirm `test/quiz-authoring.test.ts`:
+Specify the complete flow, for example:
 
-- no longer uses the handwritten `customQRepo` stub;
-- no longer contains `any` casts as a shortcut;
-- uses the real `SqliteQuestionRepository` and `QuestionBankService` against the intended shared `DatabaseSync` instance, or has a clearly justified typed alternative;
-- contains no dead repository instantiation.
+`Published Quiz -> Host creates Share Session -> Server generates room code + join URL -> QR displayed -> Participant opens join page -> enters nickname -> server validates/normalizes -> participant identity/session token established -> participant can resume the same session`
 
-This is a release criterion, not merely a quality preference.
+Clearly identify which steps belong to BAREA-006 and where BAREA-007 begins.
 
-### C. Test accounting
+### B. Session domain model
 
-Run/verify the real `npm test` result.
+Define the proposed session entity and lifecycle, including:
+- session ID;
+- organization ID;
+- published quiz ID/snapshot reference;
+- room access code;
+- status/lifecycle appropriate to BAREA-006;
+- created/updated/expiry metadata;
+- host ownership/authorization;
+- any required session configuration.
 
-Reconcile:
+Do not duplicate published quiz content unnecessarily. Sessions must reference the immutable BAREA-005 published quiz snapshot rather than mutable Question Bank data.
 
-- total number of executed tests;
-- baseline tests;
-- BAREA-005 tests;
-- skipped/cancelled/failing tests.
+### C. Participant identity model
 
-Do not use informal grouping such as `ADV-QZ-01 to ADV-QZ-04 = one test` to inflate or obscure coverage.
+Define:
+- participant ID;
+- session association;
+- display name rules;
+- duplicate-name behavior;
+- participant session token/resumption mechanism;
+- token entropy and lifetime;
+- whether raw tokens are persisted or only hashes/digests;
+- revocation/expiry behavior.
 
-Report the exact test runner count.
+Participant identity must remain scoped to a single session and must not become a global account system.
 
-### D. Adversarial coverage
+### D. Room code security
 
-Verify all intended adversarial scenarios are actually backed by executable tests and production paths where applicable:
+Specify:
+- exact code alphabet;
+- exact length;
+- entropy target;
+- generation method using a cryptographically secure RNG;
+- collision handling;
+- lookup behavior;
+- rate limiting/brute-force considerations;
+- whether codes are case-insensitive and how normalization works.
 
-- cross-tenant read;
-- cross-tenant update;
-- cross-tenant attach;
-- cross-tenant publish;
-- unapproved question rejection;
-- archive rejection;
-- TOCTOU demotion/archive/corruption;
-- protected-field injection;
-- duplicate questions;
-- ordering integrity;
-- invalid timers;
-- invalid scoring;
-- published quiz mutation protection;
-- snapshot independence;
-- raw snapshot UPDATE/DELETE triggers;
-- published quiz DELETE protection;
-- participant projection secrecy;
-- atomic rollback;
-- lifecycle archive/restore semantics;
-- scoring math boundaries.
+Do not use predictable IDs, timestamps, counters, or `Math.random()` as security-sensitive room-code generation.
 
-### E. Security boundaries
+### E. Join URL and QR contract
 
-Verify `getAuthorizedTeacherContext()` remains the sole tenant/teacher authority for current teacher actions.
+Define:
+- canonical join URL shape;
+- what data is encoded in the QR code;
+- whether QR contains only the join URL/code and never a privileged token;
+- URL validation and routing;
+- QR generation location/library strategy;
+- host/projector presentation contract.
 
-Verify client input cannot override:
+Do not implement the BAREA-011 projector experience here; provide only the reusable share surface required by BAREA-006.
 
-- `organizationId`;
-- ownership;
-- `id`;
-- lifecycle status;
-- snapshot data;
-- protected timestamps/metadata.
+### F. Nickname validation
 
-### F. Snapshot integrity
+Define exact runtime rules:
+- minimum/maximum length;
+- whitespace normalization;
+- Unicode handling;
+- control-character rejection;
+- HTML/script safety;
+- inappropriate-language filtering boundary;
+- duplicate comparison rules;
+- whether duplicate names receive a suffix, are rejected, or require user choice.
 
-Verify the snapshot implementation remains:
+Do not claim church-specific inappropriate-language certification in BAREA-006; BAREA-012 owns broader church validation.
 
-- self-contained;
-- database-protected from UPDATE/DELETE;
-- protected from physical deletion of the associated published quiz;
-- independent from later Question Bank modifications.
+### G. Session resumption
 
-### G. Publication/TOCTOU
+Define precisely how a participant resumes after:
+- page refresh;
+- browser restart;
+- temporary network loss;
+- reopening the join URL;
+- token expiry;
+- session closure/expiration.
 
-Verify publication actually:
+The design must prevent one participant from resuming another participant's identity.
 
-- starts the appropriate SQLite write transaction;
-- verifies Quiz ownership/status;
-- reads membership;
-- re-reads every Question;
-- checks organization ownership;
-- checks `APPROVED` state;
-- builds the snapshot;
-- inserts snapshot;
-- transitions Quiz to `PUBLISHED`;
-- commits atomically;
-- rolls back completely on injected failure.
+### H. Authorization / tenant isolation
 
-### H. Scoring
+Define separate authority boundaries for:
+- teacher/host session creation;
+- participant joining;
+- participant session resumption;
+- reading public join metadata.
 
-Verify the final code matches the design exactly:
+Host/teacher organization identity must come from the server-authorized context, never from browser-supplied `organizationId`, `tenantId`, role, or user ID.
 
-- STANDARD = 100/0;
-- SPEED_WEIGHTED = exact 50..100 formula;
-- correct timestamp boundary handling;
-- expired answers = 0.
+Participant requests must be scoped to the resolved session and participant token.
 
-### I. Lifecycle
+Cross-tenant session access must fail closed.
 
-Verify the actual implementation matches the approved semantics for:
+### I. Persistence and concurrency
 
-- `DRAFT -> PUBLISHED`;
-- `DRAFT -> ARCHIVED`;
-- draft archive restore;
-- `PUBLISHED -> ARCHIVED`;
-- published archived quiz cannot return to draft;
-- snapshot retained.
+Define:
+- tables and columns;
+- primary/foreign keys;
+- unique constraints;
+- indexes;
+- transaction boundaries;
+- concurrent room-code collision handling;
+- concurrent duplicate-name handling;
+- cleanup/expiry behavior.
 
-### J. Frontend
+Do not claim universal `BEGIN IMMEDIATE` usage unless the implementation actually adopts it. Specify the exact transaction semantics required for each race-sensitive operation.
 
-Inspect the actual routes/components for:
+### J. API/server-action boundaries
 
-- `/teacher/quizzes`;
-- `/teacher/quizzes/[id]`;
-- draft editor;
-- published/archived read-only inspector.
+For every BAREA-006 route/action, define:
+- caller;
+- trusted server context;
+- runtime input schema;
+- output schema;
+- sensitive fields excluded from responses;
+- authorization checks;
+- failure behavior.
 
-Verify no participant/live-game functionality was accidentally added.
+Client input must never be trusted merely because a TypeScript interface says it is valid.
 
----
+### K. Security boundary with BAREA-007
 
-# 4. RUN THE FULL VERIFICATION GATE
+Explicitly state that BAREA-006 does **not** expose:
+- answer keys;
+- explanations intended to be withheld during active questions;
+- live state transitions;
+- authoritative timers;
+- answer submission/scoring APIs;
+- leaderboard data.
 
-Run these exact commands on the final PR head:
+If a participant object contains a future session token, it must not itself authorize access to privileged quiz content.
 
-```text
-npm test
-npm run typecheck
-npm run build
-npm run build:next
-git diff --check
-```
+### L. Adversarial test matrix
 
-Also perform:
-
-```text
-source audit for `any` / `as any`
-```
-
-and inspect the final test source to prove the intended production repository wiring.
-
-Record exact real outputs/results.
-
----
-
-# 5. CHECK FOR NEW SECURITY ISSUES FROM REMEDIATION
-
-Do not limit the review to the two originally reported defects.
-
-Specifically challenge whether the shared `DatabaseSync` support introduced any lifecycle/ownership bug.
-
-Check:
-
-- who owns/closes the shared DB connection;
-- whether `SqliteQuestionRepository.close()` can accidentally close a DB still used by `SqliteQuizRepository`;
-- whether repository `transaction()` methods can nest incorrectly;
-- whether test-only failure injection can activate outside `NODE_ENV=test`;
-- whether new typed row interfaces correctly validate runtime SQLite data.
-
----
-
-# 6. DOCUMENTATION
-
-Update `AGY-REPORT.md` only after the final verification is complete.
-
-The report must state:
-
-- actual final PR head SHA;
-- actual mergeability/state;
-- exact test count;
-- exact build/typecheck results;
-- exact `any` audit result;
-- actual sub-agent participation and findings;
-- any remaining non-blocking observations;
-- final recommendation.
-
-Do not claim GO merely because sub-agents say GO. The report must reflect the actual repository evidence.
-
-Update `docs/ROADMAP.md` to `BAREA-005 = COMPLETED — PENDING MERGE` while PR #7 remains open.
-
-Do not mark BAREA-005 fully completed until merge occurs.
+Define named tests, including at minimum:
+- cross-tenant host session creation;
+- forged organization/user/role fields;
+- invalid room code;
+- nonexistent room code;
+- expired/closed session;
+- room-code brute-force/rate-limit design boundary;
+- room-code collision;
+- duplicate nickname;
+- duplicate nickname concurrent race;
+- malformed nickname payload;
+- oversized/Unicode/control-character nickname;
+- XSS/script payload;
+- participant token forgery;
+- participant token replay across sessions;
+- participant token expiry;
+- session resumption after refresh/restart;
+- another participant cannot resume the identity;
+- host cannot access another organization's session;
+- participant cannot enumerate privileged session data;
+- QR contains no privileged credential;
+- no BAREA-007 answer/live-state leakage.
 
 ---
 
-# 7. MERGE AUTHORIZATION RULE
+# 3. DESIGN-GATE INVARIANTS
 
-Only if ALL of the following are true:
+The BAREA-006 design MUST preserve all existing invariants:
 
-- no HIGH or CRITICAL security finding remains;
-- no unresolved authorization/lifecycle bypass remains;
-- production `src/` contains no unsafe `any`/`as any` introduced by this PR;
-- test suite passes with an honestly reported count;
-- adversarial tests exercise the real production repository/services;
-- typecheck passes;
-- CommonJS build passes;
-- Next.js production build passes;
-- diff check passes;
-- sub-agent final review finds no blocker;
-- implementation matches the approved BAREA-005 design gate;
-- no BAREA-006/007 scope creep exists.
+- strict organization isolation;
+- server-authoritative teacher/host authorization;
+- runtime input validation;
+- immutable BAREA-005 published quiz snapshots;
+- Question Bank approval lifecycle;
+- no direct mutation of published snapshots;
+- no participant access to correct answers during live gameplay;
+- no BAREA-007 implementation during BAREA-006;
+- no weakening of existing BAREA-001..005 security boundaries.
 
-Then **AND ONLY THEN**:
-
-1. record the final GO decision in `AGY-REPORT.md`;
-2. merge PR #7 into `main` using the repository's standard merge strategy;
-3. record the merge commit SHA;
-4. synchronize local `main`;
-5. clean only obsolete local build/test artifacts without deleting tracked project files;
-6. verify `git status` is clean;
-7. update `docs/ROADMAP.md` to `BAREA-005 = COMPLETED — MERGED`.
-
-If any merge condition fails:
-
-**DO NOT MERGE.**
-
-Create a focused remediation commit on PR #7 and repeat the verification cycle.
+Any proposed change to an existing ADR or architectural invariant must be explicitly documented and justified before implementation.
 
 ---
 
-# 8. FINAL RESPONSE REQUIRED
+# 4. REQUIRED SUB-AGENT OUTPUT
 
-Return:
+`AGY-REPORT.md` must record:
 
-1. sub-agent review summary;
-2. actual PR head SHA;
-3. exact test count/results;
-4. typecheck/build results;
-5. source `any` audit;
-6. production repository wiring verdict;
-7. security verdict;
-8. final GO/NO-GO;
-9. if GO and merged: merge commit SHA and final clean repository state;
-10. if NO-GO: exact blockers and next remediation.
+1. each actual sub-agent role used;
+2. actual findings/challenges;
+3. design changes made in response;
+4. second-pass verification findings;
+5. unresolved observations, if any;
+6. final design-gate recommendation.
+
+Never write `APPROVED`, `GO`, or similar language unless the corresponding sub-agent actually issued that conclusion.
+
+---
+
+# 5. IMPLEMENTATION GATE
+
+**DO NOT CREATE BAREA-006 APPLICATION CODE YET.**
+
+First complete:
+
+`BAREA-006 DESIGN -> SIX-AGENT CHALLENGE -> DESIGN REMEDIATION -> SIX-AGENT VERIFICATION -> INDEPENDENT REVIEW -> GO/NO-GO`
+
+Only after an explicit GO may AGY create a BAREA-006 implementation branch/PR.
+
+When implementation eventually begins:
+- keep it isolated to BAREA-006;
+- do not start BAREA-007;
+- use production repositories/services in integration tests;
+- use runtime validation at every server boundary;
+- add adversarial security tests before declaring completion.
+
+---
+
+# 6. ROADMAP / STOP CONDITION
+
+During design work:
+- keep `BAREA-006` as **NOT STARTED** until the design gate is formally approved;
+- do not mark it completed/pending implementation prematurely;
+- do not modify BAREA-007 status.
+
+When the design gate is complete:
+
+**STOP and await independent review.**
+
+Do not implement code.
+
+Final required sequence:
+
+`BAREA-006 DESIGN -> SUB-AGENT CHALLENGE -> REMEDIATION -> SUB-AGENT VERIFICATION -> INDEPENDENT REVIEW -> GO/NO-GO -> STOP`
 
 ## FINAL RULE
 
-**Do not merge based on AGY's previous report. Verify first.**
-
-`FINAL SUB-AGENT CHALLENGE -> INDEPENDENT VERIFICATION -> GO/NO-GO -> CONDITIONAL MERGE`
+**The design must be independently challenged before any BAREA-006 implementation begins. Passing tests from BAREA-005 do not constitute authorization for BAREA-006 implementation.**
