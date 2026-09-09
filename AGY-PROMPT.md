@@ -1,338 +1,308 @@
-# AGY — BAREA-006 SHARE/JOIN — DESIGN GATE & MULTI-AGENT REVIEW
+# AGY — BAREA-006 Share/Join — DESIGN GATE REMEDIATION
 
 ## STATUS
 
-**BAREA-005 is COMPLETED — MERGED.**
+**BAREA-006 DESIGN GATE IS NO-GO FOR IMPLEMENTATION.**
 
-Begin **BAREA-006 Share/Join design work only**. Do not implement application code until the design gate has passed independent review and received an explicit GO.
+The independent review found seven targeted design issues. Do NOT write BAREA-006 application code until these are remediated and independently re-verified.
 
-Current roadmap boundary:
-- BAREA-006: Share/Join — NOT STARTED
-- BAREA-007: Live Quiz — NOT STARTED
-- BAREA-008+: NOT STARTED
+Current design:
+- `docs/BAREA-006-DESIGN-GATE.md`
+- Branch: `main`
+- Design commit reported: `7232218`
 
-BAREA-006 scope from `docs/ROADMAP.md`:
-- session creation with room access codes;
-- dynamic QR code generation for projector/mobile entry;
-- low-friction mobile landing flow;
-- nickname entry and validation;
-- duplicate-name handling;
-- session resumption.
-
-Do **not** implement BAREA-007 live state machine, WebSockets/realtime transport, synchronized timers, scoring, leaderboard, podium, or participant game-answer APIs in this milestone.
+BAREA-005 remains completed and merged. Do not start BAREA-007.
 
 ---
 
-# 1. MANDATORY MULTI-AGENT DESIGN CHALLENGE
+# 1. MANDATORY SIX-AGENT REMEDIATION CHALLENGE
 
-Before proposing or writing implementation code, MUST use available specialized sub-agents to independently challenge the BAREA-006 design.
+Before modifying the design, use six specialized sub-agents independently:
 
-Use these roles:
-
-1. **Security Architect / Red Team**
-   - threat-model room codes and join URLs;
-   - participant/session-token security;
-   - session enumeration/brute force resistance;
-   - tenant isolation;
-   - authorization boundaries between teacher/host and participant;
-   - nickname abuse/inappropriate input;
-   - replay, fixation, impersonation, and session-resumption attacks;
-   - verify that no correct answers or future live-game secrets are exposed.
+1. **Security / Red Team**
+   - challenge join flooding and rate-limit bypass;
+   - trusted proxy/IP spoofing;
+   - snapshot/organization authorization;
+   - participant token/cookie security;
+   - nickname abuse and collision attacks;
+   - session lifecycle and host/participant privilege separation.
 
 2. **SQLite / Persistence Architect**
-   - design session/participant persistence;
-   - organization/session ownership constraints;
-   - uniqueness and lifecycle rules;
-   - transaction boundaries and concurrent joins;
-   - room-code generation/storage;
-   - token persistence or hashing strategy;
-   - foreign keys, indexes, and cleanup/expiry strategy.
+   - verify organization-to-snapshot integrity;
+   - join capacity and nickname collision atomicity;
+   - WAL/busy_timeout/BEGIN IMMEDIATE semantics;
+   - lazy expiration and room-code recycling;
+   - transaction boundaries and state_version;
+   - identify any concurrency assumptions that are not actually guaranteed by SQLite.
 
 3. **QA / Test Architect**
-   - define an adversarial test matrix before implementation;
-   - duplicate nickname races;
-   - invalid/expired/unknown room codes;
-   - cross-tenant access;
-   - session-resumption edge cases;
-   - malformed runtime payloads;
-   - concurrent joins;
-   - deterministic randomness/time seams;
-   - identify where integration tests must exercise real production repositories/services.
+   - turn every finding below into explicit adversarial tests;
+   - identify missing join-flood, IP-spoofing, cookie, nickname-suffix, tenant-integrity and lifecycle tests;
+   - require deterministic ClockProvider, RoomCodeGenerator and rate-limit seams;
+   - verify tests exercise production paths after implementation.
 
 4. **TypeScript / Code Quality Specialist**
-   - define strong domain contracts;
-   - runtime validation strategy;
-   - reject unsafe casts and `any` shortcuts;
-   - inspect serialization boundaries;
-   - identify ownership/lifecycle risks in repositories and services.
+   - review branded types and runtime validation;
+   - review server-action input/output contracts;
+   - inspect nickname and generated-suffix typing;
+   - require zero unsafe `any` in implementation;
+   - challenge ambiguous domain/error semantics.
 
-5. **Frontend / Next.js Specialist**
-   - design the mobile join route and teacher/host sharing surface;
-   - QR generation/rendering strategy;
-   - server/client boundaries;
-   - URL routing and safe navigation;
-   - accessibility and mobile-first UX;
-   - ensure participant pages receive only data appropriate to BAREA-006.
+5. **Frontend / Next.js Security Specialist**
+   - review participant cookie attributes;
+   - sessionStorage/cookie interaction;
+   - public `/join` boundary;
+   - QR/join URL construction;
+   - trusted proxy assumptions;
+   - ensure no BAREA-007 live functionality leaks into the design.
 
-6. **Independent Product/Architecture Reviewer**
-   - compare the proposal against `docs/ROADMAP.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, and existing BAREA-001..005 implementation;
-   - identify scope drift;
-   - challenge assumptions about unauthenticated participant access;
-   - provide a design GO/NO-GO recommendation.
+6. **Independent Architecture/Product Reviewer**
+   - compare the complete design against BAREA-005, ADRs, roadmap and church-use requirements;
+   - challenge all seven findings and identify additional contradictions;
+   - provide an independent final recommendation.
 
-Record only actual sub-agent participation, findings, and recommendations. **Never fabricate agent IDs, transcripts, tool results, or conclusions.**
-
-After the initial design is revised, run the same six roles again for a **post-remediation design verification pass**.
+Record only actual sub-agent participation and findings. Never fabricate IDs, transcripts or conclusions.
 
 ---
 
-# 2. REQUIRED DESIGN ARTIFACT
+# 2. MANDATORY DESIGN CORRECTIONS
 
-Create/update a dedicated design gate document:
+## Finding 1 — JOIN FLOODING / ADMISSION ABUSE
 
-`docs/BAREA-006-DESIGN-GATE.md`
+The current design rate-limits room-code lookup and join endpoints, but does not sufficiently define protection against repeated joins using a known valid room code and many different nicknames.
 
-It must be a design specification, not implementation code.
+Add an explicit admission-control design covering:
 
-The document must define at minimum:
+- per-IP join-attempt limit;
+- per-session join-attempt limit;
+- successful-join accounting where appropriate;
+- interaction with maxParticipants;
+- exact response behavior when throttled;
+- fail-closed behavior;
+- bounded memory/state for the limiter;
+- deterministic test seam.
 
-### A. Canonical BAREA-006 workflow
+Do not introduce CAPTCHA as a normal church-user requirement. If an escalation mechanism is specified, it must preserve low-friction normal joining.
 
-Specify the complete flow, for example:
+Add explicit adversarial coverage for valid-room-code join flooding.
 
-`Published Quiz -> Host creates Share Session -> Server generates room code + join URL -> QR displayed -> Participant opens join page -> enters nickname -> server validates/normalizes -> participant identity/session token established -> participant can resume the same session`
+---
 
-Clearly identify which steps belong to BAREA-006 and where BAREA-007 begins.
+# 3. FINDING 2 — TRUSTED PROXY / IP EXTRACTION
 
-### B. Session domain model
-
-Define the proposed session entity and lifecycle, including:
-- session ID;
-- organization ID;
-- published quiz ID/snapshot reference;
-- room access code;
-- status/lifecycle appropriate to BAREA-006;
-- created/updated/expiry metadata;
-- host ownership/authorization;
-- any required session configuration.
-
-Do not duplicate published quiz content unnecessarily. Sessions must reference the immutable BAREA-005 published quiz snapshot rather than mutable Question Bank data.
-
-### C. Participant identity model
-
-Define:
-- participant ID;
-- session association;
-- display name rules;
-- duplicate-name behavior;
-- participant session token/resumption mechanism;
-- token entropy and lifetime;
-- whether raw tokens are persisted or only hashes/digests;
-- revocation/expiry behavior.
-
-Participant identity must remain scoped to a single session and must not become a global account system.
-
-### D. Room code security
+The current design says to use `CF-Connecting-IP` / `X-Forwarded-For` with fallback, but does not define which proxy is trusted.
 
 Specify:
-- exact code alphabet;
-- exact length;
-- entropy target;
-- generation method using a cryptographically secure RNG;
-- collision handling;
-- lookup behavior;
-- rate limiting/brute-force considerations;
-- whether codes are case-insensitive and how normalization works.
 
-Do not use predictable IDs, timestamps, counters, or `Math.random()` as security-sensitive room-code generation.
+- authoritative deployment/proxy boundary;
+- which header is trusted;
+- that arbitrary client-supplied forwarding headers cannot override the trusted identity;
+- behavior when the trusted header is absent;
+- fallback behavior;
+- normalization/validation of the resulting IP identifier;
+- tests proving spoofed `X-Forwarded-For` and `CF-Connecting-IP` cannot bypass rate limiting.
 
-### E. Join URL and QR contract
-
-Define:
-- canonical join URL shape;
-- what data is encoded in the QR code;
-- whether QR contains only the join URL/code and never a privileged token;
-- URL validation and routing;
-- QR generation location/library strategy;
-- host/projector presentation contract.
-
-Do not implement the BAREA-011 projector experience here; provide only the reusable share surface required by BAREA-006.
-
-### F. Nickname validation
-
-Define exact runtime rules:
-- minimum/maximum length;
-- whitespace normalization;
-- Unicode handling;
-- control-character rejection;
-- HTML/script safety;
-- inappropriate-language filtering boundary;
-- duplicate comparison rules;
-- whether duplicate names receive a suffix, are rejected, or require user choice.
-
-Do not claim church-specific inappropriate-language certification in BAREA-006; BAREA-012 owns broader church validation.
-
-### G. Session resumption
-
-Define precisely how a participant resumes after:
-- page refresh;
-- browser restart;
-- temporary network loss;
-- reopening the join URL;
-- token expiry;
-- session closure/expiration.
-
-The design must prevent one participant from resuming another participant's identity.
-
-### H. Authorization / tenant isolation
-
-Define separate authority boundaries for:
-- teacher/host session creation;
-- participant joining;
-- participant session resumption;
-- reading public join metadata.
-
-Host/teacher organization identity must come from the server-authorized context, never from browser-supplied `organizationId`, `tenantId`, role, or user ID.
-
-Participant requests must be scoped to the resolved session and participant token.
-
-Cross-tenant session access must fail closed.
-
-### I. Persistence and concurrency
-
-Define:
-- tables and columns;
-- primary/foreign keys;
-- unique constraints;
-- indexes;
-- transaction boundaries;
-- concurrent room-code collision handling;
-- concurrent duplicate-name handling;
-- cleanup/expiry behavior.
-
-Do not claim universal `BEGIN IMMEDIATE` usage unless the implementation actually adopts it. Specify the exact transaction semantics required for each race-sensitive operation.
-
-### J. API/server-action boundaries
-
-For every BAREA-006 route/action, define:
-- caller;
-- trusted server context;
-- runtime input schema;
-- output schema;
-- sensitive fields excluded from responses;
-- authorization checks;
-- failure behavior.
-
-Client input must never be trusted merely because a TypeScript interface says it is valid.
-
-### K. Security boundary with BAREA-007
-
-Explicitly state that BAREA-006 does **not** expose:
-- answer keys;
-- explanations intended to be withheld during active questions;
-- live state transitions;
-- authoritative timers;
-- answer submission/scoring APIs;
-- leaderboard data.
-
-If a participant object contains a future session token, it must not itself authorize access to privileged quiz content.
-
-### L. Adversarial test matrix
-
-Define named tests, including at minimum:
-- cross-tenant host session creation;
-- forged organization/user/role fields;
-- invalid room code;
-- nonexistent room code;
-- expired/closed session;
-- room-code brute-force/rate-limit design boundary;
-- room-code collision;
-- duplicate nickname;
-- duplicate nickname concurrent race;
-- malformed nickname payload;
-- oversized/Unicode/control-character nickname;
-- XSS/script payload;
-- participant token forgery;
-- participant token replay across sessions;
-- participant token expiry;
-- session resumption after refresh/restart;
-- another participant cannot resume the identity;
-- host cannot access another organization's session;
-- participant cannot enumerate privileged session data;
-- QR contains no privileged credential;
-- no BAREA-007 answer/live-state leakage.
+Do not treat arbitrary HTTP forwarding headers as trustworthy security identity by default.
 
 ---
 
-# 3. DESIGN-GATE INVARIANTS
+# 4. FINDING 3 — SNAPSHOT / ORGANIZATION TENANT INTEGRITY
 
-The BAREA-006 design MUST preserve all existing invariants:
+Make the following invariant explicit and mandatory:
 
-- strict organization isolation;
-- server-authoritative teacher/host authorization;
-- runtime input validation;
-- immutable BAREA-005 published quiz snapshots;
-- Question Bank approval lifecycle;
-- no direct mutation of published snapshots;
-- no participant access to correct answers during live gameplay;
-- no BAREA-007 implementation during BAREA-006;
-- no weakening of existing BAREA-001..005 security boundaries.
+> A session can reference only a published snapshot belonging to the same organization as the authorized host context.
 
-Any proposed change to an existing ADR or architectural invariant must be explicitly documented and justified before implementation.
+Session creation must resolve the snapshot through the authorized organization and verify its organization identity before insertion.
+
+Where practical, strengthen the SQLite schema with an integrity relationship preventing an inconsistent session organization/snapshot organization pair.
+
+Define exact behavior for cross-tenant attempts: fail closed without revealing whether the other tenant's snapshot exists.
+
+Add/retain adversarial test coverage for this invariant, including direct persistence-level integrity where feasible.
 
 ---
 
-# 4. REQUIRED SUB-AGENT OUTPUT
+# 5. FINDING 4 — NICKNAME / GENERATED SUFFIX CONTRADICTION
 
-`AGY-REPORT.md` must record:
+The current user nickname regex does not allow parentheses, while collision suffixing generates names such as `Sarah (2)`.
 
-1. each actual sub-agent role used;
-2. actual findings/challenges;
-3. design changes made in response;
-4. second-pass verification findings;
-5. unresolved observations, if any;
-6. final design-gate recommendation.
+Resolve this explicitly.
 
-Never write `APPROVED`, `GO`, or similar language unless the corresponding sub-agent actually issued that conclusion.
+Define separately:
 
----
+- raw user-input validation;
+- canonical normalized nickname;
+- server-generated display-name suffixing;
+- normalized uniqueness key;
+- final display-name length limit;
+- behavior when a base name is near the 24-character maximum;
+- maximum suffix `(99)` behavior;
+- collision exhaustion behavior;
+- transaction/unique-constraint retry behavior.
 
-# 5. IMPLEMENTATION GATE
+Do not silently allow arbitrary parentheses in user input merely to solve this contradiction.
 
-**DO NOT CREATE BAREA-006 APPLICATION CODE YET.**
+Ensure generated names remain valid by the domain's own representation rules.
 
-First complete:
-
-`BAREA-006 DESIGN -> SIX-AGENT CHALLENGE -> DESIGN REMEDIATION -> SIX-AGENT VERIFICATION -> INDEPENDENT REVIEW -> GO/NO-GO`
-
-Only after an explicit GO may AGY create a BAREA-006 implementation branch/PR.
-
-When implementation eventually begins:
-- keep it isolated to BAREA-006;
-- do not start BAREA-007;
-- use production repositories/services in integration tests;
-- use runtime validation at every server boundary;
-- add adversarial security tests before declaring completion.
+Add adversarial tests for:
+- 24-character base nickname;
+- `Sarah`, `Sarah (2)`, etc.;
+- suffix collision races;
+- suffix exhaustion;
+- Unicode/NFKC collisions.
 
 ---
 
-# 6. ROADMAP / STOP CONDITION
+# 6. FINDING 5 — PARTICIPANT COOKIE SECURITY
 
-During design work:
-- keep `BAREA-006` as **NOT STARTED** until the design gate is formally approved;
-- do not mark it completed/pending implementation prematurely;
-- do not modify BAREA-007 status.
+The participant authentication cookie is a bearer credential.
 
-When the design gate is complete:
+The design must explicitly require:
 
-**STOP and await independent review.**
+- `HttpOnly`;
+- `Secure` in production;
+- `SameSite=Lax` (or a stronger justified policy);
+- `Path=/join`;
+- appropriate expiration/max-age;
+- no Domain attribute unless specifically justified;
+- explicit local-development/test behavior without weakening production requirements.
 
-Do not implement code.
+The cookie must never be intentionally script-readable.
 
-Final required sequence:
+Keep sessionStorage if desired for tab isolation, but clearly define precedence and reconciliation between sessionStorage and the secure cookie.
 
-`BAREA-006 DESIGN -> SUB-AGENT CHALLENGE -> REMEDIATION -> SUB-AGENT VERIFICATION -> INDEPENDENT REVIEW -> GO/NO-GO -> STOP`
+Add an adversarial/security test that verifies the emitted cookie attributes.
 
-## FINAL RULE
+---
 
-**The design must be independently challenged before any BAREA-006 implementation begins. Passing tests from BAREA-005 do not constitute authorization for BAREA-006 implementation.**
+# 7. FINDING 6 — BAREA-006 LOBBY BOUNDARY
+
+The design may model future statuses, but BAREA-006 must not become the live-state authority.
+
+Explicitly define:
+
+- BAREA-006 creates sessions in `LOBBY` only;
+- BAREA-006 join/resume/lock/kick operations do not advance the live quiz state;
+- `LOBBY -> ACTIVE` is exclusively owned by BAREA-007;
+- BAREA-006 does not implement authoritative timers, question progression, answer submission, scoring, WebSockets, SSE or Socket.IO;
+- if resume accepts `ACTIVE` for forward compatibility, specify that BAREA-006 merely authenticates/preserves identity and does not control the ACTIVE state.
+
+Add a boundary test/specification preventing accidental live-state implementation.
+
+---
+
+# 8. FINDING 7 — GLOBAL RATE-LIMITER BLAST RADIUS
+
+The current global sentinel (`250 consecutive invalid attempts`) could itself become a denial-of-service mechanism against legitimate users.
+
+Redesign or precisely constrain it.
+
+Specify:
+
+- exact scope of the global bucket;
+- whether it affects lookup only or join as well;
+- threshold semantics;
+- duration/cooldown;
+- recovery behavior;
+- whether valid requests remain possible;
+- atomicity/concurrency;
+- bounded memory;
+- observability without leaking sensitive information.
+
+Prefer rate limiting with bounded blast radius. A malicious actor must not trivially be able to disable joining for every church session by generating invalid requests.
+
+Add adversarial tests for attacker-triggered limiter exhaustion and legitimate-user recovery.
+
+---
+
+# 9. REQUIRED SECOND-PASS CHALLENGE
+
+After all design corrections are made, use all six agents again.
+
+Each must specifically challenge the seven findings above and any changes caused by them.
+
+Required second-pass roles:
+
+- Security Red Team
+- SQLite/Persistence Architect
+- QA/Test Architect
+- TypeScript/Code Quality Specialist
+- Frontend/Next.js Security Specialist
+- Independent Architecture/Product Reviewer
+
+No implementation is authorized merely because the agents say GO. The final design must be internally consistent and demonstrably implementable.
+
+Record actual findings only.
+
+---
+
+# 10. REQUIRED DESIGN-GATE CHECKLIST
+
+Before stopping, verify that `docs/BAREA-006-DESIGN-GATE.md` explicitly contains:
+
+- [ ] join admission rate limiting;
+- [ ] trusted proxy/IP identity contract;
+- [ ] session/snapshot organization integrity;
+- [ ] nickname vs generated suffix semantics;
+- [ ] final nickname length/suffix rules;
+- [ ] secure participant cookie attributes;
+- [ ] sessionStorage/cookie reconciliation;
+- [ ] strict BAREA-006 lobby boundary;
+- [ ] bounded global limiter/blast radius;
+- [ ] deterministic test seams;
+- [ ] adversarial tests for all seven findings;
+- [ ] 6-agent post-remediation verification;
+- [ ] zero BAREA-007 implementation;
+- [ ] zero application code written.
+
+Also check for any additional contradictions discovered by the second-pass agents.
+
+---
+
+# 11. DOCUMENTATION
+
+Update:
+
+- `docs/BAREA-006-DESIGN-GATE.md`
+- `AGY-REPORT.md`
+
+Do not modify application source files.
+
+The report must include:
+
+1. initial seven independent findings;
+2. pre-remediation six-agent findings;
+3. exact design changes;
+4. post-remediation six-agent findings;
+5. exact remaining non-blocking observations, if any;
+6. final design recommendation;
+7. confirmation that ZERO BAREA-006 application code was written.
+
+Never claim that implementation has begun.
+
+---
+
+# 12. STOP CONDITION
+
+If all seven findings are fully addressed and the second six-agent review finds no blocker:
+
+**STOP — DO NOT IMPLEMENT.**
+
+Return:
+
+- design-gate commit SHA;
+- six-agent pre-remediation summary;
+- seven remediation results;
+- six-agent post-remediation summary;
+- final design status;
+- confirmation of zero application code.
+
+The next step will be my independent review.
+
+If any blocker remains:
+
+**DO NOT IMPLEMENT.** Fix only the design and repeat the six-agent verification.
+
+## FINAL SEQUENCE
+
+`INDEPENDENT NO-GO → 6-AGENT CHALLENGE → DESIGN REMEDIATION → 6-AGENT VERIFICATION → USER INDEPENDENT REVIEW → GO/NO-GO → IMPLEMENTATION`
