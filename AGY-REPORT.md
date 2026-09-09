@@ -1,31 +1,32 @@
-# AGY Execution Report — BAREA-004 Teacher Review & Approval (Final Test Authorization Correction)
+# AGY Execution Report — BAREA-004 Teacher Review & Approval (Micro-Fix: Server Action Payload Allowlist Boundary)
 
 ## 1. Executive Summary & Defect Remediation
 
-Milestone **BAREA-004: Teacher Review & Approval** has undergone a final test authorization security redesign on branch `barea-004-teacher-review` to eliminate **any and all dependency on runtime CLI arguments (`process.argv` and `process.execArgv`)** for establishing trusted test authorization.
+Milestone **BAREA-004: Teacher Review & Approval** has undergone a targeted security micro-fix on branch `barea-004-teacher-review` addressing the Server Action update boundary in `src/app/teacher/review/actions.ts`.
 
 ### Root Cause & Defect Identified
-- `isTestEnvironment()` previously allowed `process.argv.includes('--test')` and `process.execArgv.includes('--test')` to satisfy test environment detection.
-- `process.argv` and `process.execArgv` are untrusted runtime inputs and should never be used as proof of trusted test execution for an authorization boundary.
-- An untrusted caller or process launched with `--test` could have bypassed the environment check.
+- `updateQuestionAction()` previously forwarded the runtime `updates` parameter directly to `bankService.updateQuestion(context.organizationId, questionId, updates)`.
+- While TypeScript interface types omitted `status` and `organizationId`, TypeScript compile-time types do not form a runtime security boundary.
+- Downstream in the persistence layer, `UpdateQuestionPayload` permits `status`. If an external caller supplied `{ status: "APPROVED" }` or `{ organizationId: "org-victim" }` at runtime, the payload could have attempted an unauthorized lifecycle transition or tenant re-assignment.
 
-### Final Remediation Implemented
-1. **Zero Trust for CLI Process Arguments**:
-   - In [src/app/teacher/review/db.ts](file:///C:/Users/Mr.Babu%20Rao/BAREA/src/app/teacher/review/db.ts), `isTestEnvironment()` strictly evaluates:
-     ```ts
-     export function isTestEnvironment(): boolean {
-       return process.env.NODE_ENV === 'test';
-     }
-     ```
-   - Zero inspections of `process.argv` or `process.execArgv`. Runtime arguments can NEVER establish test authorization.
-2. **Comprehensive Security Invariants Preserved & Verified**:
-   - Production mode (`NODE_ENV=production`) strictly fails closed immediately; test fixture hook throws `Forbidden`.
-   - Unset, unknown, and staging `NODE_ENV` fail closed immediately with unauthorized error.
-   - Development mode (`NODE_ENV=development`) strictly requires an explicit, non-empty `BAREA_DEV_ORG_ID`. Whitespace-only values fail closed.
-   - Zero hardcoded fallback organizations (e.g. no `church-berea-default`).
-   - Zero client/browser tenant manipulation: `?org=` or `?id=` query parameters have zero authorization effect.
-   - Teacher identity and organization are derived strictly server-side.
-   - Full cross-tenant isolation verified for read, update, single approval, batch approval, archive, and regeneration.
+### Micro-Fix Implemented
+1. **Explicit Allowlist Payload Reconstruction**:
+   - In [src/app/teacher/review/actions.ts](file:///C:/Users/Mr.Babu%20Rao/BAREA/src/app/teacher/review/actions.ts), `updateQuestionAction()` now reconstructs a fresh `sanitizedUpdates` object using only strictly allowlisted fields:
+     - `stem`
+     - `type`
+     - `options`
+     - `correctOptionIndices`
+     - `explanation`
+     - `scriptureReference`
+     - `topic`
+     - `difficulty`
+     - `language`
+   - Strips or ignores any runtime properties such as `status`, `organizationId`, `id`, or arbitrary keys before calling `QuestionBankService`.
+2. **Comprehensive Security Invariants Preserved**:
+   - Explicit approval remains strictly guarded by `approveQuestionAction()` / `batchApproveQuestionsAction()`.
+   - Editing a question strictly preserves `PENDING_REVIEW` state.
+   - Organization authority is derived purely server-side from `context.organizationId`.
+   - Complete cross-tenant isolation and fail-closed runtime environment checks preserved.
 
 ---
 
@@ -33,7 +34,7 @@ Milestone **BAREA-004: Teacher Review & Approval** has undergone a final test au
 
 | Subagent Role | Focus & Input | Reconciled Implementation Result |
 |---|---|---|
-| **Security Architect & Auditor** (`security_auditor`) | Audited environment guards, production fail-closed behavior, whitespace org handling, and test-hook isolation. | Guarded `getAuthorizedTeacherContext()` with strict `isDevelopmentEnvironment()`, threw unauthorized errors on unset/unknown env and missing/whitespace org, and disabled test hooks in production. |
+| **Security Architect & Auditor** (`security_auditor`) | Audited Server Action input boundaries, payload validation, cross-tenant isolation, and lifecycle tampering. | Reconstructed update payload from explicit allowlist, preventing injected `status` or `organizationId` from passing to `QuestionBankService`. |
 | **Frontend Architect** (`frontend_architect`) | Verified Next.js App Router boundary, Server Action type contracts, and zero secret leakage to browser bundles. | All routes compiled cleanly in Next.js Turbopack with 0 client bundle leaks. |
 | **UI/UX Design Specialist** (`ui_ux_designer`) | Verified that non-interactive organization metadata display in header respects BAREA visual tokens and responsive hierarchy. | Clean header badge rendered across all viewports without interactive tenant selectors. |
 
@@ -45,19 +46,12 @@ All adversarial vectors and environment states have been verified with automated
 
 | Security Vector / Requirement | Tested Vector / State | Result | Verification Details |
 |---|---|---|---|
-| Direct test runner argument | `--test` | **PASS** | Rejected in `argv` & `execArgv`; fails closed. |
-| Malicious test flag prefix | `--test-evil` | **PASS** | Rejected in `argv` & `execArgv`; fails closed. |
-| Malicious test flag assignment | `--test=attacker` | **PASS** | Rejected in `argv` & `execArgv`; fails closed. |
-| Arbitrary CLI flag | `--arg-with-test` | **PASS** | Rejected in `argv` & `execArgv`; fails closed. |
-| Arbitrary CLI argument | `contest` | **PASS** | Rejected in `argv` & `execArgv`; fails closed. |
-| Arbitrary CLI argument | `testing-suite` | **PASS** | Rejected in `argv` & `execArgv`; fails closed. |
-| Malicious test flag prefix | `--test-attacker` | **PASS** | Rejected in `argv` & `execArgv`; fails closed. |
-| Malicious test flag prefix | `--test-not-real` | **PASS** | Rejected in `argv` & `execArgv`; fails closed. |
-| Malicious test flag prefix | `--test-fake` | **PASS** | Rejected in `argv` & `execArgv`; fails closed. |
-| Malicious test flag prefix | `--test-anything` | **PASS** | Rejected in `argv` & `execArgv`; fails closed. |
-| Combined malicious arguments | Multiple fake flags | **PASS** | Rejected in `argv` & `execArgv`; fails closed. |
-| Arbitrary `process.argv` | Untrusted array inputs | **PASS** | Rejected; has 0 influence on `isTestEnvironment()`. |
-| Arbitrary `process.execArgv` | Untrusted array inputs | **PASS** | Rejected; has 0 influence on `isTestEnvironment()`. |
+| Runtime injected status in update | `status: "APPROVED"` via `updateQuestionAction` | **PASS** | Stripped by allowlist; question remains `PENDING_REVIEW`. |
+| Runtime injected organizationId in update | `organizationId: "org-victim"` via `updateQuestionAction` | **PASS** | Stripped by allowlist; server-authoritative tenant enforced. |
+| Runtime injected id in update | `id: "tampered-id"` via `updateQuestionAction` | **PASS** | Stripped by allowlist; original id preserved. |
+| Arbitrary runtime properties in update | Unknown keys e.g. `{ evilPayload: "..." }` | **PASS** | Stripped by allowlist; zero effect on entity or database. |
+| Direct test runner argument | `--test` in CLI / process arguments | **PASS** | Rejected; 0 influence on `isTestEnvironment()`. |
+| Malicious test flag prefix | `--test-evil`, `--test=attacker`, etc. | **PASS** | Rejected; fails closed. |
 | Production environment | `NODE_ENV=production` | **PASS** | Immediate fail closed; test hooks throw `Forbidden`. |
 | Unset environment | Unset `NODE_ENV` | **PASS** | Fails closed with unauthorized error. |
 | Staging / unknown environment | `NODE_ENV=staging` | **PASS** | Fails closed with unauthorized error. |
@@ -96,15 +90,15 @@ All adversarial vectors and environment states have been verified with automated
 ### C. Next.js Production Build (`npm run build:next`)
 ```text
 ▲ Next.js 16.3.4 (Turbopack)
-✓ Running next.config.js took 58ms
+✓ Running next.config.js took 49ms
 
   Creating an optimized production build ...
-✓ Compiled successfully in 981ms
+✓ Compiled successfully in 11.7s
   Running TypeScript ...
-  Finished TypeScript in 468ms ...
+  Finished TypeScript in 876ms ...
   Collecting page data using 5 workers ...
   Generating static pages using 5 workers (0/3) ...
-✓ Generating static pages using 5 workers (3/3) in 1680ms
+✓ Generating static pages using 5 workers (3/3) in 871ms
   Finalizing page optimization ...
 
 Route (app)
@@ -151,18 +145,19 @@ Route (app)
   ✔ 20. security: unknown/non-standard NODE_ENV without trusted authentication fails closed
   ✔ 21. security: arbitrary CLI argv or execArgv (including --test, --test-evil, --test=attacker) cannot activate test authorization
   ✔ 22. security: genuine repository test execution uses trusted NODE_ENV=test and establishes fixture context
+  ✔ 23. security: updateQuestionAction ignores runtime injected status, organizationId, or arbitrary properties
 ✔ Teacher Review Workflow, Actions & Security Boundary (BAREA-004)
 
-ℹ tests 81
+ℹ tests 82
 ℹ suites 0
-ℹ pass 81
+ℹ pass 82
 ℹ fail 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 284.3896
+ℹ duration_ms 2777.6017
 ```
-**Result**: Exited 0 with **81 passed, 0 failed**.
+**Result**: Exited 0 with **82 passed, 0 failed**.
 
 ### E. Code Quality, BOM & Secret Audit
 - `git diff --check`: Clean (0 formatting or whitespace errors).
@@ -176,7 +171,8 @@ Route (app)
 
 - **PR Status**: PR [#6](https://github.com/jbr01061981-hue/barea/pull/6) remains **OPEN and UNMERGED**.
 - **Security Invariants Satisfied**:
-  1. Untrusted runtime arguments (`process.argv`, `process.execArgv`) can NEVER activate test authorization.
-  2. Ordinary browser input cannot choose tenant (`?org=` has zero effect).
-  3. Ambiguous runtime cannot silently activate development tenant identity.
+  1. `updateQuestionAction()` reconstructs payloads strictly from allowlisted fields; injected `status`, `organizationId`, or arbitrary keys cannot alter state or tenant identity.
+  2. Untrusted runtime arguments (`process.argv`, `process.execArgv`) can NEVER activate test authorization.
+  3. Ordinary browser input cannot choose tenant (`?org=` has zero effect).
+  4. Ambiguous runtime cannot silently activate development tenant identity.
 - **Milestone Discipline**: BAREA-005 (Quiz Authoring) and subsequent milestones (BAREA-006 through BAREA-013) have **NOT** been started.

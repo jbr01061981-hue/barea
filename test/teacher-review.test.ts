@@ -766,4 +766,66 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
       });
     }
   });
+
+  await t.test('23. security: updateQuestionAction ignores runtime injected status, organizationId, or arbitrary properties', async () => {
+    setAuthorizedTeacherContext({
+      userId: 'teacher-alpha',
+      organizationId: orgA,
+      displayName: 'Teacher Alpha',
+      role: 'teacher',
+    });
+
+    // 1. Create a fresh PENDING_REVIEW question for Org A
+    const qInject = bankService.createQuestion({
+      organizationId: orgA,
+      stem: 'Original Stem Before Malicious Update',
+      type: QuestionType.MULTIPLE_CHOICE,
+      options: ['Opt 1', 'Opt 2'],
+      correctOptionIndices: [0],
+      explanation: 'Original explanation',
+      scriptureReference: 'Acts 1:8',
+      topic: 'Witness',
+      difficulty: QuestionDifficulty.MEDIUM,
+      language: 'en',
+    });
+    const pendingInject = bankService.transitionStatus(orgA, qInject.id, QuestionStatus.PENDING_REVIEW)!;
+    assert.equal(pendingInject.status, QuestionStatus.PENDING_REVIEW);
+
+    // 2. Invoke updateQuestionAction with runtime injected properties:
+    // - status: APPROVED (attempting unauthorized lifecycle bypass)
+    // - organizationId: orgB (attempting cross-tenant re-assignment)
+    // - id: 'attacker-chosen-id'
+    // - arbitrary runtime property: evilPayload
+    // - legitimate field: stem & explanation
+    const hostilePayload = {
+      stem: 'Safely Updated Stem Via Allowlist',
+      explanation: 'Updated Explanation',
+      status: QuestionStatus.APPROVED,
+      organizationId: orgB,
+      id: 'attacker-tampered-id',
+      evilPayload: 'malicious-data',
+    };
+
+    const updateRes = await updateQuestionAction(pendingInject.id, hostilePayload as unknown as Parameters<typeof updateQuestionAction>[1]);
+
+    // 3. Verify the action does NOT approve the question
+    assert.ok(updateRes.success);
+    assert.equal(updateRes.data?.status, QuestionStatus.PENDING_REVIEW);
+    assert.notEqual(updateRes.data?.status, QuestionStatus.APPROVED);
+
+    // 4. Verify the persisted question in QuestionBankService remains PENDING_REVIEW and in Org A
+    const persisted = bankService.getQuestion(orgA, pendingInject.id);
+    assert.ok(persisted);
+    assert.equal(persisted.status, QuestionStatus.PENDING_REVIEW);
+    assert.equal(persisted.organizationId, orgA);
+    assert.equal(persisted.id, pendingInject.id);
+
+    // 5. Verify legitimate editable fields still updated normally
+    assert.equal(persisted.stem, 'Safely Updated Stem Via Allowlist');
+    assert.equal(persisted.explanation, 'Updated Explanation');
+
+    // 6. Verify question does NOT exist in Org B
+    const persistedInB = bankService.getQuestion(orgB, pendingInject.id);
+    assert.equal(persistedInB, null);
+  });
 });

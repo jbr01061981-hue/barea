@@ -89,9 +89,23 @@ export async function updateQuestionAction(
     const context = await getAuthorizedTeacherContext();
     const bankService = getQuestionBankService();
 
+    // Security Hardening: Reconstruct update payload strictly from an explicit allowlist.
+    // Untrusted runtime inputs cannot inject status, organizationId, id, or any unknown properties.
+    const sanitizedUpdates: UpdateQuestionPayload = {};
+
+    if (updates.stem !== undefined) sanitizedUpdates.stem = updates.stem;
+    if (updates.type !== undefined) sanitizedUpdates.type = updates.type;
+    if (updates.options !== undefined) sanitizedUpdates.options = updates.options;
+    if (updates.correctOptionIndices !== undefined) sanitizedUpdates.correctOptionIndices = updates.correctOptionIndices;
+    if (updates.explanation !== undefined) sanitizedUpdates.explanation = updates.explanation;
+    if (updates.scriptureReference !== undefined) sanitizedUpdates.scriptureReference = updates.scriptureReference;
+    if (updates.topic !== undefined) sanitizedUpdates.topic = updates.topic;
+    if (updates.difficulty !== undefined) sanitizedUpdates.difficulty = updates.difficulty;
+    if (updates.language !== undefined) sanitizedUpdates.language = updates.language;
+
     // In accordance with ADR-007 / domain contract:
     // Updating question content must preserve PENDING_REVIEW state (never automatically approve).
-    const updated = bankService.updateQuestion(context.organizationId, questionId, updates);
+    const updated = bankService.updateQuestion(context.organizationId, questionId, sanitizedUpdates);
     if (!updated) {
       return { success: false, error: `Failed to update question ${questionId}.` };
     }
