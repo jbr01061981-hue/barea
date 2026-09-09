@@ -167,12 +167,51 @@ Route (app)
 
 ---
 
-## 5. Scope & Roadmap Status
+---
 
-- **PR Status**: PR [#6](https://github.com/jbr01061981-hue/barea/pull/6) remains **OPEN and UNMERGED**.
-- **Security Invariants Satisfied**:
-  1. `updateQuestionAction()` reconstructs payloads strictly from allowlisted fields; injected `status`, `organizationId`, or arbitrary keys cannot alter state or tenant identity.
-  2. Untrusted runtime arguments (`process.argv`, `process.execArgv`) can NEVER activate test authorization.
-  3. Ordinary browser input cannot choose tenant (`?org=` has zero effect).
-  4. Ambiguous runtime cannot silently activate development tenant identity.
-- **Milestone Discipline**: BAREA-005 (Quiz Authoring) and subsequent milestones (BAREA-006 through BAREA-013) have **NOT** been started.
+## 5. BAREA-004 Final Merge Status
+
+- **PR Status**: PR [#6](https://github.com/jbr01061981-hue/barea/pull/6) is **MERGED** into `main`.
+- **Merge Commit SHA**: `1faff33235378c6061a902a89454e5d62b097b0b`.
+- **Milestone BAREA-004**: **COMPLETE**.
+
+---
+
+## 6. BAREA-005 Design Gate Report
+
+### A. Documents & Source of Truth Inspected
+- `AGENTS.md`
+- `docs/ROADMAP.md`
+- `docs/REQUIREMENTS.md` (FR-QZ-001, FR-QZ-002, FR-QZ-003)
+- `docs/ARCHITECTURE.md`
+- `docs/DECISIONS.md` (ADR-001, ADR-002, ADR-004, ADR-006, ADR-007, ADR-010, ADR-011)
+- `docs/FRONTEND-STANDARD.md`
+- `docs/VERIFICATION-GATES.md`
+- `src/domain/question.ts`
+- `src/persistence/sqlite-question-repository.ts`
+- `src/app/teacher/review/actions.ts` and `src/app/teacher/review/db.ts`
+- `AGY-PROMPT.md` (BAREA-005 Design Gate specification)
+
+### B. Implementation Boundary Status
+- **Application implementation is NOT started.**
+- No database tables, service methods, Next.js routes, or UI components for BAREA-005 have been written.
+- The design gate document has been produced at [docs/BAREA-005-DESIGN-GATE.md](file:///C:/Users/Mr.Babu%20Rao/BAREA/docs/BAREA-005-DESIGN-GATE.md).
+
+### C. Architectural & Security Model
+1. **Tenant Isolation**: Server-authoritative context derived exclusively from `getAuthorizedTeacherContext()`. Zero trust for browser query/body params.
+2. **Question Selection Boundary**: Re-fetches each selected question and asserts existence, matching `organizationId`, and `status === 'APPROVED'`.
+3. **Draft Mutation Allowlisting**: Reconstructs payloads strictly from allowlisted fields (`title`, `description`, `defaultTimeLimitSeconds`, `scoringStyle`, `optionShuffle`). Discards protected fields (`id`, `organizationId`, `status`, `publishedSnapshot`, `createdAt`, `updatedAt`).
+4. **Time-of-Check to Time-of-Use (TOCTOU) Protection**: Re-validates every question's `APPROVED` status within the atomic publication transaction. If a question was edited/demoted in the bank, publication fails closed.
+5. **Snapshot Immutability**: Stores a frozen, self-contained `PublishedQuizSnapshot` JSON payload in `published_quiz_snapshots`. Live games consume this snapshot exclusively and are completely insulated from subsequent Question Bank edits or deletions.
+6. **Atomic Publication**: Executes inside a single SQLite transaction (`BEGIN IMMEDIATE` ... `COMMIT` / `ROLLBACK`).
+
+### D. Multi-Agent Collaboration Evidence
+- **Security Architect & Auditor** (`5a538e93-7ebf-4aac-9ad7-048a0e7af494`): Validated the TOCTOU re-validation requirement at publish time, mandated strict allowlisting for `updateQuizAction`, and defined the 8 primary adversarial security scenarios.
+- **Frontend Architect** (`57f23589-f514-4623-833c-de160e431a84`): Designed the 3-step authoring flow (`/teacher/quizzes`), specified React Aria Components (`GridList`, `NumberField`, `Switch`, `Dialog`), and defined the immutable read-only view state post-publication.
+- **UI/UX Design Specialist**: Enforced church-first dignified aesthetics without decorative SaaS clutter, ensuring prominent Scripture coverage review before publishing.
+
+### E. Acceptance-Test Strategy
+Defined 20 focused adversarial test cases covering cross-tenant isolation, TOCTOU approval invalidation, protected field injection, duplicate question prevention, timer/scoring constraints, and snapshot independence.
+
+### F. Recommendation
+The design is complete, verified against all architectural contracts and BAREA-004 lessons, and ready for independent review. Awaiting independent **GO** verdict before any coding begins.
