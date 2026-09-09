@@ -15,7 +15,7 @@ Milestones must be executed in order. No milestone may proceed into application 
 | **BAREA-002A** | **TypeScript Migration Gate** | Migrate existing BAREA-002 implementation to TypeScript without changing behavior | **COMPLETED** |
 | **BAREA-003** | **AI Quiz Generation** | Structured LLM prompt pipeline, parameter inputs, structural validation | **COMPLETED** |
 | **BAREA-004** | **Teacher Review/Approval** | Production frontend foundation, staging UI, editing, Scripture review, approval gate | **COMPLETED — MERGED** |
-| **BAREA-005** | **Quiz Authoring** | Quiz playlist composition, timer & scoring configurations, publishing | **COMPLETED — PENDING PR MERGE** |
+| **BAREA-005** | **Quiz Authoring** | Quiz playlist composition, timer & scoring configurations, publishing | **COMPLETED — MERGED** |
 | **BAREA-006** | **Share/Join** | QR generation, room access codes, URL routing, participant onboarding | NOT STARTED |
 | **BAREA-007** | **Live Quiz** | Authoritative state machine, timer sync, real-time transport | NOT STARTED |
 | **BAREA-008** | **Host/Participant UI** | Dual-interface UX: host control console & responsive mobile participant app | NOT STARTED |
@@ -99,8 +99,8 @@ AI Generation
 - Compiling approved questions from the Question Bank into structured quizzes.
 - Configurable settings: per-question countdowns, scoring styles, question ordering, and option shuffling.
 - Publishing workflow that snapshots quizzes for active sessions.
-- **Status**: COMPLETED — PENDING PR MERGE.
-- **Deliverable**: Complete Quiz Authoring domain, SQLite persistence engine with immutable snapshot triggers and `BEGIN IMMEDIATE` transaction locking, QuizService orchestration, server actions with runtime payload allowlisting, Teacher Authoring UI (`/teacher/quizzes`, `/teacher/quizzes/[id]`), and 33 adversarial automated tests (`ADV-QZ-01` through `ADV-QZ-30`).
+- **Status**: COMPLETED — MERGED into `main` in merge commit `94af326e0fed75f5196df549ad370fc6fd7ddc36`.
+- **Deliverable**: Complete Quiz Authoring domain, SQLite persistence engine with immutable snapshot triggers and `BEGIN IMMEDIATE` transaction locking, QuizService orchestration, server actions with runtime payload allowlisting, Teacher Authoring UI (`/teacher/quizzes`, `/teacher/quizzes/[id]`), 40 automated tests (`ADV-QZ-01` through `ADV-QZ-30` plus boundary matrix; 122 total test suite), 0 `any` types, and independent multi-agent release verification pass.
 
 ### BAREA-006: Share/Join
 - Session creation with room access codes.

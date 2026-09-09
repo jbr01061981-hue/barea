@@ -416,19 +416,33 @@ Following independent review of PR #7 (commit `38745a2`), a targeted remediation
 
 ### C. Automated Validation & Test Suite
 - **Adversarial Test Suite** (`test/quiz-authoring.test.ts`):
-  - 33 automated test cases covering `ADV-QZ-01` through `ADV-QZ-30`.
-  - Trigger abort verification for raw SQL UPDATE and DELETE on snapshots.
-  - Trigger abort verification for raw SQL DELETE on published quizzes.
-  - Cross-tenant isolation verification across all read and write methods.
-  - Protected field injection stripping verification.
-  - TOCTOU question demotion during publication transaction verification.
-  - Deterministic atomic rollback verification via `simulateSnapshotFailure`.
-  - Zero-gap sort order normalization and duplicate prevention.
-  - Speed-weighted mathematical boundary assertions (instant, boundary, overtime, negative, wrong answers).
+  - 40 automated test executions (30 discrete adversarial cases `ADV-QZ-01` through `ADV-QZ-30`, plus 1 scoring matrix container and 8 discrete speed-weighted formula boundary subtests, and 1 suite root).
+  - Trigger abort verification for raw SQL UPDATE and DELETE on snapshots (`prevent_snapshot_update`, `prevent_snapshot_delete`).
+  - Trigger abort verification for raw SQL DELETE on published quizzes (`prevent_published_quiz_delete`).
+  - Cross-tenant isolation verification across all read and write methods (`ADV-QZ-01`..`ADV-QZ-04`).
+  - Protected field injection stripping verification (`ADV-QZ-05`).
+  - TOCTOU question demotion during publication transaction verification (`ADV-QZ-08`, `ADV-QZ-09`, `ADV-QZ-25`, `ADV-QZ-27`).
+  - Deterministic atomic rollback verification via `simulateSnapshotFailure` test seam (`ADV-QZ-26`).
+  - Zero-gap sort order normalization and duplicate prevention (`ADV-QZ-11`..`ADV-QZ-14`).
+  - Speed-weighted mathematical boundary assertions (instantaneous, 1ms, 50%, 1ms before timeout, 0ms timeout, negative/overtime, wrong answers).
   - Direct SQLite table pre/post auditing (`captureDbAudit`).
+  - Shared in-memory `DatabaseSync` wiring with real `SqliteQuestionRepository` and `SqliteQuizRepository` (zero custom doubles/mocks).
 - **Overall Suite**:
-  - `npm test`: **115 passing tests** (82 existing + 33 BAREA-005), 0 failures.
+  - `npm test`: **122 passing tests** (82 baseline + 40 BAREA-005), 0 failures, 0 skipped.
   - `npm run typecheck`: **0 errors**.
   - `npm run build`: **0 errors**.
   - `npm run build:next`: **Compiled successfully** in Next.js Turbopack (`/teacher/quizzes`, `/teacher/quizzes/[id]`).
   - `git diff --check`: **0 formatting or whitespace issues**.
+  - **TypeScript Strictness**: **0 occurrences of `: any` or `as any`** across `src/` and `test/quiz-authoring.test.ts`.
+
+### D. Final Independent Release Review & Merge Record
+- **Review Cycle**: Conducted six independent sub-agent release audits (Security Red Team, SQLite Persistence Architect, QA & Test Architect, TypeScript Code Quality Specialist, Frontend & Next.js Specialist, Independent Release Reviewer) on PR #7 head commit `b4516c2a40a35fb9f5b5e9cf0640e9af330fb1ac`.
+- **All 6 Sub-Agent Audits**: **APPROVED — UNANIMOUS GO**.
+- **PR #7 Status**: Merged into `main` via squash merge on GitHub.
+  - **PR Number**: `#7`
+  - **PR Head SHA**: `b4516c2a40a35fb9f5b5e9cf0640e9af330fb1ac`
+  - **Final Merge Commit SHA**: `94af326e0fed75f5196df549ad370fc6fd7ddc36`
+  - **Merged Branch**: `barea-005-quiz-authoring` -> `main`
+  - **Roadmap Advancement**: `BAREA-005: Quiz Authoring` marked as **COMPLETED — MERGED**.
+  - **Scope Protection**: Zero scope creep into `BAREA-006` (Share/Join) or `BAREA-007` (Live Quiz).
+
