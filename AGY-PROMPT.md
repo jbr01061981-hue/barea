@@ -1,388 +1,214 @@
-# AGY — BAREA-005 IMPLEMENTATION AUTHORIZATION
+# AGY — BAREA-005 PR #7 — REMEDIATION PASS
 
 ## STATUS
 
-**BAREA-005 DESIGN GATE: GO — IMPLEMENTATION AUTHORIZED.**
+**PR #7 IS NOT AUTHORIZED TO MERGE.**
 
-The independent final review has been completed against the revised design at commit `ae48606`.
+Independent review of commit `38745a2` found concrete verification/code-quality discrepancies. This is a **targeted remediation pass on PR #7**.
 
-Findings A-G are considered remediated. The independent verdict is:
+Do not start BAREA-006 or BAREA-007.
 
-> **GO — IMPLEMENT BAREA-005.**
+## 1. MANDATORY SUB-AGENT REVIEW FIRST
 
-You may now implement BAREA-005, but implementation must remain strictly within the approved design and milestone boundary in `docs/BAREA-005-DESIGN-GATE.md`.
-
----
-
-# 1. MANDATORY SUB-AGENT / MULTI-AGENT IMPLEMENTATION REVIEW
-
-**Use available sub-agents/specialized agents before and during implementation.**
-
-Do not rely on a single-agent implementation for this milestone when specialized sub-agents are available.
+Before changing code, MUST use available specialized sub-agents to independently challenge these findings.
 
 Required roles:
 
-1. **Security Architect / Red-Team Agent**
-   - independently challenge tenant isolation;
-   - authorization boundaries;
-   - runtime payload allowlisting;
-   - published snapshot immutability;
+1. **Security Architect / Red Team**
+   - inspect all new server actions;
+   - tenant isolation;
+   - runtime allowlisting;
+   - snapshot immutability;
    - answer secrecy;
-   - TOCTOU and protected-field attacks.
+   - attempt bypasses not covered by current tests.
 
 2. **SQLite / Persistence Architect**
-   - review schema and foreign keys;
-   - verify SQLite trigger design;
-   - verify `BEGIN IMMEDIATE` transaction behavior;
-   - review repository boundaries;
-   - verify atomic publication and rollback.
+   - inspect `sqlite-quiz-repository.ts`;
+   - transaction boundaries;
+   - foreign keys and triggers;
+   - TOCTOU behavior;
+   - production-vs-test repository wiring;
+   - database integrity.
 
-3. **Backend / Domain Architect**
-   - review Quiz domain model and service boundaries;
-   - validate lifecycle transitions;
-   - validate timer/scoring configuration;
-   - verify publication invariants.
+3. **QA / Test Architect**
+   - independently count and classify the actual tests;
+   - verify that claimed test counts correspond to real execution;
+   - identify weak test doubles, dead setup, and coverage gaps;
+   - verify all adversarial cases against production code paths.
 
-4. **Frontend Architect / UI Specialist**
-   - review teacher authoring routes and component boundaries;
-   - enforce existing frontend standards;
-   - verify published quizzes are read-only;
-   - check that client input never becomes authorization authority.
+4. **TypeScript / Code Quality Specialist**
+   - search all changed `src/` files for `any` and unsafe casts;
+   - compare quality claims in AGY-REPORT/PR body with actual source;
+   - identify type-safety regressions.
 
-5. **Independent Test / QA Agent**
-   - review the adversarial test matrix;
-   - identify missing negative cases;
-   - verify tests prove security invariants rather than merely happy-path behavior.
+5. **Independent Implementation Reviewer**
+   - compare implementation against `docs/BAREA-005-DESIGN-GATE.md` and existing BAREA architecture;
+   - look for scope drift and semantic mismatches.
 
-If a specialist is unavailable, state that explicitly and perform the review yourself.
+Record only actual sub-agent participation and findings. Never fabricate agent IDs, transcripts, or conclusions. If a specialist is unavailable, state that and perform the review yourself.
 
-**Record only actual sub-agent participation, findings, disagreements, and resolutions. Never fabricate agent IDs, reports, or conclusions.**
+## 2. REQUIRED REMEDIATIONS
 
-Before implementation begins, have the sub-agents challenge the implementation plan and identify any divergence from the approved design. Resolve material disagreements before coding.
+### A — REMOVE THE FALSE `any` CLAIM AND FIX PRODUCTION `any`
 
-After implementation, have the Security/Red-Team and QA agents independently review the completed implementation before declaring the milestone complete.
+The current `src/persistence/sqlite-quiz-repository.ts` publication path contains an `as any` cast when reading a Question row.
 
----
+Remove that unsafe `any` from production `src/` code. Replace it with an explicit typed row interface or another type-safe narrowing mechanism.
 
-# 2. SOURCE OF TRUTH
+Then search the entire changed `src/` tree and verify the actual result.
 
-The following are authoritative:
+Do not claim `0 occurrences of any` unless the repository search genuinely proves it.
 
-- `docs/BAREA-005-DESIGN-GATE.md`
-- `docs/REQUIREMENTS.md`
-- `docs/ARCHITECTURE.md`
-- `docs/DECISIONS.md`
-- `docs/FRONTEND-STANDARD.md`
-- existing BAREA-004 implementation and tests
+### B — FIX THE TEST REPOSITORY WIRING
 
-Do not weaken or reinterpret the approved security invariants to make implementation easier.
+`test/quiz-authoring.test.ts` currently creates `SqliteQuestionRepository(':memory:')` but does not use it, then constructs a handwritten `customQRepo` containing numerous `any` annotations and simplified behavior.
 
-If implementation discovers a genuine design contradiction, **STOP and report it** rather than silently changing the architecture.
+This is not acceptable as the primary security/integration test path.
 
----
+Prefer using the real `SqliteQuestionRepository` against the same `DatabaseSync` instance used by `SqliteQuizRepository`, with the actual production `QuestionBankService`.
 
-# 3. IMPLEMENTATION SCOPE
+If the production repository architecture cannot currently share a database connection, make the minimum justified repository change needed to support proper shared test wiring. Do not weaken production behavior merely for tests.
 
-Implement only BAREA-005:
+Do not use `any` in the test double as a shortcut. If a test double is genuinely required, define a fully typed `QuestionRepository` implementation with no `any` and explain why it is necessary.
 
-- Quiz domain model;
-- Quiz persistence/repository;
-- Quiz service/application layer;
-- authorized teacher server actions;
-- Question Bank composition into Quiz drafts;
-- deterministic ordering/reordering;
-- timer configuration and validation;
-- scoring-style configuration;
-- option-shuffle configuration;
-- Quiz lifecycle including the approved ARCHIVED semantics;
-- atomic publication;
-- immutable published snapshots;
-- teacher authoring UI;
-- required adversarial and unit/integration tests;
-- documentation updates required to accurately describe the completed implementation.
+Remove dead/unused test setup such as an instantiated repository that is never used.
 
-Do NOT start BAREA-006, BAREA-007, or later milestones.
+### C — VERIFY TEST COUNT HONESTLY
 
----
+The PR claims:
 
-# 4. SECURITY REQUIREMENTS — NON-NEGOTIABLE
+`115 passing tests (82 baseline + 33 BAREA-005)`
 
-## Tenant authority
+and the test source groups many cases into nested test blocks.
 
-- Organization identity MUST come from the authenticated server-side teacher context.
-- Never trust client-supplied `organizationId`, `tenantId`, role, user ID, query parameters, headers, or hidden form fields for authorization.
-- Cross-tenant resources must fail closed without disclosure.
+Run the exact canonical command:
 
-## Runtime allowlisting
+`npm test`
 
-For every mutable Quiz payload, reconstruct an explicit allowlist at the server boundary.
+Capture the actual final Node test summary, including tests/pass/fail/skipped if available.
 
-Never allow runtime injection of:
+Reconcile the reported count with actual execution. Do not manufacture a 115/33 figure.
 
-- `id`
-- `organizationId`
-- `status`
-- `publishedSnapshot`
-- `createdAt`
-- `updatedAt`
-- unknown properties
+If Node reports a different count because nested tests are counted differently, report the exact real count and explain the accounting.
 
-Do not rely on TypeScript types as the runtime security boundary.
+### D — VERIFY ALL SECURITY TESTS AGAINST PRODUCTION PATHS
 
-## Question eligibility
+After fixing repository wiring, ensure the following are genuinely exercised through production services/repositories/actions wherever applicable:
 
-Only questions belonging to the authenticated teacher's organization and having `status === APPROVED` may be attached to a Quiz or enter a published snapshot.
+- cross-tenant read/edit/attach/publish;
+- protected field injection;
+- unapproved/archived question rejection;
+- TOCTOU demotion/archive/corruption;
+- published quiz mutation rejection;
+- snapshot update/delete triggers;
+- published quiz physical-delete protection;
+- participant answer projection;
+- deterministic rollback;
+- timer bounds;
+- scoring boundaries;
+- lifecycle transitions;
+- reorder integrity.
 
-Re-check eligibility inside the atomic publication transaction.
+Do not count a test as meaningful coverage merely because an equivalent assertion exists against a custom mock that does not implement production semantics.
 
-## Published snapshot immutability
+### E — CHECK PUBLICATION ANSWER SECRECY
 
-Implement the approved database-level triggers:
+Inspect the server actions carefully.
 
-- `prevent_snapshot_update`
-- `prevent_snapshot_delete`
+`publishQuizAction()` currently returns a full `PublishedQuizSnapshot`, which contains `correctOptionIndices`.
 
-The snapshot repository must expose insert/read behavior only; no update/delete/replace operation is permitted.
+The BAREA-005 design permits teacher-side access to the snapshot, while participant active-game secrecy belongs to the future live-session boundary. Confirm that no current participant route/action exists that exposes this snapshot.
 
-A published snapshot must remain byte-for-byte/logically unchanged even if the source Question Bank question is later edited, demoted, archived, or otherwise changed.
+If no participant route exists in BAREA-005, document that clearly rather than pretending the projection test alone proves end-to-end participant secrecy.
 
-## Answer secrecy
+Do not implement BAREA-006/007 participant APIs here.
 
-`correctOptionIndices` and other answer-bearing snapshot fields are server-authoritative.
+### F — CONCURRENCY SPECIFICATION ALIGNMENT
 
-They MUST NOT be returned to participants during an active question window.
+Preserve the approved `BEGIN IMMEDIATE` publication transaction and TOCTOU revalidation.
 
-Implement only the BAREA-005 foundations necessary for this boundary; the actual live participant transport belongs to later milestones.
+However, do not make false claims that all Question Bank operations universally use `BEGIN IMMEDIATE` if they do not.
 
----
+Document the actual SQLite behavior and the exact publication transaction boundary.
 
-# 5. SQLITE / TRANSACTION REQUIREMENTS
+### G — PRESERVE DESIGN-GATE INVARIANTS
 
-Use the approved Node.js `DatabaseSync` architecture.
+Do not regress any approved Finding A-G remediation:
 
-For atomic publication:
+- SQLite snapshot UPDATE/DELETE triggers;
+- published-quiz physical deletion protection;
+- normalized `quiz_questions` schema;
+- exact scoring semantics;
+- formal ARCHIVED lifecycle;
+- snapshot answer-secrecy boundary;
+- deterministic publication transaction/TOCTOU handling;
+- deterministic rollback injection.
 
-1. resolve authorized teacher context;
-2. begin `BEGIN IMMEDIATE`;
-3. re-read Quiz by ID and organization;
-4. verify Quiz is `DRAFT`;
-5. read ordered Quiz membership;
-6. re-read every referenced Question;
-7. verify organization ownership;
-8. verify `APPROVED` status;
-9. validate the complete composition;
-10. construct the complete self-contained snapshot;
-11. insert the snapshot;
-12. update Quiz status to `PUBLISHED`;
-13. commit;
-14. only after successful commit perform cache revalidation.
+## 3. REQUIRED VERIFICATION
 
-Any failure must roll back the entire publication.
+After remediation, run all of the following and record real results:
 
-Do not use generic claims about row locking that are not applicable to SQLite. Follow the actual transaction semantics documented in the design.
+1. `npm test`
+2. `npm run typecheck`
+3. `npm run build`
+4. `npm run build:next`
+5. `git diff --check`
+6. source search proving whether `any` remains in changed `src/`
+7. test/source inspection confirming the real Question repository is exercised
 
-Question Bank mutations participating in the publication TOCTOU boundary must use the same database transaction/locking discipline so publication has deterministic serialized behavior.
+If any command fails, fix it before declaring completion.
 
----
+## 4. SUB-AGENT SECOND PASS
 
-# 6. SNAPSHOT SCHEMA / IMMUTABILITY
+After remediation and before updating the PR report, use the sub-agents again for a focused verification pass:
 
-Implement the approved schema from the design document.
+- Security Red Team: try to bypass tenant isolation, publication approval, snapshot immutability, and answer secrecy.
+- SQLite Architect: inspect transaction/trigger/foreign-key correctness.
+- QA Architect: verify every adversarial test actually executes and uses the intended production path.
+- TypeScript Specialist: verify no unsafe `any` remains in changed production code.
+- Independent Reviewer: compare final implementation against the design gate.
 
-Important:
+Record actual findings only.
 
-- `quiz_questions` MUST NOT contain the removed redundant `organization_id` field.
-- `published_quiz_snapshots` stores a complete self-contained snapshot.
-- `published_quiz_snapshots` must have database-enforced update/delete prevention.
-- published Quiz reads must use the frozen snapshot rather than mutable Question Bank content.
-- physical deletion of a Quiz containing a published snapshot must be prevented according to the approved schema/lifecycle semantics.
+## 5. UPDATE DOCUMENTATION
 
-Add tests that attempt direct SQL UPDATE and DELETE against the snapshot table and verify the SQLite triggers reject them.
+Update:
 
----
+- `AGY-REPORT.md`
+- `docs/ROADMAP.md` if needed
 
-# 7. QUIZ LIFECYCLE
+The report must contain:
 
-Implement exactly the approved lifecycle:
+- exact remediation changes;
+- actual sub-agent roles and findings;
+- exact commands run and real results;
+- actual test count;
+- exact source `any` audit result;
+- confirmation that production repository wiring is exercised;
+- confirmation that no BAREA-006/007 work was added.
 
-`DRAFT -> PUBLISHED`
-`DRAFT -> ARCHIVED -> DRAFT`
-`PUBLISHED -> ARCHIVED`
+Do not claim GO merely because tests pass. The report must accurately describe what was verified.
 
-For published archives:
+## 6. PR REQUIREMENT
 
-- hide from active Quiz catalogs;
-- prevent creation of new live rooms in the later session milestone;
-- preserve the immutable snapshot;
-- do not disrupt already-running live sessions;
-- do not restore a published archive to DRAFT.
+Keep work on **PR #7** unless a clean new PR is technically necessary.
 
-Do not add additional lifecycle states or transitions.
+Push the remediation commit(s) to `barea-005-quiz-authoring`.
 
----
+Do not merge PR #7.
 
-# 8. TIMER AND SCORING CONTRACT
+Do not create a new milestone.
 
-Timer values:
+## 7. STOP CONDITION
 
-- default: 30 seconds;
-- valid range: 10-120 seconds inclusive;
-- integer only;
-- per-question override uses the same range.
+When remediation, sub-agent review, and verification are complete:
 
-Scoring styles:
+**STOP and await independent review.**
 
-### STANDARD
-- correct before expiry: 100 points;
-- incorrect: 0;
-- late/expired: 0.
+Do not merge PR #7 yourself.
 
-### SPEED_WEIGHTED
-- base: 100;
-- floor: 50;
-- exact formula from the approved design:
+Do not start BAREA-006 or BAREA-007.
 
-`50 + Math.round(50 * (remainingTimeMs / totalTimeLimitMs))`
+Final sequence:
 
-- maximum remaining time: 100;
-- positive remaining time approaching zero: 50;
-- expired (`remainingTimeMs <= 0`): 0;
-- incorrect: 0;
-- integer result using standard `Math.round()`.
-
-Scoring must be based on server-authoritative timing in the later live engine.
-
-Reject arbitrary scoring strings.
-
----
-
-# 9. DETERMINISTIC FAILURE INJECTION
-
-Implement the approved test seam for publication atomicity.
-
-It must:
-
-- be active only when `NODE_ENV === 'test'`;
-- inject failure after snapshot insertion but before Quiz status changes to `PUBLISHED`;
-- cause the transaction to roll back;
-- leave the Quiz as `DRAFT`;
-- leave zero snapshot rows for that Quiz;
-- prove no partial publication state remains.
-
-The test seam must not provide a production authorization or mutation path.
-
----
-
-# 10. REQUIRED ADVERSARIAL TESTS
-
-Implement and pass all cases specified in `docs/BAREA-005-DESIGN-GATE.md`, including:
-
-- cross-tenant read/edit/attach/publish attempts;
-- unapproved Question Bank questions;
-- archived Question Bank questions;
-- TOCTOU demotion/archive races;
-- protected-field injection;
-- unknown-property injection;
-- duplicate question insertion;
-- invalid ordering/reordering;
-- zero-question publication;
-- invalid timer values;
-- invalid scoring style;
-- source-question mutation after publication;
-- source-question archive/delete after publication;
-- direct snapshot UPDATE;
-- direct snapshot DELETE;
-- answer-secrecy projection checks;
-- concurrent mutation/publication behavior;
-- deterministic atomic failure injection.
-
-Do not merely assert that functions return errors. Verify the underlying database state and security invariants remain correct.
-
----
-
-# 11. FRONTEND REQUIREMENTS
-
-Implement the teacher authoring UI using the existing BAREA frontend architecture and `docs/FRONTEND-STANDARD.md`.
-
-Expected conceptual routes:
-
-- `/teacher/quizzes`
-- `/teacher/quizzes/new`
-- `/teacher/quizzes/[id]`
-
-The UI must support the approved authoring workflow without introducing participant/session functionality.
-
-Published quizzes must be presented as read-only with respect to frozen published content.
-
-Do not put authorization decisions solely in client components.
-
----
-
-# 12. VALIDATION / QUALITY GATE
-
-Before opening the implementation PR:
-
-1. run the complete existing test suite;
-2. run the new BAREA-005 adversarial tests;
-3. run TypeScript/typecheck validation;
-4. run the production build validation appropriate to the repository;
-5. run `git diff --check`;
-6. inspect the final diff for accidental milestone creep;
-7. have the Security/Red-Team sub-agent independently review the implementation;
-8. have the QA/Test sub-agent independently review the tests and security invariants;
-9. resolve any material findings;
-10. verify the working tree and branch state are clean/intentional.
-
-Do not report a test as passed unless it was actually executed.
-
----
-
-# 13. DOCUMENTATION / REPORTING
-
-Update `AGY-REPORT.md` with:
-
-- implementation summary;
-- files changed;
-- actual sub-agents used;
-- actual findings and resolutions;
-- security review results;
-- test commands actually executed and exact results;
-- build/typecheck results;
-- confirmation of adversarial test coverage;
-- final commit SHA;
-- implementation PR number.
-
-Update `docs/ROADMAP.md` only when appropriate to reflect the actual milestone state.
-
-Do not fabricate sub-agent identities, review results, test results, or CI results.
-
----
-
-# 14. STOP / ESCALATION RULES
-
-Stop and report before proceeding if:
-
-- the approved design cannot be implemented without changing a security invariant;
-- a required database constraint cannot be enforced as specified;
-- tenant isolation cannot be guaranteed;
-- answer secrecy cannot be preserved;
-- publication atomicity cannot be demonstrated;
-- the existing architecture contradicts the approved design in a material way.
-
-In such a case, do not silently redesign BAREA-005. Report the exact contradiction and wait for review.
-
-Otherwise, implementation is authorized.
-
----
-
-# FINAL AUTHORITY
-
-The independent design review has granted:
-
-**BAREA-005 = GO.**
-
-The required sequence is now:
-
-`DESIGN -> SUB-AGENT CHALLENGE -> CORRECTION -> INDEPENDENT REVIEW -> GO -> SUB-AGENT IMPLEMENTATION REVIEW -> IMPLEMENTATION -> SECURITY/QA REVIEW -> TEST/VERIFY -> PR`
-
-**Proceed with BAREA-005 implementation. Use sub-agents. Stay strictly within scope.**
+`PR #7 REVIEW → SUB-AGENT CHALLENGE → REMEDIATION → SUB-AGENT VERIFICATION → TEST/VERIFY → INDEPENDENT REVIEW → MERGE AUTHORIZATION`
