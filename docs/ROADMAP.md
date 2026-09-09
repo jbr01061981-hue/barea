@@ -14,7 +14,7 @@ Milestones must be executed in order. No milestone may proceed into application 
 | **BAREA-002** | **Question Bank** | Domain models, storage, tagging, difficulty, search/filter | **COMPLETED** |
 | **BAREA-002A** | **TypeScript Migration Gate** | Migrate existing BAREA-002 implementation to TypeScript without changing behavior | **COMPLETED** |
 | **BAREA-003** | **AI Quiz Generation** | Structured LLM prompt pipeline, parameter inputs, structural validation | **COMPLETED** |
-| **BAREA-004** | **Teacher Review/Approval** | Production frontend foundation, staging UI, editing, Scripture review, approval gate | **IN PROGRESS — DESIGN APPROVED** |
+| **BAREA-004** | **Teacher Review/Approval** | Production frontend foundation, staging UI, editing, Scripture review, approval gate | **COMPLETED — MERGED** |
 | **BAREA-005** | **Quiz Authoring** | Quiz playlist composition, timer & scoring configurations, publishing | NOT STARTED |
 | **BAREA-006** | **Share/Join** | QR generation, room access codes, URL routing, participant onboarding | NOT STARTED |
 | **BAREA-007** | **Live Quiz** | Authoritative state machine, timer sync, real-time transport | NOT STARTED |
@@ -39,6 +39,7 @@ AI Generation
 -> Question Bank
 -> Quiz Authoring
 ```
+
 - **Structural validation** is strictly an automated schema check for syntax, required fields, and format compliance; it does not certify biblical truth or theological accuracy.
 - **Human teacher review** is strictly required to verify scriptural fidelity and age-appropriateness.
 - **Milestone dependency**: AI generation (BAREA-003) places drafts into a staging state (PENDING_REVIEW). Generated questions cannot bypass review or directly enter the Question Bank or active quizzes without the teacher review/approval gate (BAREA-004).
@@ -91,14 +92,14 @@ AI Generation
 - Support individual approval and transactional batch approval.
 - Support discard/archive and regeneration without silently overwriting the original question.
 - Preserve the human theological/scriptural review gate; no automated theological certification is introduced.
-- **Status**: IN PROGRESS — DESIGN APPROVED.
-- **Deliverable**: Production-ready Teacher Review/Approval workbench and minimal reusable frontend foundation, verified through automated checks plus L2 browser/visual and L3 responsive/mobile/tablet testing.
+- **Status**: COMPLETED — MERGED into `main` in merge commit `1faff33235378c6061a902a89454e5d62b097b0b`.
+- **Deliverable**: Production-ready Teacher Review/Approval workbench and minimal reusable frontend foundation, including runtime payload allowlisting and adversarial authorization tests.
 
 ### BAREA-005: Quiz Authoring
 - Compiling approved questions from the Question Bank into structured quizzes.
 - Configurable settings: per-question countdowns, scoring styles, question ordering, and option shuffling.
 - Publishing workflow that snapshots quizzes for active sessions.
-- **Status**: NOT STARTED.
+- **Status**: NOT STARTED — DESIGN GATE PENDING.
 
 ### BAREA-006: Share/Join
 - Session creation with room access codes.
