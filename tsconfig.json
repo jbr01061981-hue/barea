@@ -4,12 +4,13 @@
     "module": "Node16",
     "moduleResolution": "Node16",
     "lib": [
-      "ES2022"
+      "ES2022",
+      "DOM"
     ],
     "types": [
       "node"
     ],
-    "rootDir": "src",
+    "jsx": "react-jsx",
     "outDir": "dist",
     "declaration": true,
     "declarationMap": true,
@@ -17,10 +18,22 @@
     "strict": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "allowJs": true,
+    "incremental": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "noEmit": true
   },
   "include": [
-    "src/**/*"
+    "src/**/*",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
