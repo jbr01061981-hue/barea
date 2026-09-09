@@ -1,12 +1,16 @@
 import path from 'node:path';
 import { SqliteQuestionRepository } from '../../../persistence/sqlite-question-repository';
 import { QuestionBankService } from '../../../service/question-bank-service';
+import { SqliteQuizRepository } from '../../../persistence/sqlite-quiz-repository';
+import { QuizService } from '../../../service/quiz-service';
 import { AIGenerationService } from '../../../ai/service/ai-generation-service';
 import { FakeAIProvider } from '../../../ai/provider/fake-ai-provider';
 import { GeminiAIProvider } from '../../../ai/provider/gemini-ai-provider';
 
 let globalRepo: SqliteQuestionRepository | null = null;
 let globalBankService: QuestionBankService | null = null;
+let globalQuizRepo: SqliteQuizRepository | null = null;
+let globalQuizService: QuizService | null = null;
 let globalAIService: AIGenerationService | null = null;
 
 export function getQuestionBankService(): QuestionBankService {
@@ -21,6 +25,20 @@ export function getQuestionBankService(): QuestionBankService {
 export function setQuestionBankService(service: QuestionBankService | null): void {
   globalBankService = service;
 }
+
+export function getQuizService(): QuizService {
+  if (!globalQuizService) {
+    const dbPath = process.env.BAREA_DB_PATH || path.join(process.cwd(), 'barea.db');
+    globalQuizRepo = new SqliteQuizRepository(dbPath);
+    globalQuizService = new QuizService(globalQuizRepo);
+  }
+  return globalQuizService;
+}
+
+export function setQuizService(service: QuizService | null): void {
+  globalQuizService = service;
+}
+
 
 export function getAIGenerationService(): AIGenerationService {
   if (!globalAIService) {

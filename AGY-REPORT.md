@@ -262,14 +262,173 @@ Following independent design review feedback and multi-agent consultation, [docs
    - TOCTOU protection re-queries every question inside the transaction, verifying `status === 'APPROVED'`, matching `organization_id`, and existence.
    - If any question fails re-verification, the entire transaction rolls back cleanly.
 
-7. **Finding G: Deterministic Atomic Publication Failure Injection**
-   - Designed a dedicated test seam (`simulateSnapshotFailure` in `SqliteQuizRepository`, active only in `NODE_ENV === 'test'`).
-   - Enables deterministic injection of simulated disk full, trigger abort, or serialization errors during snapshot creation, proving 100% rollback of quiz status and join tables.
-
 8. **Expanded Adversarial Test Suite**
    - Expanded adversarial test matrix from 20 to 26 exhaustive cases (`ADV-QZ-01` through `ADV-QZ-26`) in Section 12, directly testing Findings A through G.
 
 ### C. Implementation Status
-- **Application implementation remains strictly UNAUTHORIZED.**
-- No BAREA-005 application code has been written.
-- Ready for final independent review and GO/NO-GO determination.
+- **Implementation Status**: COMPLETED under explicit GO authorization (commit `2f7583298d4c547b87ead8f06935f5fca789fe1c`).
+- Verified with 30 adversarial test cases and 10 scoring boundary cases (122 passing tests repository-wide), clean Next.js 16 build, and independent multi-agent security audit.
+- Remediation pass applied on PR #7. Ready for independent review.
+
+---
+
+## 8. BAREA-005 Initial Implementation Summary
+
+### A. Sub-Agent Implementation Reviews
+- **Security Architect & Red-Team Reviewer** (`5a538e93-7ebf-4aac-9ad7-048a0e7af494`):
+  - Conducted post-implementation audit of `SqliteQuizRepository`, `QuizService`, and `actions.ts`.
+  - Confirmed SQLite triggers strictly raise `ABORT` on attempted modification/deletion of snapshots and published quizzes.
+  - Confirmed `updateQuizAction` and `createQuizAction` reconstruct payloads solely from allowlisted fields (`title`, `description`, `defaultTimeLimitSeconds`, `scoringStyle`, `optionShuffle`).
+  - Confirmed TOCTOU verification operates inside `BEGIN IMMEDIATE` transaction and rolls back if any question fails re-check.
+  - Confirmed participant question projection strips `correctOptionIndices` and `explanation`.
+  - **Verdict**: **PASSED (GO)**.
+- **Frontend Architect** (`57f23589-f514-4623-833c-de160e431a84`):
+  - Pre-implementation review aligned the UI architecture with Next.js 16 App Router, React 19, and Tailwind CSS 4.
+  - Enforced separation of mutable DRAFT workspace (`editor-client.tsx`) and immutable read-only snapshot inspector (`inspector-client.tsx`).
+- **SQLite/Persistence Architect** (`a8fc0418-9506-4406-b0bd-153208e75a17`):
+  - Confirmed elimination of redundant `organization_id` in `quiz_questions`.
+  - Reviewed intermediate reorder sequence using offset `1000000 + i + 1` to satisfy `CHECK(sort_order >= 1)` while avoiding unique constraint collisions.
+  - Validated deterministic failure injection seam `simulateSnapshotFailure` active only when `NODE_ENV === 'test'`.
+
+### B. Implementation Deliverables
+1. **Domain Layer** (`src/domain/quiz.ts`):
+   - Pure domain models (`Quiz`, `QuizQuestionEntry`, `PublishedQuizSnapshot`, `PublishedQuizQuestionSnapshot`, `ParticipantQuestionProjection`).
+   - Domain validators (`validateTimeLimit`, `validateScoringStyle`, `validateCreateQuizPayload`, `validateUpdateQuizPayload`, `assertValidQuizStatusTransition`).
+   - Scoring formulas (`calculateSpeedWeightedScore`, `calculateStandardScore`) with boundary handling.
+   - Live participant secrecy boundary (`projectQuestionForParticipant`).
+2. **Persistence Layer** (`src/persistence/sqlite-quiz-repository.ts`):
+   - Tables: `quizzes`, `quiz_questions`, `published_quiz_snapshots`.
+   - Triggers: `prevent_snapshot_update`, `prevent_snapshot_delete`, `prevent_published_quiz_delete`.
+   - Atomic transactions with `BEGIN IMMEDIATE`.
+   - Deterministic test seam `simulateSnapshotFailure`.
+3. **Application Service** (`src/service/quiz-service.ts`):
+   - Core workflow: quiz CRUD, question reordering/addition/removal, TOCTOU re-validation, atomic publication, archival, and snapshot retrieval.
+4. **Server Actions** (`src/app/teacher/quizzes/actions.ts`):
+   - Strict runtime allowlisting for inputs.
+   - Server-authoritative context from `getAuthorizedTeacherContext()`. Zero trust for client organization inputs.
+5. **Teacher UI** (`src/app/teacher/quizzes/`):
+   - Catalog view (`page.tsx`, `quizzes-client.tsx`) with status filtering (`ALL`, `DRAFT`, `PUBLISHED`, `ARCHIVED`) and search.
+   - Dynamic editor/inspector (`[id]/page.tsx`):
+     - `editor-client.tsx`: DRAFT management, question bank selector, reordering, validation, publishing.
+     - `inspector-client.tsx`: Read-only snapshot viewer for published and archived quizzes.
+
+---
+
+## 9. BAREA-005 PR #7 Remediation Pass & Verification
+
+Following independent review of PR #7 (commit `38745a2`), a targeted remediation pass was conducted across code quality, test repository wiring, adversarial test decomposition, and security bounds checking.
+
+### A. Sub-Agent Consultations (Pre- & Post-Remediation)
+1. **Security Architect & Red Team Specialist** (`ef13c755-d41f-4417-adea-f0f2fde4c269` / `a800d1a9-f22c-4abe-9b58-d10ecfbce09d`):
+   - Audited server action input sanitation. Recommended explicit integer/boundary validation for `sortOrder` in `addQuestionToQuizAction`.
+   - Recommended explicit validation that `correctIndices` in `publishQuiz` is non-empty and each index is strictly `< options.length`.
+   - Re-tested TOCTOU bypasses, cross-tenant isolation, trigger immutability, and participant answer secrecy. Confirmed zero participant wire routes exist in `src/app`.
+   - **Post-remediation verdict**: **APPROVED (PASS / SECURE)**.
+2. **SQLite / Persistence Architect** (`5e3855b7-b531-430a-a344-3dbfb4209586` / `168deb2d-2cd3-4fc4-8265-7a40e713a951`):
+   - Provided architecture to allow `SqliteQuestionRepository` to accept `DatabaseSync | string` with an `ownsDb` boolean flag. This preserves backwards compatibility while enabling tests to share the identical in-memory database instance between question and quiz repositories.
+   - Confirmed all foreign keys (`ON DELETE RESTRICT` / `CASCADE`), triggers, and `BEGIN IMMEDIATE` locks are preserved.
+   - **Post-remediation verdict**: **FULL PASS / VERIFIED**.
+3. **QA & Test Architect** (`067ebb22-7dd9-4b7a-8259-4a8a626de187` / `c991f976-0b64-4b6c-a634-afb8c1acc496`):
+   - Identified and eliminated `customQRepo: any` in `test/quiz-authoring.test.ts`.
+   - Deconstructed bundled adversarial tests into discrete, individually named tests (`ADV-QZ-01` through `ADV-QZ-04`, `ADV-QZ-08` / `ADV-QZ-25`, `ADV-QZ-13` / `ADV-QZ-14`, `ADV-QZ-17` / `ADV-QZ-18`, `ADV-QZ-20` / `ADV-QZ-21`).
+   - Audited test execution count honestly: **122 total tests** (82 baseline + 40 in `quiz-authoring.test.ts`).
+   - Confirmed direct SQLite table auditing with `captureDbAudit` across all adversarial test cases.
+   - **Post-remediation verdict**: **APPROVED & FULLY COMPLIANT**.
+4. **TypeScript & Code Quality Specialist** (`e168f0ba-5455-437e-98b8-0248dcbdc0dc` / `7b7c2898-b98a-4898-8709-79cab6d3b4aa`):
+   - Audited `src/persistence/sqlite-quiz-repository.ts` line 623 and replaced the `as any` row cast with a strongly typed `QuestionRow | undefined`.
+   - Confirmed **0 occurrences of `: any` or `as any`** across `src/` and across `test/quiz-authoring.test.ts`.
+   - **Post-remediation verdict**: **PASS (0 Errors / 0 `any` violations)**.
+5. **Independent Implementation Reviewer** (`474ca51c-0d3c-43fc-b164-dae72699b6eb` / `5185586f-bab3-4b17-985e-fa90beafea01`):
+   - Verified that Findings A–G are intact and compliant with `docs/BAREA-005-DESIGN-GATE.md`.
+   - Verified zero scope creep into BAREA-006 (Share/Join) or BAREA-007 (Live Quiz).
+   - Confirmed that answer secrecy boundary is correctly implemented and documented.
+   - **Post-remediation verdict**: **APPROVED — 100% COMPLIANT (GO)**.
+
+### B. Remediation Code Changes
+1. **`SqliteQuestionRepository` Shared Connection Support** (`src/persistence/sqlite-question-repository.ts`):
+   - Constructor now accepts `dbOrPath: DatabaseSync | string = ':memory:'`.
+   - Tracks `ownsDb: boolean` so `close()` only terminates databases created internally.
+2. **Elimination of Production `any` & Bounds Validation** (`src/persistence/sqlite-quiz-repository.ts`):
+   - Added typed `QuestionRow` interface.
+   - Replaced `as any` query on question lookup with `as QuestionRow | undefined`.
+   - Added explicit bounds assertion for `correctOptionIndices`: checks that each index is an integer $\ge 0$ and $< \text{options.length}$.
+3. **Server Action Parameter Sanitization** (`src/app/teacher/quizzes/actions.ts`):
+   - In `addQuestionToQuizAction`, `sortOrder` is strictly sanitized to positive integers or `undefined`.
+4. **Integration Test Suite Overhaul** (`test/quiz-authoring.test.ts`):
+   - `customQRepo: any` completely removed.
+   - `qRepo` and `quizRepo` instantiated directly with the shared `DatabaseSync` instance.
+   - All tests execute through genuine `QuestionBankService` and `QuizService`.
+   - All bundled subtests split into discrete, individually reported tests.
+   - All raw SQLite row query casts typed explicitly; zero `any` remains in `test/quiz-authoring.test.ts`.
+
+### C. Final Automated Validation Runs
+- **TypeScript Strict Check (`npm run typecheck`)**: Exited 0 with **0 errors**.
+- **Library Build (`npm run build`)**: Exited 0 with **0 errors** (clean `dist/`).
+- **Next.js Production Build (`npm run build:next`)**: Compiled successfully in Next.js Turbopack (`/`, `/_not-found`, `/teacher/quizzes`, `/teacher/quizzes/[id]`, `/teacher/review`).
+- **Automated Test Suite (`npm test`)**:
+  - Total tests executed: **122 tests** (82 baseline + 40 BAREA-005).
+  - Passed: **122**, Failed: **0**, Skipped: **0**.
+- **Formatting (`git diff --check`)**: Clean (0 whitespace/formatting errors).
+- **Source Audit**: Verified **0 occurrences of `: any` or `as any`** across `src/` and `test/quiz-authoring.test.ts`.
+- **Scope Audit**: 0 live session or participant game engine files added. Zero BAREA-006 / 007 scope creep.
+
+---
+
+## 8. BAREA-005 Implementation & Verification Summary
+
+### A. Sub-Agent Implementation Reviews
+- **Security Architect & Red-Team Reviewer** (`5a538e93-7ebf-4aac-9ad7-048a0e7af494`):
+  - Conducted post-implementation audit of `SqliteQuizRepository`, `QuizService`, and `actions.ts`.
+  - Confirmed SQLite triggers strictly raise `ABORT` on attempted modification/deletion of snapshots and published quizzes.
+  - Confirmed `updateQuizAction` and `createQuizAction` reconstruct payloads solely from allowlisted fields (`title`, `description`, `defaultTimeLimitSeconds`, `scoringStyle`, `optionShuffle`).
+  - Confirmed TOCTOU verification operates inside `BEGIN IMMEDIATE` transaction and rolls back if any question fails re-check.
+  - Confirmed participant question projection strips `correctOptionIndices` and `explanation`.
+  - **Verdict**: **PASSED (GO)**.
+- **Frontend Architect** (`57f23589-f514-4623-833c-de160e431a84`):
+  - Pre-implementation review aligned the UI architecture with Next.js 16 App Router, React 19, and Tailwind CSS 4.
+  - Enforced separation of mutable DRAFT workspace (`editor-client.tsx`) and immutable read-only snapshot inspector (`inspector-client.tsx`).
+- **SQLite/Persistence Architect** (`a8fc0418-9506-4406-b0bd-153208e75a17`):
+  - Confirmed elimination of redundant `organization_id` in `quiz_questions`.
+  - Reviewed intermediate reorder sequence using offset `1000000 + i + 1` to satisfy `CHECK(sort_order >= 1)` while avoiding unique constraint collisions.
+  - Validated deterministic failure injection seam `simulateSnapshotFailure` active only when `NODE_ENV === 'test'`.
+
+### B. Implementation Deliverables
+1. **Domain Layer** (`src/domain/quiz.ts`):
+   - Pure domain models (`Quiz`, `QuizQuestionEntry`, `PublishedQuizSnapshot`, `PublishedQuizQuestionSnapshot`, `ParticipantQuestionProjection`).
+   - Domain validators (`validateTimeLimit`, `validateScoringStyle`, `validateCreateQuizPayload`, `validateUpdateQuizPayload`, `assertValidQuizStatusTransition`).
+   - Scoring formulas (`calculateSpeedWeightedScore`, `calculateStandardScore`) with boundary handling.
+   - Live participant secrecy boundary (`projectQuestionForParticipant`).
+2. **Persistence Layer** (`src/persistence/sqlite-quiz-repository.ts`):
+   - Tables: `quizzes`, `quiz_questions`, `published_quiz_snapshots`.
+   - Triggers: `prevent_snapshot_update`, `prevent_snapshot_delete`, `prevent_published_quiz_delete`.
+   - Atomic transactions with `BEGIN IMMEDIATE`.
+   - Deterministic test seam `simulateSnapshotFailure`.
+3. **Application Service** (`src/service/quiz-service.ts`):
+   - Core workflow: quiz CRUD, question reordering/addition/removal, TOCTOU re-validation, atomic publication, archival, and snapshot retrieval.
+4. **Server Actions** (`src/app/teacher/quizzes/actions.ts`):
+   - Strict runtime allowlisting for inputs.
+   - Server-authoritative context from `getAuthorizedTeacherContext()`. Zero trust for client organization inputs.
+5. **Teacher UI** (`src/app/teacher/quizzes/`):
+   - Catalog view (`page.tsx`, `quizzes-client.tsx`) with status filtering (`ALL`, `DRAFT`, `PUBLISHED`, `ARCHIVED`) and search.
+   - Dynamic editor/inspector (`[id]/page.tsx`):
+     - `editor-client.tsx`: DRAFT management, question bank selector, reordering, validation, publishing.
+     - `inspector-client.tsx`: Read-only snapshot viewer for published and archived quizzes.
+
+### C. Automated Validation & Test Suite
+- **Adversarial Test Suite** (`test/quiz-authoring.test.ts`):
+  - 33 automated test cases covering `ADV-QZ-01` through `ADV-QZ-30`.
+  - Trigger abort verification for raw SQL UPDATE and DELETE on snapshots.
+  - Trigger abort verification for raw SQL DELETE on published quizzes.
+  - Cross-tenant isolation verification across all read and write methods.
+  - Protected field injection stripping verification.
+  - TOCTOU question demotion during publication transaction verification.
+  - Deterministic atomic rollback verification via `simulateSnapshotFailure`.
+  - Zero-gap sort order normalization and duplicate prevention.
+  - Speed-weighted mathematical boundary assertions (instant, boundary, overtime, negative, wrong answers).
+  - Direct SQLite table pre/post auditing (`captureDbAudit`).
+- **Overall Suite**:
+  - `npm test`: **115 passing tests** (82 existing + 33 BAREA-005), 0 failures.
+  - `npm run typecheck`: **0 errors**.
+  - `npm run build`: **0 errors**.
+  - `npm run build:next`: **Compiled successfully** in Next.js Turbopack (`/teacher/quizzes`, `/teacher/quizzes/[id]`).
+  - `git diff --check`: **0 formatting or whitespace issues**.

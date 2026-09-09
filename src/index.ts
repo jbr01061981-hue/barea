@@ -39,3 +39,38 @@ export {
   AIGenerationService,
   type AIGenerationServiceOptions
 } from './ai/index';
+
+export {
+  QuizStatus,
+  ScoringStyle,
+  QUIZ_LIMITS,
+  QuizValidationError,
+  InvalidQuizLifecycleTransitionError,
+  validateTimeLimit,
+  validateScoringStyle,
+  validateCreateQuizPayload,
+  validateUpdateQuizPayload,
+  assertValidQuizStatusTransition,
+  calculateSpeedWeightedScore,
+  calculateStandardScore,
+  projectQuestionForParticipant,
+  type Quiz,
+  type CreateQuizPayload,
+  type UpdateQuizPayload,
+  type QuizQuestionItem,
+  type SnapshotChoice,
+  type SnapshotQuestion,
+  type PublishedQuizSnapshot,
+  type ParticipantChoice,
+  type ParticipantQuestionProjection
+} from './domain/quiz';
+
+export {
+  SqliteQuizRepository,
+  type QuizRepository,
+  type QuizFilter
+} from './persistence/sqlite-quiz-repository';
+
+export {
+  QuizService
+} from './service/quiz-service';
