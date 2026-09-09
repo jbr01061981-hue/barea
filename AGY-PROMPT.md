@@ -1,336 +1,388 @@
-# AGY — BAREA-005 DESIGN GATE — CORRECTION PASS
+# AGY — BAREA-005 IMPLEMENTATION AUTHORIZATION
 
 ## STATUS
 
-**BAREA-005 IMPLEMENTATION IS NOT AUTHORIZED.**
+**BAREA-005 DESIGN GATE: GO — IMPLEMENTATION AUTHORIZED.**
 
-The independent review of `docs/BAREA-005-DESIGN-GATE.md` found the core architecture sound, but identified several design-level issues that must be corrected before implementation authorization can be considered.
+The independent final review has been completed against the revised design at commit `ae48606`.
 
-This is a **DESIGN CORRECTION ONLY** task.
+Findings A-G are considered remediated. The independent verdict is:
 
-Do NOT implement BAREA-005 application code, database migrations, Quiz services/actions, routes, UI components, or implementation tests.
+> **GO — IMPLEMENT BAREA-005.**
 
-Do NOT open an implementation PR.
-
----
-
-# 1. FIRST: USE SUB-AGENTS FOR AN INDEPENDENT DESIGN CHALLENGE
-
-You MUST use available sub-agents/specialized agents for this correction pass if the environment supports them.
-
-Ask them to independently challenge the seven findings below rather than simply agreeing with the existing design.
-
-Required review roles:
-
-1. **Security Architect**
-   - snapshot immutability enforcement;
-   - tenant isolation;
-   - protected-field/runtime allowlisting;
-   - publication authorization;
-   - answer secrecy.
-
-2. **SQLite/Persistence Architect**
-   - `quiz_questions` schema;
-   - redundant `organization_id`;
-   - foreign keys;
-   - transaction semantics;
-   - concurrent publication/mutation behavior;
-   - snapshot persistence.
-
-3. **Backend/Concurrency Specialist**
-   - TOCTOU semantics;
-   - `BEGIN IMMEDIATE` behavior;
-   - publication transaction boundary;
-   - failure/rollback behavior;
-   - deterministic fault injection for atomicity tests.
-
-4. **Domain/Product Specialist**
-   - Quiz lifecycle;
-   - ARCHIVED semantics;
-   - scoring-style contract;
-   - timer rules;
-   - BAREA-005 scope versus later milestones.
-
-5. **Independent Red-Team Reviewer**
-   - attempt to find a design-level bypass not already covered;
-   - especially try to publish stale/unapproved/foreign questions or mutate a published snapshot.
-
-Record only actual sub-agent participation and actual findings. Do not fabricate agent IDs, reviews, or conclusions.
-
-If a requested specialist is unavailable, state that explicitly and perform that review yourself.
+You may now implement BAREA-005, but implementation must remain strictly within the approved design and milestone boundary in `docs/BAREA-005-DESIGN-GATE.md`.
 
 ---
 
-# 2. FINDING A — TRUE SNAPSHOT IMMUTABILITY
+# 1. MANDATORY SUB-AGENT / MULTI-AGENT IMPLEMENTATION REVIEW
 
-The current design calls the published snapshot immutable, but the proposed table does not itself establish an update/delete prohibition.
+**Use available sub-agents/specialized agents before and during implementation.**
 
-Revise the design so that immutability is an explicit architectural invariant.
+Do not rely on a single-agent implementation for this milestone when specialized sub-agents are available.
 
-It must define:
+Required roles:
 
-- the repository API for snapshots;
-- that publication is insert-only;
-- no normal update operation exists;
-- no normal delete operation exists;
-- published snapshot data cannot be replaced by a later client request;
-- published Quiz reads resolve to the frozen snapshot;
-- any administrative/destructive operation, if ever required, is explicitly outside BAREA-005.
+1. **Security Architect / Red-Team Agent**
+   - independently challenge tenant isolation;
+   - authorization boundaries;
+   - runtime payload allowlisting;
+   - published snapshot immutability;
+   - answer secrecy;
+   - TOCTOU and protected-field attacks.
 
-Add an adversarial test for attempted snapshot mutation/deletion and define the expected fail-closed behavior.
+2. **SQLite / Persistence Architect**
+   - review schema and foreign keys;
+   - verify SQLite trigger design;
+   - verify `BEGIN IMMEDIATE` transaction behavior;
+   - review repository boundaries;
+   - verify atomic publication and rollback.
 
-Do NOT claim database-level immutability unless the chosen SQLite mechanism actually enforces it.
+3. **Backend / Domain Architect**
+   - review Quiz domain model and service boundaries;
+   - validate lifecycle transitions;
+   - validate timer/scoring configuration;
+   - verify publication invariants.
 
-The design must distinguish **application-enforced immutable semantics** from **database-enforced constraints**.
+4. **Frontend Architect / UI Specialist**
+   - review teacher authoring routes and component boundaries;
+   - enforce existing frontend standards;
+   - verify published quizzes are read-only;
+   - check that client input never becomes authorization authority.
 
----
+5. **Independent Test / QA Agent**
+   - review the adversarial test matrix;
+   - identify missing negative cases;
+   - verify tests prove security invariants rather than merely happy-path behavior.
 
-# 3. FINDING B — REMOVE OR JUSTIFY REDUNDANT `organization_id` FROM `quiz_questions`
+If a specialist is unavailable, state that explicitly and perform the review yourself.
 
-The current proposed schema stores:
+**Record only actual sub-agent participation, findings, disagreements, and resolutions. Never fabricate agent IDs, reports, or conclusions.**
 
-`quiz_questions.quiz_id`
-`quiz_questions.organization_id`
-`quiz_questions.question_id`
+Before implementation begins, have the sub-agents challenge the implementation plan and identify any divergence from the approved design. Resolve material disagreements before coding.
 
-The tenant is already derivable from the Quiz and Question.
-
-This redundant field can become inconsistent.
-
-Prefer removing `organization_id` from `quiz_questions` unless there is a compelling, demonstrated reason to retain it.
-
-If retained, the design MUST define how database/application integrity guarantees:
-
-`quiz_questions.organization_id == quizzes.organization_id == questions.organization_id`
-
-and must include tests for inconsistency attempts.
-
-Do not leave this ambiguity unresolved.
-
----
-
-# 4. FINDING C — FINALIZE SCORING SEMANTICS
-
-The current design defines `SPEED_WEIGHTED` using a floor described as `e.g. 50`.
-
-That is not implementation-ready.
-
-Choose one of these paths:
-
-### Preferred minimal path
-If BAREA-009 is responsible for actual live scoring, keep BAREA-005 configuration minimal and define only a stable finite scoring enum whose meaning is unambiguous.
-
-### Or fully specify SPEED_WEIGHTED
-If retaining `SPEED_WEIGHTED`, define exactly:
-
-- base points;
-- floor;
-- formula;
-- rounding behavior;
-- boundary behavior at zero/maximum remaining time;
-- whether the scoring configuration is sufficient for BAREA-009.
-
-No `e.g.` values may remain in an implementation contract.
-
-Do not allow arbitrary scoring strings.
+After implementation, have the Security/Red-Team and QA agents independently review the completed implementation before declaring the milestone complete.
 
 ---
 
-# 5. FINDING D — RESOLVE `ARCHIVED` LIFECYCLE SCOPE
+# 2. SOURCE OF TRUTH
 
-The original BAREA-005 boundary is centered on:
+The following are authoritative:
 
-`DRAFT -> PUBLISHED`
-
-The current design introduces:
-
-`DRAFT -> ARCHIVED`
-`PUBLISHED -> ARCHIVED`
-
-Either:
-
-1. remove ARCHIVED lifecycle behavior from BAREA-005 and defer it to a later milestone; OR
-2. formally define its semantics.
-
-If ARCHIVED remains, explicitly define:
-
-- who may archive;
-- whether draft archive is reversible;
-- whether published archive affects existing live sessions;
-- whether it prevents new live sessions;
-- whether it removes/hides the quiz from lists;
-- whether snapshot data remains intact;
-- what operations remain legal after archive.
-
-Do not introduce lifecycle behavior without precise semantics.
-
----
-
-# 6. FINDING E — EXPLICIT SNAPSHOT ANSWER-SECRECY BOUNDARY
-
-The published snapshot correctly contains `correctOptionIndices` because the future server-authoritative engine needs them.
-
-However, the design MUST explicitly state:
-
-> Published snapshots are server-authoritative data and are never returned in full to participants during an active question window.
-
-Define the future safe projection conceptually:
-
-`PublishedQuizSnapshot -> participant-safe projection`
-
-where correct answers are withheld until the appropriate result state.
-
-Do not implement the participant projection now.
-
-Cross-reference ADR-004 and preserve its answer-secrecy invariant.
-
----
-
-# 7. FINDING F — TIGHTEN TOCTOU/CONCURRENCY SEMANTICS
-
-The design currently says publication uses `BEGIN IMMEDIATE` and revalidates every question.
-
-Make the concurrency contract precise.
-
-The design must state:
-
-1. when the transaction begins;
-2. how the Quiz is re-read/serialized inside the transaction;
-3. how the membership rows are read;
-4. how every referenced Question is re-read;
-5. how tenant ownership is checked;
-6. how approval/eligibility is checked;
-7. when the snapshot object is constructed;
-8. when the snapshot row is inserted;
-9. when Quiz status becomes `PUBLISHED`;
-10. what happens if any validation or persistence step fails;
-11. what happens if a concurrent Question Bank mutation is attempted;
-12. why the resulting behavior is deterministic.
-
-Do not use generic claims such as "row locking" that are not native to SQLite. Describe actual SQLite behavior and the transaction strategy chosen by the repository.
-
-If the design depends on serialization of all Question Bank writes through the same database connection/transaction discipline, state that explicitly.
-
----
-
-# 8. FINDING G — DETERMINISTIC ATOMICITY TEST FAILURE INJECTION
-
-ADV-QZ-20 currently says:
-
-"If snapshot generation fails midway..."
-
-Specify how the test deliberately causes that failure.
-
-Use a deterministic test seam/failure injection mechanism at the service/repository boundary rather than relying on an accidental SQLite failure.
-
-The design must define:
-
-- the injected failure point;
-- expected rollback;
-- expected Quiz status;
-- expected snapshot state;
-- cleanup behavior;
-- how the test proves there is no partial publication.
-
-Do not implement the failure seam yet; design it only.
-
----
-
-# 9. EXPAND THE ADVERSARIAL MATRIX
-
-Keep `ADV-QZ-01` through `ADV-QZ-20`, but add the newly discovered cases as additional stable IDs rather than deleting existing coverage.
-
-At minimum add:
-
-- attempted published-snapshot update;
-- attempted published-snapshot deletion;
-- redundant-tenant-field inconsistency if that field is retained;
-- participant exposure of `correctOptionIndices` through a hypothetical active-question projection;
-- concurrent Question Bank mutation during publication;
-- deterministic publication-failure injection.
-
-The final matrix must have explicit expected outcomes.
-
----
-
-# 10. CROSS-CHECK AGAINST ACTUAL REPOSITORY
-
-Before finalizing the revised design, inspect the real current implementation and documentation:
-
-- `src/persistence/sqlite-question-repository.ts`
-- `src/app/teacher/review/db.ts`
-- existing Question Bank services/actions
-- existing transaction helpers/patterns
-- `docs/DECISIONS.md`
+- `docs/BAREA-005-DESIGN-GATE.md`
 - `docs/REQUIREMENTS.md`
 - `docs/ARCHITECTURE.md`
-- `docs/ROADMAP.md`
-- `AGY-REPORT.md`
+- `docs/DECISIONS.md`
+- `docs/FRONTEND-STANDARD.md`
+- existing BAREA-004 implementation and tests
 
-Do not invent APIs, database capabilities, or locking semantics that the current architecture cannot support.
+Do not weaken or reinterpret the approved security invariants to make implementation easier.
 
-If the design references `SqliteQuizRepository`, `src/domain/quiz.ts`, or other BAREA-005 implementation artifacts, keep those as **proposed future artifacts only**. They must not be created during this correction pass.
-
----
-
-# 11. REQUIRED DOCUMENTATION CHANGES
-
-Update only documentation/design artifacts:
-
-1. `docs/BAREA-005-DESIGN-GATE.md`
-2. `AGY-REPORT.md`
-3. `docs/ROADMAP.md` if needed for accurate status
-
-The design document must show:
-
-**DESIGN GATE — REVISED / AWAITING FINAL INDEPENDENT REVIEW**
-
-Do not mark BAREA-005 implementation-ready merely because the corrections are written.
+If implementation discovers a genuine design contradiction, **STOP and report it** rather than silently changing the architecture.
 
 ---
 
-# 12. AGY-REPORT REQUIREMENTS
+# 3. IMPLEMENTATION SCOPE
 
-Record:
+Implement only BAREA-005:
 
-- independent review findings;
-- each correction made for Findings A-G;
-- sub-agent roles actually used;
-- actual findings from each sub-agent;
-- disagreements and their resolution;
-- exact documentation commit SHA;
-- confirmation that zero BAREA-005 application implementation was added;
-- confirmation that implementation remains unauthorized.
+- Quiz domain model;
+- Quiz persistence/repository;
+- Quiz service/application layer;
+- authorized teacher server actions;
+- Question Bank composition into Quiz drafts;
+- deterministic ordering/reordering;
+- timer configuration and validation;
+- scoring-style configuration;
+- option-shuffle configuration;
+- Quiz lifecycle including the approved ARCHIVED semantics;
+- atomic publication;
+- immutable published snapshots;
+- teacher authoring UI;
+- required adversarial and unit/integration tests;
+- documentation updates required to accurately describe the completed implementation.
 
-Do not claim `82/82` or any other test result unless it was actually run during this pass.
+Do NOT start BAREA-006, BAREA-007, or later milestones.
 
 ---
 
-# 13. STRICT STOP CONDITION
+# 4. SECURITY REQUIREMENTS — NON-NEGOTIABLE
 
-After completing the correction pass:
+## Tenant authority
 
-**STOP.**
+- Organization identity MUST come from the authenticated server-side teacher context.
+- Never trust client-supplied `organizationId`, `tenantId`, role, user ID, query parameters, headers, or hidden form fields for authorization.
+- Cross-tenant resources must fail closed without disclosure.
 
-Do NOT:
+## Runtime allowlisting
 
-- create `src/domain/quiz.ts`;
-- create `SqliteQuizRepository`;
-- create `quizzes`, `quiz_questions`, or `published_quiz_snapshots` tables;
-- create Quiz server actions/services;
-- create Quiz UI routes/components;
-- implement BAREA-005 tests;
-- create an implementation PR;
-- start BAREA-006 or later milestones.
+For every mutable Quiz payload, reconstruct an explicit allowlist at the server boundary.
 
-Only documentation/design changes are authorized.
+Never allow runtime injection of:
 
-Wait for the next independent review.
+- `id`
+- `organizationId`
+- `status`
+- `publishedSnapshot`
+- `createdAt`
+- `updatedAt`
+- unknown properties
+
+Do not rely on TypeScript types as the runtime security boundary.
+
+## Question eligibility
+
+Only questions belonging to the authenticated teacher's organization and having `status === APPROVED` may be attached to a Quiz or enter a published snapshot.
+
+Re-check eligibility inside the atomic publication transaction.
+
+## Published snapshot immutability
+
+Implement the approved database-level triggers:
+
+- `prevent_snapshot_update`
+- `prevent_snapshot_delete`
+
+The snapshot repository must expose insert/read behavior only; no update/delete/replace operation is permitted.
+
+A published snapshot must remain byte-for-byte/logically unchanged even if the source Question Bank question is later edited, demoted, archived, or otherwise changed.
+
+## Answer secrecy
+
+`correctOptionIndices` and other answer-bearing snapshot fields are server-authoritative.
+
+They MUST NOT be returned to participants during an active question window.
+
+Implement only the BAREA-005 foundations necessary for this boundary; the actual live participant transport belongs to later milestones.
+
+---
+
+# 5. SQLITE / TRANSACTION REQUIREMENTS
+
+Use the approved Node.js `DatabaseSync` architecture.
+
+For atomic publication:
+
+1. resolve authorized teacher context;
+2. begin `BEGIN IMMEDIATE`;
+3. re-read Quiz by ID and organization;
+4. verify Quiz is `DRAFT`;
+5. read ordered Quiz membership;
+6. re-read every referenced Question;
+7. verify organization ownership;
+8. verify `APPROVED` status;
+9. validate the complete composition;
+10. construct the complete self-contained snapshot;
+11. insert the snapshot;
+12. update Quiz status to `PUBLISHED`;
+13. commit;
+14. only after successful commit perform cache revalidation.
+
+Any failure must roll back the entire publication.
+
+Do not use generic claims about row locking that are not applicable to SQLite. Follow the actual transaction semantics documented in the design.
+
+Question Bank mutations participating in the publication TOCTOU boundary must use the same database transaction/locking discipline so publication has deterministic serialized behavior.
+
+---
+
+# 6. SNAPSHOT SCHEMA / IMMUTABILITY
+
+Implement the approved schema from the design document.
+
+Important:
+
+- `quiz_questions` MUST NOT contain the removed redundant `organization_id` field.
+- `published_quiz_snapshots` stores a complete self-contained snapshot.
+- `published_quiz_snapshots` must have database-enforced update/delete prevention.
+- published Quiz reads must use the frozen snapshot rather than mutable Question Bank content.
+- physical deletion of a Quiz containing a published snapshot must be prevented according to the approved schema/lifecycle semantics.
+
+Add tests that attempt direct SQL UPDATE and DELETE against the snapshot table and verify the SQLite triggers reject them.
+
+---
+
+# 7. QUIZ LIFECYCLE
+
+Implement exactly the approved lifecycle:
+
+`DRAFT -> PUBLISHED`
+`DRAFT -> ARCHIVED -> DRAFT`
+`PUBLISHED -> ARCHIVED`
+
+For published archives:
+
+- hide from active Quiz catalogs;
+- prevent creation of new live rooms in the later session milestone;
+- preserve the immutable snapshot;
+- do not disrupt already-running live sessions;
+- do not restore a published archive to DRAFT.
+
+Do not add additional lifecycle states or transitions.
+
+---
+
+# 8. TIMER AND SCORING CONTRACT
+
+Timer values:
+
+- default: 30 seconds;
+- valid range: 10-120 seconds inclusive;
+- integer only;
+- per-question override uses the same range.
+
+Scoring styles:
+
+### STANDARD
+- correct before expiry: 100 points;
+- incorrect: 0;
+- late/expired: 0.
+
+### SPEED_WEIGHTED
+- base: 100;
+- floor: 50;
+- exact formula from the approved design:
+
+`50 + Math.round(50 * (remainingTimeMs / totalTimeLimitMs))`
+
+- maximum remaining time: 100;
+- positive remaining time approaching zero: 50;
+- expired (`remainingTimeMs <= 0`): 0;
+- incorrect: 0;
+- integer result using standard `Math.round()`.
+
+Scoring must be based on server-authoritative timing in the later live engine.
+
+Reject arbitrary scoring strings.
+
+---
+
+# 9. DETERMINISTIC FAILURE INJECTION
+
+Implement the approved test seam for publication atomicity.
+
+It must:
+
+- be active only when `NODE_ENV === 'test'`;
+- inject failure after snapshot insertion but before Quiz status changes to `PUBLISHED`;
+- cause the transaction to roll back;
+- leave the Quiz as `DRAFT`;
+- leave zero snapshot rows for that Quiz;
+- prove no partial publication state remains.
+
+The test seam must not provide a production authorization or mutation path.
+
+---
+
+# 10. REQUIRED ADVERSARIAL TESTS
+
+Implement and pass all cases specified in `docs/BAREA-005-DESIGN-GATE.md`, including:
+
+- cross-tenant read/edit/attach/publish attempts;
+- unapproved Question Bank questions;
+- archived Question Bank questions;
+- TOCTOU demotion/archive races;
+- protected-field injection;
+- unknown-property injection;
+- duplicate question insertion;
+- invalid ordering/reordering;
+- zero-question publication;
+- invalid timer values;
+- invalid scoring style;
+- source-question mutation after publication;
+- source-question archive/delete after publication;
+- direct snapshot UPDATE;
+- direct snapshot DELETE;
+- answer-secrecy projection checks;
+- concurrent mutation/publication behavior;
+- deterministic atomic failure injection.
+
+Do not merely assert that functions return errors. Verify the underlying database state and security invariants remain correct.
+
+---
+
+# 11. FRONTEND REQUIREMENTS
+
+Implement the teacher authoring UI using the existing BAREA frontend architecture and `docs/FRONTEND-STANDARD.md`.
+
+Expected conceptual routes:
+
+- `/teacher/quizzes`
+- `/teacher/quizzes/new`
+- `/teacher/quizzes/[id]`
+
+The UI must support the approved authoring workflow without introducing participant/session functionality.
+
+Published quizzes must be presented as read-only with respect to frozen published content.
+
+Do not put authorization decisions solely in client components.
+
+---
+
+# 12. VALIDATION / QUALITY GATE
+
+Before opening the implementation PR:
+
+1. run the complete existing test suite;
+2. run the new BAREA-005 adversarial tests;
+3. run TypeScript/typecheck validation;
+4. run the production build validation appropriate to the repository;
+5. run `git diff --check`;
+6. inspect the final diff for accidental milestone creep;
+7. have the Security/Red-Team sub-agent independently review the implementation;
+8. have the QA/Test sub-agent independently review the tests and security invariants;
+9. resolve any material findings;
+10. verify the working tree and branch state are clean/intentional.
+
+Do not report a test as passed unless it was actually executed.
+
+---
+
+# 13. DOCUMENTATION / REPORTING
+
+Update `AGY-REPORT.md` with:
+
+- implementation summary;
+- files changed;
+- actual sub-agents used;
+- actual findings and resolutions;
+- security review results;
+- test commands actually executed and exact results;
+- build/typecheck results;
+- confirmation of adversarial test coverage;
+- final commit SHA;
+- implementation PR number.
+
+Update `docs/ROADMAP.md` only when appropriate to reflect the actual milestone state.
+
+Do not fabricate sub-agent identities, review results, test results, or CI results.
+
+---
+
+# 14. STOP / ESCALATION RULES
+
+Stop and report before proceeding if:
+
+- the approved design cannot be implemented without changing a security invariant;
+- a required database constraint cannot be enforced as specified;
+- tenant isolation cannot be guaranteed;
+- answer secrecy cannot be preserved;
+- publication atomicity cannot be demonstrated;
+- the existing architecture contradicts the approved design in a material way.
+
+In such a case, do not silently redesign BAREA-005. Report the exact contradiction and wait for review.
+
+Otherwise, implementation is authorized.
+
+---
 
 # FINAL AUTHORITY
 
-The sequence remains:
+The independent design review has granted:
 
-`DESIGN -> SUB-AGENT CHALLENGE -> CORRECTION -> INDEPENDENT REVIEW -> GO -> IMPLEMENTATION`
+**BAREA-005 = GO.**
 
-**No GO has been granted.**
+The required sequence is now:
+
+`DESIGN -> SUB-AGENT CHALLENGE -> CORRECTION -> INDEPENDENT REVIEW -> GO -> SUB-AGENT IMPLEMENTATION REVIEW -> IMPLEMENTATION -> SECURITY/QA REVIEW -> TEST/VERIFY -> PR`
+
+**Proceed with BAREA-005 implementation. Use sub-agents. Stay strictly within scope.**
