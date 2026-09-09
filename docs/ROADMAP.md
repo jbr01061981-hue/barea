@@ -15,7 +15,7 @@ Milestones must be executed in order. No milestone may proceed into application 
 | **BAREA-002A** | **TypeScript Migration Gate** | Migrate existing BAREA-002 implementation to TypeScript without changing behavior | **COMPLETED** |
 | **BAREA-003** | **AI Quiz Generation** | Structured LLM prompt pipeline, parameter inputs, structural validation | **COMPLETED** |
 | **BAREA-004** | **Teacher Review/Approval** | Production frontend foundation, staging UI, editing, Scripture review, approval gate | **COMPLETED — MERGED** |
-| **BAREA-005** | **Quiz Authoring** | Quiz playlist composition, timer & scoring configurations, publishing | **DESIGN GATE COMPLETED — PENDING INDEPENDENT GO** (Implementation NOT STARTED) |
+| **BAREA-005** | **Quiz Authoring** | Quiz playlist composition, timer & scoring configurations, publishing | **COMPLETED — PENDING PR MERGE** |
 | **BAREA-006** | **Share/Join** | QR generation, room access codes, URL routing, participant onboarding | NOT STARTED |
 | **BAREA-007** | **Live Quiz** | Authoritative state machine, timer sync, real-time transport | NOT STARTED |
 | **BAREA-008** | **Host/Participant UI** | Dual-interface UX: host control console & responsive mobile participant app | NOT STARTED |
@@ -99,8 +99,8 @@ AI Generation
 - Compiling approved questions from the Question Bank into structured quizzes.
 - Configurable settings: per-question countdowns, scoring styles, question ordering, and option shuffling.
 - Publishing workflow that snapshots quizzes for active sessions.
-- **Status**: DESIGN GATE COMPLETED — PENDING INDEPENDENT GO (Implementation NOT STARTED).
-- **Design Deliverable**: `docs/BAREA-005-DESIGN-GATE.md` covering domain model, SQLite persistence schema (`quizzes`, `quiz_questions`, `published_quiz_snapshots`), server-authoritative tenant isolation, TOCTOU approval re-validation, immutable snapshot guarantees, runtime payload allowlisting, Next.js 16 authoring UI architecture, and 20 adversarial acceptance test specifications (`ADV-QZ-01` through `ADV-QZ-20`).
+- **Status**: COMPLETED — PENDING PR MERGE.
+- **Deliverable**: Complete Quiz Authoring domain, SQLite persistence engine with immutable snapshot triggers and `BEGIN IMMEDIATE` transaction locking, QuizService orchestration, server actions with runtime payload allowlisting, Teacher Authoring UI (`/teacher/quizzes`, `/teacher/quizzes/[id]`), and 33 adversarial automated tests (`ADV-QZ-01` through `ADV-QZ-30`).
 
 ### BAREA-006: Share/Join
 - Session creation with room access codes.
