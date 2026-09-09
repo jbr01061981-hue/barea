@@ -14,7 +14,7 @@ BAREA bridges biblical education and interactive engagement. It empowers teacher
 2. **Dedicated Church Modes**:
    - **Teacher / Host View**: Controls for question approval, quiz assembly, live session pacing, and participant roster oversight.
    - **Mobile Participant Experience**: Responsive web experience accessible via smartphones with zero install friction.
-   - **Projector / Presentation View**: Big-screen display for sanctuaries, auditoriums, and classrooms showing questions, timers, leaderboards, and celebratory feedback.
+   - **Projector / Presentation View**: Big-screen display in sanctuaries, auditoriums, and classrooms showing questions, timers, leaderboards, and celebratory feedback.
 3. **Frictionless Joining**: Rapid participation via QR code, direct URL, or room access code without requiring participant app store downloads.
 4. **Server-Authoritative Live State & Scoring**: Tamper-proof scoring, synchronized timers, and live leaderboard calculations driven by an authoritative server state machine.
 5. **AI-Powered Generation with Teacher Control**: AI generates questions based on topic, difficulty, question type, and language. AI questions are never published directly without explicit structural validation and teacher review, editing, and approval.
@@ -30,7 +30,7 @@ AI generates
 -> teacher edit/regenerate
 -> teacher approval
 -> Question Bank
--> Quiz
+-> Quiz Authoring
 ```
 
 ---
@@ -48,6 +48,17 @@ Conceptual architecture, product requirements, and design specifications are loc
 
 ---
 
-## Status
+## Implementation Status
 
-The project is currently in the **Foundation** phase (BAREA-001). No application code or database migrations are deployed. All subsequent milestones (BAREA-002 through BAREA-013) are marked as **NOT STARTED** in [docs/ROADMAP.md](./docs/ROADMAP.md).
+**Completed through BAREA-004.**
+
+- BAREA-001 Foundation — COMPLETED
+- BAREA-002 Question Bank — COMPLETED
+- BAREA-002A TypeScript Migration Gate — COMPLETED
+- BAREA-003 AI Quiz Generation — COMPLETED
+- BAREA-004 Teacher Review & Approval — COMPLETED and merged into `main`
+- BAREA-005 Quiz Authoring — NOT STARTED
+
+BAREA-004 was merged into `main` in commit `1faff33235378c6061a902a89454e5d62b097b0b`.
+
+The current implementation provides the AI generation, structural validation, Question Bank, and teacher review/approval workflow. Quiz authoring, sharing/joining, live gameplay, scoring, leaderboard, presentation, church validation, and pilot milestones remain future work according to the roadmap.
