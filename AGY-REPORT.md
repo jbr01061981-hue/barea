@@ -215,3 +215,61 @@ Defined 20 focused adversarial test cases covering cross-tenant isolation, TOCTO
 
 ### F. Recommendation
 The design is complete, verified against all architectural contracts and BAREA-004 lessons, and ready for independent review. Awaiting independent **GO** verdict before any coding begins.
+
+---
+
+## 7. BAREA-005 Design Gate Revision — Findings A–G Remediation
+
+Following independent design review feedback and multi-agent consultation, [docs/BAREA-005-DESIGN-GATE.md](file:///C:/Users/Mr.Babu%20Rao/BAREA/docs/BAREA-005-DESIGN-GATE.md) has been substantially revised to resolve findings A through G.
+
+### A. Sub-Agent Consultations & Challenge Outcomes
+
+| Subagent Role | Focus & Challenge | Resolution Adopted in Design Gate |
+|---|---|---|
+| **Security Architect & Independent Red-Team Reviewer** (`5a538e93-7ebf-4aac-9ad7-048a0e7af494`) | Challenged snapshot immutability (Finding A), redundancy in schema (Finding B), participant answer secrecy boundary (Finding E), and TOCTOU concurrency (Finding F). | Recommended SQLite `BEFORE UPDATE`/`BEFORE DELETE` abort triggers on `published_quiz_snapshots`, complete removal of `organization_id` from `quiz_questions` join table, formal definition of `ParticipantQuestionProjection` for live participant secrecy (ADR-004), and `BEGIN IMMEDIATE` transaction locking. |
+| **SQLite/Persistence Architect, Concurrency Specialist & Domain Specialist** (`57f23589-f514-4623-833c-de160e431a84`) | Evaluated schema normalization (Finding B), `SPEED_WEIGHTED` mathematical formula (Finding C), `ARCHIVED` lifecycle states (Finding D), SQLite transaction semantics (Finding F), and deterministic atomic failure injection (Finding G). | Formulated exact speed-weighted formula with boundary definitions: `Floor(50) + Math.round((100 - 50) * (remainingTimeMs / totalTimeLimitMs))`. Formalized `ARCHIVED` state machine behavior for both DRAFT (soft-delete, reversible) and PUBLISHED (soft-delete, retains snapshot, blocks new room generation). Designed deterministic fault injection test seam for atomicity verification. |
+
+### B. Summary of Findings A–G Resolutions
+
+1. **Finding A: True Snapshot Immutability**
+   - Implemented database-level immutability enforcement via SQLite triggers (`prevent_snapshot_update`, `prevent_snapshot_delete`) raising `RAISE(ABORT, 'Published quiz snapshots are strictly immutable and cannot be modified or deleted')`.
+   - Repository interface restricts snapshot operations to `insertSnapshot` and `findSnapshotByQuizId`; no update or delete methods exist.
+   - Physical deletion of a published quiz is prohibited by a trigger when a snapshot exists.
+
+2. **Finding B: Removal of Redundant `organization_id`**
+   - Removed `organization_id` from `quiz_questions` join table.
+   - Tenant isolation is strictly enforced through the parent `quizzes` table join (`JOIN quizzes q ON q.id = qq.quiz_id WHERE q.organization_id = ?`).
+   - Eliminates split-brain denormalization and invalid state vectors.
+
+3. **Finding C: Finalized Scoring Semantics (`SPEED_WEIGHTED`)**
+   - Defined exact mathematical formulation:
+     `score = FloorPoints + Math.round((BasePoints - FloorPoints) * (remainingTimeMs / totalTimeLimitMs))`
+     where `BasePoints = 100`, `FloorPoints = 50`.
+   - Explicit boundary rules: Instant response yields 100 points; response at boundary yields 50 points; expired (> `totalTimeLimitMs`) or incorrect answers yield 0 points. Server-authoritative timestamps strictly dictate elapsed time.
+
+4. **Finding D: Formal `ARCHIVED` Lifecycle Semantics**
+   - `DRAFT -> ARCHIVED`: Soft-deleted; hidden from default teacher lists; unarchiving back to `DRAFT` is permitted.
+   - `PUBLISHED -> ARCHIVED`: Hidden from active quiz catalog; prohibits creation of new live game rooms (FR-LIV-001); immutable snapshot is preserved; does not terminate or corrupt currently running live sessions.
+   - Transition rules, idempotency, and state matrix are fully formalized in Section 4.3.
+
+5. **Finding E: Explicit Answer-Secrecy Boundary**
+   - Aligned with ADR-004 and NFR-SEC-001: The server snapshot retains full answer keys for server-authoritative scoring.
+   - Live session participant clients receive only a sanitized `ParticipantQuestionProjection` (stripping `correctOptionIndices` and `explanation`) during the active answering window.
+   - Answer keys are revealed to participants only during question review state transitions.
+
+6. **Finding F: SQLite Concurrency & TOCTOU Protection**
+   - Specified `BEGIN IMMEDIATE` for SQLite transactions to acquire an exclusive write lock immediately, preventing concurrent write interleaving.
+   - TOCTOU protection re-queries every question inside the transaction, verifying `status === 'APPROVED'`, matching `organization_id`, and existence.
+   - If any question fails re-verification, the entire transaction rolls back cleanly.
+
+7. **Finding G: Deterministic Atomic Publication Failure Injection**
+   - Designed a dedicated test seam (`simulateSnapshotFailure` in `SqliteQuizRepository`, active only in `NODE_ENV === 'test'`).
+   - Enables deterministic injection of simulated disk full, trigger abort, or serialization errors during snapshot creation, proving 100% rollback of quiz status and join tables.
+
+8. **Expanded Adversarial Test Suite**
+   - Expanded adversarial test matrix from 20 to 26 exhaustive cases (`ADV-QZ-01` through `ADV-QZ-26`) in Section 12, directly testing Findings A through G.
+
+### C. Implementation Status
+- **Application implementation remains strictly UNAUTHORIZED.**
+- No BAREA-005 application code has been written.
+- Ready for final independent review and GO/NO-GO determination.
