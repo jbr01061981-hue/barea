@@ -42,10 +42,21 @@ interface QuestionRow {
 
 export class SqliteQuestionRepository implements QuestionRepository {
   private db: DatabaseSync;
+  private ownsDb: boolean;
 
-  constructor(dbPath: string = ':memory:') {
-    this.db = new DatabaseSync(dbPath);
+  constructor(dbOrPath: DatabaseSync | string = ':memory:') {
+    if (typeof dbOrPath === 'string') {
+      this.db = new DatabaseSync(dbOrPath);
+      this.ownsDb = true;
+    } else {
+      this.db = dbOrPath;
+      this.ownsDb = false;
+    }
     this.init();
+  }
+
+  getDatabase(): DatabaseSync {
+    return this.db;
   }
 
   init(): void {
@@ -260,6 +271,8 @@ export class SqliteQuestionRepository implements QuestionRepository {
   }
 
   close(): void {
-    this.db.close();
+    if (this.ownsDb) {
+      this.db.close();
+    }
   }
 }

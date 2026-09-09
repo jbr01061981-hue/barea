@@ -63,6 +63,23 @@ interface QuizRow {
   updated_at: string;
 }
 
+interface QuestionRow {
+  readonly id: string;
+  readonly organization_id: string;
+  readonly stem: string;
+  readonly type: string;
+  readonly options_json: string;
+  readonly correct_option_indices_json: string;
+  readonly explanation: string | null;
+  readonly scripture_reference: string;
+  readonly topic: string;
+  readonly difficulty: string;
+  readonly language: string;
+  readonly status: string;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
 interface QuizQuestionRow {
   quiz_id: string;
   question_id: string;
@@ -620,7 +637,7 @@ export class SqliteQuizRepository implements QuizRepository {
         const item = qqRows[i];
         const qRow = this.db.prepare(`
           SELECT * FROM questions WHERE id = ?
-        `).get(item.question_id) as any;
+        `).get(item.question_id) as QuestionRow | undefined;
 
         if (!qRow || qRow.organization_id !== organizationId) {
           throw new QuizValidationError(
@@ -639,6 +656,16 @@ export class SqliteQuizRepository implements QuizRepository {
         if (!Array.isArray(options) || options.length < 2) {
           throw new QuizValidationError(
             `Question ${item.question_id} has invalid options (minimum 2 required).`
+          );
+        }
+
+        if (
+          !Array.isArray(correctIndices) ||
+          correctIndices.length === 0 ||
+          correctIndices.some((idx) => typeof idx !== 'number' || idx < 0 || idx >= options.length)
+        ) {
+          throw new QuizValidationError(
+            `Question ${item.question_id} has invalid or out-of-bounds correctOptionIndices.`
           );
         }
 

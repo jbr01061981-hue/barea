@@ -171,7 +171,12 @@ export async function addQuestionToQuizAction(
     const context = await getAuthorizedTeacherContext();
     const service = getQuizService();
 
-    const item = service.addQuestion(context.organizationId, quizId, questionId, sortOrder);
+    const sanitizedSortOrder =
+      typeof sortOrder === 'number' && Number.isInteger(sortOrder) && sortOrder >= 1
+        ? sortOrder
+        : undefined;
+
+    const item = service.addQuestion(context.organizationId, quizId, questionId, sanitizedSortOrder);
 
     safeRevalidate(`/teacher/quizzes/${quizId}`);
     return { success: true, data: item };
