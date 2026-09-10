@@ -450,35 +450,63 @@ Following independent review of PR #7 (commit `38745a2`), a targeted remediation
 
 ---
 
-## 6. BAREA-006: Share/Join — Design Gate Execution Report
+## 6. BAREA-006: Share/Join — Design Gate Execution Report (NO-GO Remediation Cycle)
 
-### A. Executive Summary & Design Authorization Status
-- **Status**: **DESIGN GATE COMPLETE — MULTI-AGENT VERIFIED**
-- **Implementation Status**: **ZERO APPLICATION CODE WRITTEN (DESIGN ONLY)**
-- **Roadmap Boundary**: Strictly restricted to Share/Join setup. Absolute quarantine on BAREA-007 (zero live state machine, WebSockets, countdown synchronization, answer endpoints, live scoring, or leaderboards).
-- **Target Document**: `docs/BAREA-006-DESIGN-GATE.md` (fully authored and post-remediation verified).
+### A. Executive Summary & Status
+- **Status**: **DESIGN GATE REMEDIATION COMPLETE — POST-REMEDIATION VERIFIED (UNANIMOUS GO)**
+- **Implementation Status**: **ZERO APPLICATION CODE WRITTEN (STRICT STOP MAINTAINED)**
+- **Scope**: Strictly restricted to Share/Join discovery, QR/URL generation, nickname normalization, admission control, ephemeral token issuance, and lobby roster.
+- **Roadmap Boundary**: Absolute quarantine on BAREA-007 (zero live state machine, WebSockets, synchronized countdowns, live answer endpoints, live scoring, or leaderboards).
+- **Target Document**: [`docs/BAREA-006-DESIGN-GATE.md`](file:///C:/Users/Mr.Babu%20Rao/BAREA/docs/BAREA-006-DESIGN-GATE.md) (739 lines, 41 adversarial test specifications).
 
-### B. Multi-Agent Design Review & Remediation Cycle (6 Specialized Roles)
+---
 
-In accordance with mandatory AGY operating guidelines, 6 specialized subagents were dispatched to independently audit and challenge the design. All challenge findings were synthesized and remediated in `docs/BAREA-006-DESIGN-GATE.md`:
+### B. Seven Independent NO-GO Findings & Exact Remediation Results
 
-| Role | Subagent Conversation ID | Initial Challenge Findings | Remediations Synthesized into Design Gate | Post-Remediation Verification Verdict |
-| :--- | :--- | :--- | :--- | :--- |
-| **Security Architect & Red Team** | `974d2bd6-36be-4238-9531-e0289c2f5f7a` | 1. Raw SHA-256 vulnerable to offline dictionary attack if DB leaked.<br>2. Dual-bucket rate limiting missing on lookup and join.<br>3. Join URL subject to HTTP Host header poisoning.<br>4. Nickname regex permitted invisible control characters (`\u200B`, bidi).<br>5. Missing host lock/kick controls. | 1. Upgraded to `HMAC-SHA256(SESSION_AUTH_SECRET, sessionId + ":" + rawToken)` with `crypto.timingSafeEqual()`.<br>2. Added dual-bucket rate limit (per-IP 15 req/min + global 250 req/min).<br>3. Join URL locked strictly to `process.env.NEXT_PUBLIC_APP_URL`.<br>4. Replaced with strict regex rejecting `[\x00-\x1F\x7F\u200B-\u200D\u202A-\u202E\uFEFF\p{Cf}]`.<br>5. Added `lockSessionAction` and `kickParticipantAction`. | **GO / APPROVED** |
-| **SQLite Persistence Architect** | `7b832450-a908-44fe-8eb5-b4a51cfc0114` | 1. High concurrency `SQLITE_BUSY` risk on burst congregation joins.<br>2. `LOWER(nickname)` ASCII-only limitation in SQLite.<br>3. Missing CAS versioning for BAREA-007 transition.<br>4. Zombie session code reuse leaks. | 1. Added `PRAGMA journal_mode = WAL;` and `PRAGMA busy_timeout = 5000;`. Shifted token generation out of transactions.<br>2. Added `normalized_nickname` column with compound unique index.<br>3. Added `state_version INTEGER NOT NULL DEFAULT 1`.<br>4. Added lazy expiration check freeing room codes when `now >= expires_at`. | **GO / APPROVED** |
-| **QA & Test Architect** | `03dd012f-2a00-4920-a54e-522836403640` | 1. 26 adversarial cases missed suffix collision races, rate limiter thresholds, and exact capacity races.<br>2. Missing deterministic seams for time and room code randomness. | 1. Expanded test matrix to 34 discrete cases (`ADV-SJ-01` through `ADV-SJ-34`).<br>2. Specified `ClockProvider` and `RoomCodeGenerator` interfaces for deterministic testing without flaky timeouts. | **GO / APPROVED** |
-| **TypeScript & Code Quality Specialist** | `4dbfb264-b19f-4ab0-b892-72fc264d64cc` | 1. Primitive obsession on `RoomCode`, `Nickname`, `ParticipantToken`.<br>2. Untaxonomized domain errors.<br>3. Server Actions lacked runtime allowlisting types.<br>4. Database row mappers needed zero-`any` enforcement. | 1. Created branded types (`RoomCode`, `Nickname`, `ParticipantToken`) with pure validation functions.<br>2. Defined formal `BareaDomainError` hierarchy with HTTP status codes.<br>3. Specified `ActionResponse<T>` and strict input allowlist interfaces.<br>4. Defined `SessionRow` and `ParticipantRow` zero-`any` mapping functions. | **GO / APPROVED** |
-| **Frontend & Next.js Specialist** | `567b4c44-cd7c-42d2-88a6-b03a82ee70b1` | 1. Client token storage ambiguity (`sessionStorage` vs `cookie`).<br>2. Direct join route design missing.<br>3. QR code generator security (third-party script risk).<br>4. Mobile keyboard layout shift and touch target ergonomics. | 1. Specified `sessionStorage` (tab isolation for family devices) + session-scoped cookie fallback.<br>2. Designed `/join/[roomCode]` Server Component pre-validation.<br>3. Mandated pure vector SVG generation without network calls or external scripts.<br>4. Mandated `min-h-[100dvh]`, 48px touch targets, uppercase monospace text. | **GO / APPROVED** |
-| **Independent Product & Architecture Reviewer** | `4fe8e64f-64ea-4e74-8a01-abfc39cdc6b7` | 1. Church demographic stress test (elderly vs youth group friction).<br>2. Sanctuary projector QR scanning visibility.<br>3. Duplicate nickname notification UX gap.<br>4. Host console lacked participant roster inspection. | 1. Unambiguous alphabet (no 0, 1, I, O), auto-focus, large touch targets.<br>2. Level M error correction + 4-module quiet zone for 30ft sanctuary readability.<br>3. Required explicit mobile banner: "You are joined as Sarah (2)".<br>4. Added `getHostSessionRosterAction(sessionId)`. | **GO / APPROVED** |
+| # | Independent NO-GO Finding | Vulnerability / Defect Mechanism | Exact Architecture Remediation Synthesized into Design Gate |
+| :--- | :--- | :--- | :--- |
+| **1** | **Join Flooding / Admission Abuse** | Attackers could flood a valid room code with hundreds of unique nicknames, exhausting `maxParticipants` and saturating SQLite write locks (`BEGIN IMMEDIATE`). | 1. Enforced multi-tier admission quota: Max 5 joins per session per client IP; max 10 joins per 10 minutes globally per IP.<br>2. Dynamic backpressure when room reaches 85% capacity.<br>3. Capacity verified inline inside atomic `BEGIN IMMEDIATE` transaction.<br>4. Host `lockSessionAction` and `kickParticipantAction` allow instant freezing of join admissions.<br>5. Bounded memory sliding-window store (max 50,000 entries, LRU eviction, 60s TTL). Zero CAPTCHA to preserve church sanctuary UX. |
+| **2** | **Trusted Proxy / IP Extraction** | Attackers could spoof client IP by injecting `X-Forwarded-For` or `CF-Connecting-IP` headers to bypass rate limits or DoS church IPs. | 1. Explicit `TRUSTED_PROXY_CIDRS` allowlist.<br>2. Right-to-left traversal of `X-Forwarded-For` selecting first non-trusted proxy IP.<br>3. `CF-Connecting-IP` trusted strictly when upstream TCP peer is verified within Cloudflare CIDRs.<br>4. Direct socket address fallback when not behind trusted proxy. Fails closed with `InvalidClientIpError`. |
+| **3** | **Snapshot / Organization Tenant Integrity** | Host in Org A could reference a published snapshot ID belonging to Org B, leaking proprietary questions. | 1. Application-level verification: `createSessionAction` resolves snapshot through authorized teacher context and asserts matching `organizationId`.<br>2. Persistence-level relational guard: SQLite `BEFORE INSERT` trigger (`trg_enforce_session_snapshot_tenant`) joining `published_quiz_snapshots` to `quizzes` and aborting if `NEW.organization_id` does not match `q.organization_id`. |
+| **4** | **Nickname / Suffix Contradiction & Suffix Injection** | Allowed nickname regex rejected parentheses, but collision allocator appended `" (2)"`. Furthermore, user could enter 24 chars, causing suffix to exceed max length, or user could type `"Sarah (2)"` directly to impersonate. | 1. Decoupled 3-tier value objects: `RawNicknameInput` (2..20 chars, parentheses strictly disallowed, NFKC normalized, control/HTML rejected), `NormalizedNicknameKey` (lowercase, whitespace-collapsed lookup key), and `DisplayName` (formatted with suffix, strictly <= 24 chars).<br>2. If base name collides, allocator assigns lowest available suffix `(k)` where `k ∈ [2..99]`. Suffix exhaustion at 99 throws `NicknameSuffixExhaustedError` (HTTP 409).<br>3. Client displays accessible notice banner: *"Welcome, Sarah! Another participant is already using that name, so your display name is Sarah (2)"*. |
+| **5** | **Participant Cookie Security & Tab Isolation** | Bearer participant token lacked strict cookie flags. On shared church iPads, sibling tabs could overwrite each other's cookie identity. | 1. Emitted fallback cookie: `barea_ptok_${sessionId}` with `HttpOnly; Secure; SameSite=Lax; Path=/join; Max-Age=14400` (4-hour TTL).<br>2. `sessionStorage` (`barea:session:${sessionId}`) is primary, guaranteeing independent tab isolation for multiple children on the same iPad.<br>3. Cookie serves strictly as rehydration fallback on mobile Safari refresh or QR re-scan. |
+| **6** | **Strict BAREA-006 Lobby Boundary** | Risk of premature live quiz state machine, tick sync, or question leakage into discovery/join endpoints. | 1. Sessions created exclusively in `LOBBY` status; `ACTIVE` transition is owned by BAREA-007.<br>2. Strict zero-disclosure: `SessionPublicInfo` exposes only title, count, and duration. Zero question stems, option arrays, correct indices, or explanations are returned in BAREA-006.<br>3. `submitAnswerAction` does not exist in BAREA-006. Zero WebSockets, SSE, or live game timers. |
+| **7** | **Global Rate-Limiter Blast Radius** | Global sentinel proposal (fail-closed after 250 invalid attempts across all IPs) could be weaponized by an attacker to lock out all churches platform-wide. | 1. Completely eliminated the 250 global fail-closed sentinel.<br>2. Partitioned rate limiting: Per-IP room lookup rate (15 failed/60s), Subnet bucket isolation (`/24` IPv4, `/48` IPv6 capped at 60 failed/min), and per-room protection (25 failed/min). Attacker spamming invalid codes from one IP/subnet cannot affect legitimate church users on other subnets. |
 
-### C. Design Gate Core Deliverables & Artifacts
-1. **Document Created**: [docs/BAREA-006-DESIGN-GATE.md](file:///C:/Users/Mr.Babu%20Rao/BAREA/docs/BAREA-006-DESIGN-GATE.md)
-   - 15 comprehensive sections covering architecture, domain types, branded value objects, room code entropy, HMAC-SHA256 token hashing, QR SVG contracts, nickname validation, SQLite DDL with WAL/busy timeout, Server Actions allowlists, error taxonomy, and 34 adversarial test specifications.
-2. **Security & Secrecy Boundary Verified**:
-   - Zero questions, options, explanations, or answer keys accessible via BAREA-006.
-   - Zero live WebSockets, synchronized timers, scoring, or gameplay state.
-3. **Multi-Agent Unanimous Verdict**:
-   - All 6 specialized roles returned **PASS / GO** on the remediated design gate.
-4. **Current Status**:
-   - Awaiting User Independent GO / NO-GO review.
-   - **STOP** condition active; zero application code written.
+---
+
+### C. Multi-Agent Audit Lifecycle (Pre-Remediation & Second-Pass Post-Remediation)
+
+#### 1. Pre-Remediation Six-Agent Challenge (Initial NO-GO Confirmation)
+All 6 specialized subagents audited the 7 NO-GO findings and submitted detailed technical challenge directives:
+- **Security Red Team (`f39579f4`)**: Exposed the 250-attempt global kill-switch as a self-inflicted DoS vulnerability; detailed per-IP admission quotas and right-to-left proxy traversal.
+- **SQLite Persistence Architect (`2268d4da`)**: Analyzed schema constraints (`published_quiz_snapshots` vs `quizzes`), designed `BEFORE INSERT` trigger tenant guard, and specified pre-lock token hashing to minimize write-lock duration.
+- **QA & Test Architect (`741e9f88`)**: Designed adversarial test cases covering valid-room-code join floods, proxy spoofing, and boundary races; formulated `FrozenClockProvider`, `DeterministicRoomCodeGenerator`, and `RateLimitStore` seams.
+- **TypeScript Specialist (`2bbf40cd`)**: Formulated nominal branded types (`RawNicknameInput`, `NormalizedNicknameKey`, `DisplayName`, `RoomCode`, `ParticipantToken`, `ClientIp`), error taxonomy (`BareaDomainError` subclasses), and zero-`any` persistence mappers.
+- **Frontend & Next.js Specialist (`01aca240`)**: Detailed Next.js `next/headers` cookie emission (`Path=/join`, `SameSite=Lax`), `sessionStorage` primary tab isolation on shared iPads, and mobile viewport ergonomics.
+- **Independent Product & Architecture Reviewer (`4be7751b`)**: Confirmed sanctuary usability (zero CAPTCHA), youth group duplicate name handling, and strict BAREA-007 boundary quarantine. Issued initial **NO-GO**.
+
+#### 2. Second-Pass Post-Remediation Verification (Unanimous GO)
+Following complete remediation of `docs/BAREA-006-DESIGN-GATE.md`, all 6 specialized subagents performed an independent second-pass verification audit:
+
+| Specialized Role | Subagent Conversation ID | Verification Scope & Finding | Final Role Verdict |
+| :--- | :--- | :--- | :--- |
+| **Security Architect & Red Team** | `a937caff-c12f-42a9-ae51-10346fd1c3df` | Confirmed all 7 findings resolved. Verified per-IP join quota (5/session/IP), right-to-left proxy extraction, trigger tenant guard, decoupled nickname bounds, HttpOnly cookie, blast radius isolation. | **GO** |
+| **SQLite Persistence Architect** | `d1da20d9-7fcf-467f-953a-de53750f08a7` | Confirmed `BEFORE INSERT` trigger tenant guard, pre-lock token hashing, atomic capacity check, `normalized_nickname` compound index, WAL mode, and `busy_timeout=5000`. | **GO** |
+| **QA & Test Architect** | `a6973584-60f6-4513-b57d-0826171eeed8` | Confirmed 41 discrete adversarial test cases (`ADV-SJ-01`..`41`), deterministic seams (`FrozenClockProvider`, `DeterministicRoomCodeGenerator`, `RateLimitStore`), and real production paths. | **GO** |
+| **TypeScript & Code Quality Specialist** | `d865a279-7b16-4d33-8c5b-fe2bb5b8938e` | Confirmed branded types (`RawNicknameInput`, `NormalizedNicknameKey`, `DisplayName`, `RoomCode`, `ParticipantToken`, `ClientIp`), error taxonomy, Server Action contracts, and zero-`any` row mappers. | **GO** |
+| **Frontend & Next.js Security Specialist** | `d72852b1-a942-423b-8b7d-bc9cc5df557a` | Confirmed path-scoped participant cookie (`Path=/join`, `SameSite=Lax`), `sessionStorage` primary multi-tab family iPad isolation, 48px touch targets, and zero live quiz leakage. | **GO** |
+| **Independent Product & Architecture Reviewer** | `53e71a09-4a79-4d9f-b070-d95c873e1754` | Confirmed church demographic usability (frictionless, no CAPTCHA), sanctuary projector visibility, duplicate name fellowship UX, and strict BAREA-006/007 boundary. Confirmed zero application code. | **GO** |
+
+---
+
+### D. Remaining Non-Blocking Observations
+1. **Database Schema Aliasing Consistency**: As noted by SQLite Persistence Architect, ensure that during BAREA-006 implementation, foreign key and trigger bindings between `published_quiz_snapshots.id` vs `published_quiz_snapshots.quiz_id` align cleanly with the BAREA-005 database schema.
+2. **Boot-Time Secret Assertion**: Assert presence of non-empty `AUTH_SECRET` at server initialization to fail fast before processing session tokens.
+
+---
+
+### E. Final Design Recommendation & Stop Confirmation
+- **Final Multi-Agent Recommendation**: **UNANIMOUS GO FOR DESIGN GATE**
+- **Implementation Status**: **ZERO APPLICATION CODE WRITTEN.** No files in `src/` or `test/` have been modified or created for BAREA-006.
+- **Next Step**: Awaiting the User's Independent Review and GO/NO-GO authorization before initiating any code implementation.

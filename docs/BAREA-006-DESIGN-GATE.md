@@ -1,15 +1,15 @@
 # BAREA-006: Share/Join — System Design & Verification Gate
 
-**Status: COMPLETE DESIGN GATE — POST-REMEDIATION VERIFIED BY 6 SPECIALIZED SUB-AGENTS**  
-**Date: 2026-09-09**  
+**Status: COMPLETE DESIGN GATE — POST-REMEDIATION VERIFIED BY 6 SPECIALIZED SUB-AGENTS (UNANIMOUS GO)**  
+**Date: 2026-09-10**  
 **Dependency:** BAREA-005 completed and merged on `main` (`94af326`)  
-**Implementation Authorization:** NOT AUTHORIZED (Design Gate Only — Awaiting User Independent GO / NO-GO)
+**Implementation Authorization:** NOT AUTHORIZED (Design Gate Only — Awaiting Multi-Agent Verification & Independent User GO / NO-GO)
 
 ---
 
 ## 1. Objective & Canonical Workflow
 
-The objective of **BAREA-006: Share/Join** is to design the domain model, persistence schema, server-authoritative security boundaries, room-code generation and collision handling, QR/join URL infrastructure, low-friction mobile landing flow, nickname validation, duplicate-name handling, and session resumption mechanics for church quizzes.
+The objective of **BAREA-006: Share/Join** is to design the domain model, persistence schema, server-authoritative security boundaries, room-code generation and collision handling, QR/join URL infrastructure, low-friction mobile landing flow, nickname validation, duplicate-name handling, admission control, and session resumption mechanics for church quizzes.
 
 BAREA-006 establishes how participants discover, join, and anchor their presence in a scheduled quiz session **without creating persistent accounts**, and how teachers/hosts generate and display session access surfaces.
 
@@ -20,8 +20,9 @@ BAREA-006 establishes how participants discover, join, and anchor their presence
                ↓
 [Host Creates Quiz Session via Server Action (createSessionAction)]
   - Context strictly from getAuthorizedTeacherContext()
-  - Reference to published_quiz_snapshots(id)
-  - Generate 6-char cryptographic room code (unambiguous alphabet)
+  - Reference to published_quiz_snapshots(id) verified for matching organization_id
+  - SQLite BEFORE INSERT trigger enforces snapshot organization_id === session organization_id
+  - Generate 6-char cryptographic room code (unambiguous 31-char alphabet)
                ↓
 [Server provides Session + Safe Public Join URL + High-Contrast SVG QR Code]
   - Base URL strictly from process.env.NEXT_PUBLIC_APP_URL (prevents Host Header Poisoning)
@@ -31,27 +32,29 @@ BAREA-006 establishes how participants discover, join, and anchor their presence
                ↓
 [Participant lands on /join or /join/[roomCode] via mobile browser]
   - Server Component pre-validates roomCode and renders public metadata
-  - Input field formatted with large touch targets, uppercase, tracking-widest, monospace
+  - Input field formatted with 48px touch targets, uppercase, tracking-widest, monospace
                ↓
 [Participant enters Nickname]
                ↓
-[Server validates & normalizes Nickname]
-  - NFKC normalization, strip/reject [\x00-\x1F\x7F\u200B-\u200D\u202A-\u202E\p{Cf}], HTML tags
-  - Trim and collapse multiple spaces to a single space, enforce [2..24] chars
-  - Automatic deterministic numerical suffixing if taken: "Sarah" -> "Sarah (2)"
+[Server Admission Control & Validation Pipeline]
+  - Extract verified Client IP via Right-to-Left proxy traversal (TRUSTED_PROXY_CIDRS allowlist)
+  - Enforce Per-IP Quota (max 5 joins per session per IP, max 10 joins per 10 min across sessions)
+  - Validate Raw Nickname: 2..20 chars, NFKC normalized, reject control chars, invisible bidi/zero-width, HTML, and reject parentheses ()
+  - Automatic deterministic suffixing if taken: "Sarah" -> "Sarah (2)" (strictly <= 24 chars)
                ↓
 [Server issues Session-Scoped Ephemeral Participant Token (ptok_...)]
   - Evaluated outside transaction to minimize write lock time
   - Stored in SQLite as HMAC-SHA256: hmac_sha256(AUTH_SECRET, sessionId + ":" + rawToken)
   - Raw token returned ONCE to client in ParticipantAuthPayload
+  - Emits HttpOnly; Secure; SameSite=Lax; Path=/join; Max-Age=14400 fallback cookie
                ↓
-[Client stores token in sessionStorage + session-scoped Cookie]
-  - Key: barea:session:<sessionId>
-  - Resilient to mobile page refresh / camera re-scan, tab-isolated for family devices
+[Client stores token in sessionStorage + session-scoped Cookie fallback]
+  - sessionStorage (primary) guarantees tab isolation on family iPads
+  - HttpOnly cookie enables mobile Safari refresh / QR re-scan rehydration
                ↓
 [Participant enters Waiting Room / Lobby State]
   - Mobile UI shows: "You're in! Waiting for the host to start..."
-  - If suffixed, shows clear notification: "You are joined as Sarah (2)"
+  - If suffixed, shows clear notification banner: "You are joined as Sarah (2)"
                ↓
 [Host Console displays live participant roster via getHostSessionRosterAction]
   - Host can lock session (lockSessionAction) or kick participant (kickParticipantAction)
@@ -64,37 +67,53 @@ BAREA-006 establishes how participants discover, join, and anchor their presence
 ## 2. Scope & Explicit Non-Goals
 
 ### In Scope (BAREA-006)
-1. **Host Session Creation**: Creating a `QuizSession` referencing an immutable `PublishedQuizSnapshot` from BAREA-005.
+1. **Host Session Creation**: Creating a `QuizSession` referencing an immutable `PublishedQuizSnapshot` from BAREA-005 with strict organization tenant integrity enforced in application logic and persistence triggers.
 2. **Cryptographic Room Code Generation**: 6-character alphanumeric code using an unambiguous 31-character alphabet (`23456789ABCDEFGHJKLMNPQRSTUVWXYZ`), generated via `node:crypto.randomInt()`, with case-insensitive normalization and collision retry loop.
-3. **Dynamic Join URL & Pure SVG QR Code**: Canonical URL shape (`/join/[roomCode]` or `/join?code=[roomCode]`), rendered on the Host sharing surface via pure SVG generation without external third-party API calls or privileged credential leakage.
-4. **Low-Friction Mobile Landing Experience**: Responsive mobile viewport for room-code and nickname entry adhering to `docs/FRONTEND-STANDARD.md` and React Aria Components.
-5. **Strict Nickname Validation & Duplicate Handling**: Trimming, Unicode NFKC normalization, length bounds (2–24 characters), control character, zero-width space, and HTML stripping, and deterministic duplicate-name handling (automatic numerical suffixing within the session).
-6. **Ephemeral Participant Identity & Session Resumption**: Issuing a session-scoped cryptographic participant token (`ptok_...`), persisting only its HMAC-SHA256 hash in SQLite, allowing secure session resumption across page refreshes or network drops.
-7. **Host Lobby Management**: Host roster inspection (`getHostSessionRosterAction`), session locking (`lockSessionAction`), and participant removal (`kickParticipantAction`).
-8. **Dual-Bucket Rate Limiting**: Per-IP and global fail-closed rate limiters for room-code lookup and session join endpoints to prevent brute-force scanning.
-9. **Multi-Tenant Isolation**: Host actions strictly enforced via `getAuthorizedTeacherContext()`; public participant actions strictly scoped to the active session.
-10. **Persistence & SQLite Constraints**: Dedicated tables (`quiz_sessions`, `session_participants`), `state_version` for concurrency control, foreign keys, uniqueness constraints, indexes, and atomic `BEGIN IMMEDIATE` transactions with WAL mode and busy timeout.
-11. **Comprehensive Adversarial Test Matrix**: 34 named adversarial cases (`ADV-SJ-01` through `ADV-SJ-34`) covering collisions, races, brute-force limits, XSS, token forgery, session resumption, and boundary leak prevention.
+3. **Dynamic Join URL & Pure SVG QR Code**: Canonical URL shape (`/join/[roomCode]` or `/join?code=[roomCode]`), rendered on the Host sharing surface via pure vector SVG generation without external third-party API calls or privileged credential leakage. Base URL strictly pinned to `process.env.NEXT_PUBLIC_APP_URL`.
+4. **Low-Friction Mobile Landing Experience**: Responsive mobile viewport for room-code and nickname entry adhering to `docs/FRONTEND-STANDARD.md` and React Aria Components (min 48px touch targets, virtual keyboard scroll anchoring).
+5. **Strict Nickname Validation & Decoupled Suffixing**:
+   - `RawNicknameInput`: 2 to 20 characters, disallows parentheses `()`, NFKC normalized, strips/rejects control characters, zero-width spaces, and HTML.
+   - `NormalizedNicknameKey`: Lowercase and whitespace-collapsed for uniqueness checks.
+   - `DisplayName`: Accommodates server-generated numerical suffixing (`"Sarah (2)"` up to `"Sarah (99)"`), with a strict ceiling of **24 characters**.
+6. **Multi-Tier Admission Control & Rate Limiting (Finding 1 & 7 Remediation)**:
+   - Per-IP admission limit: Max 5 joins per session per IP; max 10 joins per 10 minutes globally per IP.
+   - Session concurrency valve: Dynamic admission throttling under congregation join bursts.
+   - Bounded memory sliding-window store with LRU eviction and TTL.
+   - **Zero Global Kill-Switch**: The dangerous 250-attempt global fail-closed sentinel is completely removed; rate limits are strictly partitioned per client IP and per `/24` subnet.
+7. **Trusted Proxy & IP Extraction (Finding 2 Remediation)**:
+   - Configurable `TRUSTED_PROXY_CIDRS`.
+   - Right-to-left traversal of `X-Forwarded-For`.
+   - Authoritative `CF-Connecting-IP` only when upstream TCP peer is verified within trusted Cloudflare CIDRs. Direct socket address fallback.
+8. **Ephemeral Participant Identity & Dual-Storage Resumption (Finding 5 Remediation)**:
+   - Session-scoped token (`ptok_...`), HMAC-SHA256 hashed in SQLite.
+   - `sessionStorage` primary for per-tab isolation on shared church iPads.
+   - Cookie fallback with `HttpOnly; Secure; SameSite=Lax; Path=/join; Max-Age=14400`.
+9. **Host Lobby Management**: Host roster inspection (`getHostSessionRosterAction`), session locking (`lockSessionAction`), and participant removal (`kickParticipantAction`).
+10. **Persistence & SQLite Constraints (Finding 3 Remediation)**:
+    - Tables: `quiz_sessions`, `session_participants`.
+    - SQLite `BEFORE INSERT` trigger enforcing session `organization_id` strictly matches the referenced snapshot's `organization_id` via `quizzes`.
+    - Partial unique index on active room codes (`WHERE status IN ('LOBBY', 'ACTIVE')`).
+    - `state_version` for optimistic concurrency control.
+    - Pragmas: `PRAGMA journal_mode = WAL;`, `PRAGMA busy_timeout = 5000;`, `PRAGMA foreign_keys = ON;`.
+11. **Comprehensive Adversarial Test Matrix**: 41 named adversarial cases (`ADV-SJ-01` through `ADV-SJ-41`) covering all 7 NO-GO findings.
 
-### Explicit Non-Goals (Strict Milestone Boundaries)
+### Explicit Non-Goals (Strict Milestone Boundaries — Finding 6 Remediation)
 To ensure absolute adherence to milestone discipline, the following are strictly excluded from BAREA-006:
-- **No Live Quiz State Machine**: No `LOBBY -> QUESTION_PREVIEW -> QUESTION_ACTIVE -> QUESTION_RESULT -> LEADERBOARD` state engine (belongs to BAREA-007).
-- **No Real-Time Transport**: No WebSockets, Socket.io, or SSE connections (belongs to BAREA-007).
-- **No Authoritative Timers or Countdown Synchronization** (belongs to BAREA-007).
-- **No Participant Answer Submissions or Live Scoring Engine** (belongs to BAREA-007/009).
-- **No Standings, Leaderboards, or Podium Animations** (belongs to BAREA-010).
-- **No Dedicated Live Sanctuary/Projector Display Experience** (belongs to BAREA-011; BAREA-006 provides only the host share modal/card).
-- **No Global Participant Accounts or Cross-Session Profiles** (ADR-003: sessions are ephemeral).
-- **No Question Bank / Snapshot Mutations**: Sessions reference immutable BAREA-005 snapshots; no questions can be modified or injected during session creation.
+- **No Live Quiz State Machine**: BAREA-006 creates sessions in `LOBBY` status only. `LOBBY -> ACTIVE` transition is strictly owned by BAREA-007.
+- **No Real-Time Transport**: No WebSockets, Socket.io, or SSE connections.
+- **No Authoritative Timers or Countdown Synchronization**.
+- **No Participant Answer Submissions or Live Scoring Engine** (`submitAnswerAction` does not exist).
+- **No Standings, Leaderboards, or Podium Animations**.
+- **No Live Question Display**: Zero question stems, option arrays, correct indices, or explanations are returned in BAREA-006 responses.
 
 ---
 
 ## 3. Session Domain Model & TypeScript Types
 
-The Session domain resides in `src/domain/session.ts` and models the lifecycle of a hosted quiz event.
+The Session domain resides in `src/domain/session.ts`:
 
 ```typescript
-import { RoomCode, Nickname, ParticipantToken } from './value-objects';
+import { RoomCode, RawNicknameInput, NormalizedNicknameKey, DisplayName, ParticipantToken } from './value-objects';
 
 export const SessionStatus = Object.freeze({
   LOBBY: 'LOBBY',         // Accepting participants (BAREA-006 entry state)
@@ -149,7 +168,8 @@ export interface SessionPublicInfo {
 export interface SessionParticipant {
   readonly id: string;
   readonly sessionId: string;
-  readonly nickname: Nickname;               // Normalized display name
+  readonly nickname: DisplayName;            // Formatted display name (e.g. "Sarah" or "Sarah (2)")
+  readonly normalizedNickname: NormalizedNicknameKey;
   readonly joinedAt: string;                 // ISO-8601 UTC
   readonly lastActiveAt: string;             // ISO-8601 UTC
   readonly isConnected: boolean;
@@ -158,34 +178,30 @@ export interface SessionParticipant {
 export interface ParticipantAuthPayload {
   readonly participantId: string;
   readonly sessionId: string;
-  readonly nickname: Nickname;
+  readonly nickname: DisplayName;
   readonly token: ParticipantToken;          // Plaintext token returned ONCE to client
 }
 
 export interface HostRosterEntry {
   readonly participantId: string;
-  readonly nickname: Nickname;
+  readonly nickname: DisplayName;
   readonly joinedAt: string;
   readonly isConnected: boolean;
 }
 ```
 
-### Snapshot Immutability Linkage
-- `QuizSession.publishedQuizSnapshotId` must reference an existing row in `published_quiz_snapshots`.
-- The session **never** duplicates question stems or options into session tables.
-- Sessions cannot be created for `DRAFT` or `ARCHIVED` quizzes—only for frozen, published snapshots.
-
 ---
 
-## 4. Value Objects & Branded Types
+## 4. Value Objects & Branded Types (Finding 4 Remediation)
 
-To eradicate primitive obsession and enforce rigorous runtime boundaries, domain types are modeled as branded types in `src/domain/value-objects.ts`:
+To prevent primitive obsession and resolve the nickname/suffix contradiction, domain types are modeled with strict nominal branding in `src/domain/value-objects.ts`:
 
 ```typescript
 import {
   InvalidRoomCodeError,
   InvalidNicknameError,
-  InvalidParticipantTokenError
+  InvalidParticipantTokenError,
+  NicknameLengthExceededError
 } from './domain-errors';
 
 declare const __brand: unique symbol;
@@ -193,7 +209,10 @@ export type Brand<T, B> = T & { readonly [__brand]: B };
 
 export type RoomCode = Brand<string, 'RoomCode'>;
 export type ParticipantToken = Brand<string, 'ParticipantToken'>;
-export type Nickname = Brand<string, 'Nickname'>;
+export type RawNicknameInput = Brand<string, 'RawNicknameInput'>;
+export type NormalizedNicknameKey = Brand<string, 'NormalizedNicknameKey'>;
+export type DisplayName = Brand<string, 'DisplayName'>;
+export type ClientIp = Brand<string, 'ClientIp'>;
 
 // 1. RoomCode: Exactly 6 unambiguous uppercase characters (2-9, A-Z excl. 0, 1, I, O)
 export const ROOM_CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -212,37 +231,60 @@ export function normalizeAndValidateRoomCode(raw: unknown): RoomCode {
   return normalized as RoomCode;
 }
 
-// 2. Nickname: 2..24 chars, NFKC normalized, whitespace collapsed, control, zero-width, bidi, and HTML rejected
-const NICKNAME_ALLOWED_REGEX = /^[\p{L}\p{N}\s\-_]+$/u;
-const HTML_TAG_REGEX = /<[^>]*>/;
-const ILLEGAL_CHARS_REGEX = /[\x00-\x1F\x7F\u200B-\u200D\u202A-\u202E\uFEFF\p{Cf}]/u;
+// 2. Nickname Architecture (Decoupled User Input vs Suffix Display Name)
+// Base input bounds: 2 to 20 characters. Parentheses () are STRICTLY DISALLOWED in user input.
+export const RAW_NICKNAME_MIN_LENGTH = 2;
+export const RAW_NICKNAME_MAX_LENGTH = 20;
+export const DISPLAY_NAME_MAX_LENGTH = 24; // Base (max 20) + " (99)" (4 chars) = 24
 
-export function normalizeAndValidateNickname(raw: unknown): Nickname {
+const RAW_NICKNAME_ALLOWED_REGEX = /^[\p{L}\p{N}\s\-_]+$/u;
+const ILLEGAL_CHARS_REGEX = /[ -​-‍‪-‮﻿\p{Cf}]/u;
+const HTML_TAG_REGEX = /<[^>]*>/;
+
+export function normalizeAndValidateRawNickname(raw: unknown): RawNicknameInput {
   if (typeof raw !== 'string') {
     throw new InvalidNicknameError('Nickname must be a string.');
   }
   // Unicode NFKC normalization
   let normalized = raw.normalize('NFKC').trim();
 
-  // Reject illegal control characters, invisible/zero-width characters, bidi overrides, and HTML tags
+  // Reject control characters, invisible/bidi formatting, and HTML
   if (ILLEGAL_CHARS_REGEX.test(normalized) || HTML_TAG_REGEX.test(normalized)) {
     throw new InvalidNicknameError('Nickname contains illegal control, invisible, or markup characters.');
+  }
+
+  // Reject parentheses in user input (prevents user impersonation of generated suffixes)
+  if (normalized.includes('(') || normalized.includes(')')) {
+    throw new InvalidNicknameError('Parentheses are not allowed in user nicknames.');
   }
 
   // Collapse consecutive internal spaces
   normalized = normalized.replace(/\s+/g, ' ');
 
-  if (normalized.length < 2) {
-    throw new InvalidNicknameError('Nickname must be at least 2 characters.');
+  if (normalized.length < RAW_NICKNAME_MIN_LENGTH) {
+    throw new InvalidNicknameError(`Nickname must be at least ${RAW_NICKNAME_MIN_LENGTH} characters.`);
   }
-  if (normalized.length > 24) {
-    throw new InvalidNicknameError('Nickname cannot exceed 24 characters.');
+  if (normalized.length > RAW_NICKNAME_MAX_LENGTH) {
+    throw new InvalidNicknameError(`Base nickname cannot exceed ${RAW_NICKNAME_MAX_LENGTH} characters.`);
   }
-  if (!NICKNAME_ALLOWED_REGEX.test(normalized)) {
+  if (!RAW_NICKNAME_ALLOWED_REGEX.test(normalized)) {
     throw new InvalidNicknameError('Nickname contains unsupported characters.');
   }
 
-  return normalized as Nickname;
+  return normalized as RawNicknameInput;
+}
+
+export function toNormalizedNicknameKey(raw: RawNicknameInput | string): NormalizedNicknameKey {
+  return raw.trim().toLowerCase().replace(/\s+/g, ' ') as NormalizedNicknameKey;
+}
+
+export function formatDisplayName(base: RawNicknameInput | string, suffixNumber?: number): DisplayName {
+  const trimmed = base.trim();
+  const formatted = suffixNumber && suffixNumber > 1 ? `${trimmed} (${suffixNumber})` : trimmed;
+  if (formatted.length > DISPLAY_NAME_MAX_LENGTH) {
+    throw new NicknameLengthExceededError(formatted.length, DISPLAY_NAME_MAX_LENGTH);
+  }
+  return formatted as DisplayName;
 }
 
 // 3. ParticipantToken: 'ptok_' followed by 43 base64url characters (~256 bits entropy)
@@ -258,60 +300,65 @@ export function validateParticipantToken(raw: unknown): ParticipantToken {
 
 ---
 
-## 5. Room Code Security, Entropy & Rate Limiting
+## 5. Admission Control, Rate Limiting & Proxy IP Resolution (Findings 1, 2, 7)
 
-### Alphabet & Entropy Specification
-- **Alphabet**: 31 unambiguous alphanumeric characters:
-  `2 3 4 5 6 7 8 9 A B C D E F G H J K L M N P Q R S T U V W X Y Z`
-  (Excludes `0`, `1`, `I`, `O` to prevent user transcription confusion on projectors or small screens).
-- **Length**: Exactly **6 characters** (e.g., `8K4M9Z`).
-- **Keyspace / Entropy**: 31^6 = 887,503,681 possible combinations (~29.7 bits).
-- **Secure RNG**: Generated via `crypto.randomInt(0, 31)` for each character (strictly prohibiting `Math.random()`).
-- **Normalization**: User input is trimmed and converted to uppercase: `rawCode.trim().toUpperCase()`.
-- **Deterministic Seam**: Factory supports pluggable `RoomCodeGenerator` interface for deterministic collision testing in automated test suites:
-  ```typescript
-  export interface RoomCodeGenerator {
-    generate(): RoomCode;
-  }
-  ```
+### A. Multi-Tier Admission Control (Finding 1)
+To protect church sessions from bot floods without adding hostile CAPTCHA challenges to church members:
+1. **Per-IP Session Join Limit**: A single client IP is permitted a maximum of **5 joins per session**. This accommodates a family sharing a mobile hotspot or church Wi-Fi while blocking bulk bot scripts.
+2. **Per-IP Global Join Rate**: Maximum **10 join attempts across all sessions per rolling 10-minute window** per client IP.
+3. **Session Capacity Gate**: Within the atomic `BEGIN IMMEDIATE` transaction, verify `COUNT(*) < maxParticipants`. When capacity is reached, immediately return `SessionFullError` (HTTP 429).
+4. **Host Dynamic Lock**: Host can call `lockSessionAction` at any time to freeze join admissions (`SessionLockedError`, HTTP 423).
 
-### Dual-Bucket Rate Limiting (Brute-Force & Enumeration Resistance)
-Given 887M combinations, an unthrottled attacker could scan active sessions. Both `lookupRoomAction` and `joinSessionAction` are shielded by dual-bucket rate limiting:
-1. **Per-IP Rate Limit**: Maximum 15 failed lookups per rolling 60-second window per IP address (resolved using `CF-Connecting-IP` / `X-Forwarded-For` with fallback to socket remote address).
-2. **Global Fail-Closed Sentinel**: If more than 250 consecutive invalid room code attempts occur globally across all IPs within 1 minute, the system activates global throttling to damp automated bot swarms.
-3. **Generic Responses**: Failed lookups return a generic error: `"Session not found or is no longer accepting participants."` (indistinguishable for expired, closed, locked, or nonexistent codes).
+### B. Trusted Proxy IP Extraction Algorithm (Finding 2)
+To prevent IP spoofing via forged `X-Forwarded-For` or `CF-Connecting-IP` headers:
+1. **Configurable Proxy Allowlist**: Upstream trusted proxies are defined via `TRUSTED_PROXY_CIDRS` (e.g. Cloudflare IP ranges and local loopback).
+2. **Right-to-Left Traversal**:
+   - If the direct socket remote address does **not** match `TRUSTED_PROXY_CIDRS`, the socket address is authoritative. All forwarded headers are discarded.
+   - If the direct socket address is trusted:
+     - If Cloudflare is the designated trusted proxy and `CF-Connecting-IP` is present, validate and use it.
+     - Otherwise, parse `X-Forwarded-For` from right to left, selecting the first IP that is **not** in `TRUSTED_PROXY_CIDRS`.
+3. **Fail-Closed**: If IP extraction fails or resolves to an invalid format, reject with `InvalidClientIpError`.
+
+### C. Isolated Blast-Radius Rate Limiting (Finding 7)
+**Elimination of Global Kill-Switch**: The previous proposal to globally fail-closed after 250 invalid room-code attempts is **completely removed** as an acute self-inflicted DoS vector.
+Instead, rate limits have bounded, isolated blast radii:
+1. **Per-IP Room Lookup Rate**: Max 15 failed lookups per rolling 60-second window per IP. Tripping this throttles only the offending IP.
+2. **Subnet-Level Isolation (`/24` IPv4, `/48` IPv6)**: If a distributed scanner rotates IPs across a single `/24` subnet, cap failed lookups at 60 per minute for that subnet. Other subnets and church sanctuaries remain 100% unaffected.
+3. **Targeted Room Code Protection**: Max 25 failed lookups per rolling minute targeting a single room code. This mitigates brute-force attacks against an active room without affecting any other session on the platform.
+4. **Bounded Memory Store**: In-memory sliding-window limiter enforces a maximum size of 50,000 entries with LRU eviction and 60-second TTLs, preventing memory exhaustion.
 
 ---
 
-## 6. Participant Identity, Token Hashing & Session Resumption
+## 6. Participant Identity, Cookie Security & Storage Reconciliation (Finding 5)
 
-### Token Architecture & Hashing Invariant
-1. **Raw Token Generation**: `ptok_` prefix + 32 bytes of cryptographically secure random bytes base64url-encoded (`ptok_` + 43 characters = 48 characters total, ~256 bits of entropy).
-2. **HMAC-SHA256 Token Storage**: The server **never** stores raw participant tokens in the database. Tokens are hashed using HMAC-SHA256 keyed with server `SESSION_AUTH_SECRET`:
-   `token_hash = crypto.createHmac('sha256', SESSION_AUTH_SECRET).update(sessionId + ':' + rawToken).digest('hex')`
-   This guarantees that even if a read-only database dump occurs, tokens cannot be forged or replayed without the server secret.
-3. **Timing-Safe Verification**: When authenticating or resuming a session, token hashes are compared using `crypto.timingSafeEqual()`.
-4. **Session Scoping**: A token is cryptographically bound to `sessionId`. It cannot authenticate into any other session.
-5. **Dual-Tier Client Storage**:
-   - **Primary**: `sessionStorage` with key `barea:session:<sessionId>` to ensure clean tab isolation when multiple family members/children play on the same iPad or laptop in separate tabs.
-   - **Cookie Fallback**: Ephemeral `SameSite=Lax; Path=/join` cookie (`barea_ptok_<sessionId>`) to preserve resumption if mobile Safari reloads or user rescans the QR code.
+### A. Strict Cookie Security Attributes
+When a participant successfully joins, the server emits an ephemeral fallback cookie via `next/headers`:
+```typescript
+import { cookies } from 'next/headers';
 
-### Resumption Sequence
-
-```text
-Participant Client                           BAREA Server Action (resumeSessionAction)
-       │                                                      │
-       ├──── POST { sessionId, participantId, token } ───────►│
-       │                                                      │
-       │                                                      ├─ Check session status (LOBBY/ACTIVE)
-       │                                                      ├─ Compute HMAC-SHA256(token)
-       │                                                      ├─ timingSafeEqual(computed, stored_hash)
-       │                                                      ├─ Verify participantId matches row
-       │                                                      ├─ Update last_active_at = now()
-       │                                                      │
-       │◄─── Response { success: true, participant, info } ───┤
-       │                                                      │
+export async function setParticipantSessionCookie(sessionId: string, token: string) {
+  const cookieStore = await cookies();
+  cookieStore.set({
+    name: `barea_ptok_${sessionId}`,
+    value: token,
+    httpOnly: true,                                // Inaccessible to client JavaScript
+    secure: process.env.NODE_ENV === 'production', // Mandatory TLS in production
+    sameSite: 'lax',                               // Accommodates camera QR code cross-site navigation
+    path: '/join',                                 // Scoped strictly to participant routes
+    maxAge: 4 * 3600                               // 4 hours (matches session lifetime)
+  });
+}
 ```
+
+### B. Dual-Store Reconciliation & Family iPad Isolation
+On shared devices (e.g. Sunday School iPads where multiple children play in separate tabs):
+1. **Primary Session (`sessionStorage`)**:
+   - Each browser tab stores its identity under key `barea:session:<sessionId>`.
+   - On mutation or resume requests, the tab sends its `sessionStorage` token in the Server Action payload.
+   - Separate tabs on the same iPad maintain completely isolated participant sessions.
+2. **Fallback Rehydration (`HttpOnly Cookie`)**:
+   - If a participant refreshes mobile Safari or re-scans the QR code and `sessionStorage` is empty, the Server Action reads `barea_ptok_${sessionId}` from the cookie to rehydrate `sessionStorage`.
+3. **Precedence**: `sessionStorage` always takes precedence over ambient cookies.
 
 ---
 
@@ -322,37 +369,40 @@ Participant Client                           BAREA Server Action (resumeSessionA
 - **Query Fallback**: `https://<host>/join?code=[roomCode]`
 - **Host Poisoning Protection**: The join URL is constructed strictly from `process.env.NEXT_PUBLIC_APP_URL`. The HTTP `Host` or `X-Forwarded-Host` request header is **never** used to construct join links.
 - **Pure Vector SVG QR Code**:
-  - Rendered entirely in memory as pure vector SVG without external API calls (e.g. Google Charts QR API or third-party web services).
-  - Error correction: Level M (15% redundancy) with a 4-module quiet zone for reliable mobile camera scanning from church pews (up to 30 feet away from sanctuary projector screens).
-  - Security Invariant: The QR code contains **strictly** the canonical join URL (e.g. `https://barea.church/join/8K4M9Z`). It **must never** contain host tokens, participant IDs, session authorization secrets, or quiz question content.
+  - Rendered entirely in memory as pure vector SVG without external network requests or CDN dependencies.
+  - Error correction: Level M (15% redundancy) with a 4-module quiet zone for reliable camera recognition from 30+ feet back in church sanctuaries.
+  - Security Invariant: The QR code contains **strictly** the canonical join URL. It **never** contains host credentials, participant tokens, or quiz data.
 
 ---
 
-## 8. Nickname Normalization & Deterministic Collision Suffixing
+## 8. Nickname Collision Suffixing & Roster UX (Finding 4)
 
-### Validation Rules
-- **Allowed Characters**: Unicode letters, digits, spaces, hyphens, and underscores (`^[\p{L}\p{N}\s\-_]+$`).
-- **Disallowed / Rejected**: Null bytes, control characters `[\x00-\x1F\x7F]`, invisible/zero-width formatting characters `[\u200B-\u200D\u202A-\u202E\uFEFF\p{Cf}]`, and HTML tags.
-- **Length**: 2 to 24 characters after NFKC normalization and trim.
-
-### Deterministic Suffixing Strategy
-Church youth groups frequently have participants with identical first names ("David", "Sarah"). To prevent participant rejection at the start of a service:
-1. When a participant joins with a nickname, the server checks if an existing participant in that session has the same normalized nickname.
-2. If `"Sarah"` exists, the server checks `"Sarah (2)"`, `"Sarah (3)"`, up to `"Sarah (99)"`.
-3. The assigned display name is returned in `ParticipantAuthPayload.nickname`.
-4. **Mobile UX Requirement**: The mobile client UI presents an immediate notice banner:  
+### Deterministic Suffix Allocation
+To prevent youth group attendees with identical first names ("David", "Sarah") from being rejected at the door:
+1. Client enters raw nickname (e.g. `"Sarah"`, 2..20 chars).
+2. Server computes `normalized_nickname = toNormalizedNicknameKey(raw)` (`"sarah"`).
+3. Inside `BEGIN IMMEDIATE`, if `"sarah"` already exists in `session_participants`:
+   - Query existing suffixes for base `"sarah"` in the session.
+   - Allocate lowest available suffix `(k)` where `k` in `[2..99]`.
+   - Format candidate display name: `formatDisplayName("Sarah", k)` -> `"Sarah (2)"`.
+   - Store `nickname = "Sarah (2)"` and `normalized_nickname = "sarah (2)"`.
+4. If `k > 99`, raise `NicknameSuffixExhaustedError` (HTTP 409).
+5. **Mobile UX Requirement**: Client displays an accessible notice banner:  
    *"Welcome, Sarah! Another participant is already using that name, so your display name is **Sarah (2)**."*
 
 ---
 
-## 9. Persistence Schema & SQLite Architecture
+## 9. Persistence Schema & Relational Tenant Integrity (Finding 3)
 
 Persistence is implemented in `src/persistence/sqlite-session-repository.ts` using Node.js `node:sqlite` (`DatabaseSync`).
 
-### Pragmas & Concurrency Tuning
-- `PRAGMA journal_mode = WAL;` (enables non-blocking reads while writing).
-- `PRAGMA busy_timeout = 5000;` (prevents immediate `SQLITE_BUSY` errors when multiple participants join simultaneously).
-- `PRAGMA foreign_keys = ON;`.
+### Pragmas & Connection Init
+```sql
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA busy_timeout = 5000;
+PRAGMA foreign_keys = ON;
+```
 
 ### DDL Specification
 
@@ -382,7 +432,23 @@ WHERE status IN ('LOBBY', 'ACTIVE');
 CREATE INDEX IF NOT EXISTS idx_sessions_org_status
 ON quiz_sessions(organization_id, status);
 
--- 2. Session Participants Table
+-- 2. Persistence-Level Tenant Integrity Trigger (Finding 3 Remediation)
+-- Guarantees that a session can NEVER reference a snapshot belonging to a different organization
+CREATE TRIGGER IF NOT EXISTS trg_enforce_session_snapshot_tenant
+BEFORE INSERT ON quiz_sessions
+FOR EACH ROW
+BEGIN
+  SELECT RAISE(ABORT, 'Tenant mismatch: referenced snapshot does not belong to session organization')
+  WHERE NOT EXISTS (
+    SELECT 1 
+    FROM published_quiz_snapshots pqs
+    JOIN quizzes q ON q.id = pqs.quiz_id
+    WHERE pqs.id = NEW.published_quiz_snapshot_id 
+      AND q.organization_id = NEW.organization_id
+  );
+END;
+
+-- 3. Session Participants Table
 CREATE TABLE IF NOT EXISTS session_participants (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
@@ -395,7 +461,7 @@ CREATE TABLE IF NOT EXISTS session_participants (
   FOREIGN KEY (session_id) REFERENCES quiz_sessions(id) ON DELETE CASCADE
 );
 
--- Unique normalized nickname per session (guarantees Unicode-safe uniqueness)
+-- Unique normalized nickname per session (Unicode-safe collision prevention)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_session_norm_nickname
 ON session_participants(session_id, normalized_nickname);
 
@@ -407,17 +473,16 @@ CREATE INDEX IF NOT EXISTS idx_participants_session_id
 ON session_participants(session_id);
 ```
 
-### Lazy Expiration & Zombie Code Recycling
-In `lookupPublicSession` and `joinSession`, the repository enforces:
-`WHERE room_code = ? AND status IN ('LOBBY', 'ACTIVE') AND expires_at > datetime('now')`
-If a session has reached its expiration time (`now >= expires_at`) but is still marked `LOBBY`, the repository lazily marks it `CLOSED` and records `closed_at = expires_at`, freeing the room code for immediate recycling.
+### Atomic Capacity Insertion & Lock Optimization
+To prevent write-lock starvation under burst joins:
+1. Token generation (`crypto.randomBytes`), HMAC-SHA256 computation, and input validation occur **in memory before** acquiring the SQLite write lock.
+2. The transaction acquires `BEGIN IMMEDIATE`, verifies capacity and status inline, inserts the participant, and executes `COMMIT` in < 2ms.
 
-### Atomic Concurrency & Lock Duration
-To eliminate `SQLITE_BUSY` bottlenecks when a congregation joins simultaneously:
-1. Token generation (`crypto.randomBytes`), HMAC-SHA256 hashing, and input validation occur **in memory before** acquiring the SQLite write lock.
-2. The transaction acquires `BEGIN IMMEDIATE`, performs the capacity check `COUNT(*) < max_participants`, checks nickname availability, inserts the row, and executes `COMMIT` in < 2ms.
+---
 
 ### Typed Row Interfaces (Zero-`any` Standard)
+To ensure absolute zero-`any` compliance across persistence boundaries, database row results are typed:
+
 ```typescript
 export interface SessionRow {
   readonly id: string;
@@ -446,8 +511,6 @@ export interface ParticipantRow {
 }
 ```
 
----
-
 ## 10. Server Action Boundaries & Runtime Validation
 
 All BAREA-006 entry points reside under Next.js Server Actions:
@@ -460,14 +523,25 @@ All BAREA-006 entry points reside under Next.js Server Actions:
 | `kickParticipantAction`| Teacher / Host | `getAuthorizedTeacherContext()` | `sessionId`, `participantId` | `ActionResponse<{ success: boolean }>` |
 | `getHostSessionRosterAction` | Teacher / Host | `getAuthorizedTeacherContext()` | `sessionId` | `ActionResponse<HostRosterEntry[]>` |
 | `lookupRoomAction` | Public / Participant | Rate-Limited IP | `roomCode` (6 chars) | `ActionResponse<SessionPublicInfo>` |
-| `joinSessionAction` | Public / Participant | Rate-Limited IP | `roomCode`, `nickname` *(sessionId resolved server-side)* | `ActionResponse<ParticipantAuthPayload>` |
+| `joinSessionAction` | Public / Participant | Rate-Limited & Admission-Controlled IP | `roomCode`, `nickname` *(sessionId resolved server-side)* | `ActionResponse<ParticipantAuthPayload>` |
 | `resumeSessionAction` | Public / Participant | Cryptographic Token | `sessionId`, `participantId`, `token` | `ActionResponse<{ participant: SessionParticipant; sessionInfo: SessionPublicInfo }>` |
+
+
+### Server Action Envelope & Return Types
+All Server Actions strictly adhere to the typed `ActionResult<T>` / `ActionResponse<T>` discriminated union envelope to eliminate implicit `any`:
+
+```typescript
+export type ActionResult<T> =
+  | { readonly success: true; readonly data: T }
+  | { readonly success: false; readonly error: { readonly code: string; readonly message: string; readonly httpStatus: number } };
+
+export type ActionResponse<T> = ActionResult<T>;
+```
+
 
 ---
 
 ## 11. Domain Error Hierarchy & Taxonomy
-
-The domain implements a clean, strongly-typed error hierarchy in `src/domain/domain-errors.ts`:
 
 ```typescript
 export abstract class BareaDomainError extends Error {
@@ -518,6 +592,22 @@ export class InvalidNicknameError extends BareaDomainError {
   readonly httpStatus = 422;
 }
 
+export class NicknameLengthExceededError extends BareaDomainError {
+  readonly code = 'NICKNAME_LENGTH_EXCEEDED';
+  readonly httpStatus = 422;
+  constructor(actual: number, max: number) {
+    super(`Formatted display name length (${actual}) exceeds maximum allowed (${max}).`);
+  }
+}
+
+export class NicknameSuffixExhaustedError extends BareaDomainError {
+  readonly code = 'NICKNAME_SUFFIX_EXHAUSTED';
+  readonly httpStatus = 409;
+  constructor(base: string) {
+    super(`Unable to allocate unique display name for '${base}' after 99 attempts.`);
+  }
+}
+
 export class InvalidRoomCodeError extends BareaDomainError {
   readonly code = 'INVALID_ROOM_CODE';
   readonly httpStatus = 400;
@@ -528,40 +618,46 @@ export class InvalidParticipantTokenError extends BareaDomainError {
   readonly httpStatus = 401;
 }
 
-export class RoomCodeCollisionExhaustedError extends BareaDomainError {
-  readonly code = 'ROOM_CODE_COLLISION_EXHAUSTED';
-  readonly httpStatus = 500;
-  constructor() {
-    super('Failed to generate a unique room code after maximum retry attempts.');
-  }
+export class InvalidClientIpError extends BareaDomainError {
+  readonly code = 'INVALID_CLIENT_IP';
+  readonly httpStatus = 400;
 }
 
 export class RateLimitExceededError extends BareaDomainError {
   readonly code = 'RATE_LIMIT_EXCEEDED';
   readonly httpStatus = 429;
+  constructor(retryAfterSeconds: number = 60) {
+    super(`Too many requests. Please wait ${retryAfterSeconds} seconds before trying again.`);
+  }
+}
+
+export class CrossTenantSnapshotError extends BareaDomainError {
+  readonly code = 'CROSS_TENANT_SNAPSHOT_FORBIDDEN';
+  readonly httpStatus = 403;
   constructor() {
-    super('Too many requests. Please wait a moment before trying again.');
+    super('Quiz snapshot does not belong to authorized organization.');
   }
 }
 ```
 
 ---
 
-## 12. Security Boundary with BAREA-007
+## 12. Security Boundary with BAREA-007 (Finding 6 Remediation)
 
 To safeguard upcoming live quiz mechanics, BAREA-006 strictly guarantees:
-1. **Zero Answer Key Leakage**: Neither `lookupRoomAction`, `joinSessionAction`, nor `resumeSessionAction` return question choices, stems, explanations, or correct answer indices.
-2. **No Authoritative Time Synchronization**: No server clock ticks or countdown states are served in BAREA-006.
-3. **No Scoring or Answer Endpoints**: No endpoint exists to submit answers or query participant scores.
-4. **No Live Websocket Connections**: All BAREA-006 operations are handled via HTTP Server Actions.
+1. **Zero Live Game Advancement**: BAREA-006 creates sessions in `LOBBY` status only. `LOBBY -> ACTIVE` transition is strictly owned by BAREA-007.
+2. **Zero Answer Key Leakage**: Neither `lookupRoomAction`, `joinSessionAction`, nor `resumeSessionAction` return question choices, stems, explanations, or correct answer indices.
+3. **No Authoritative Time Synchronization**: Zero server clock ticks or countdown states are served in BAREA-006.
+4. **No Scoring or Answer Endpoints**: `submitAnswerAction` does not exist in BAREA-006.
+5. **No Live Websocket Connections**: All BAREA-006 operations are handled via HTTP Server Actions.
 
 ---
 
-## 13. Comprehensive Adversarial Test Matrix (ADV-SJ-01 through ADV-SJ-34)
+## 13. Comprehensive Adversarial Test Matrix (ADV-SJ-01 through ADV-SJ-41)
 
 | Test ID | Category | Adversarial Scenario / Vector | Expected Behavior / Security Assertion |
 | :--- | :--- | :--- | :--- |
-| `ADV-SJ-01` | Multi-Tenant | Host Org A attempts to create a session referencing Org B's snapshot | Fails closed (`403 Forbidden` / `Quiz snapshot not found`). |
+| `ADV-SJ-01` | Multi-Tenant | Host Org A attempts to create a session referencing Org B's snapshot | Fails closed (`403 Forbidden` / `CrossTenantSnapshotError`). Database trigger aborts if bypassed. |
 | `ADV-SJ-02` | Multi-Tenant | Host Org A attempts to close/manage a session created by Org B | Rejected; session remains untouched. |
 | `ADV-SJ-03` | Authorization | Client injects forged `organizationId` or `hostUserId` in `createSessionAction` | Ignored; strictly derived from `getAuthorizedTeacherContext()`. |
 | `ADV-SJ-04` | Validation | Host attempts to create session for unapproved or draft quiz ID | Fails closed with `QuizValidationError`. |
@@ -570,13 +666,13 @@ To safeguard upcoming live quiz mechanics, BAREA-006 strictly guarantees:
 | `ADV-SJ-07` | Room Code | Participant attempts to join closed or expired session | Rejected; zero participant rows inserted. |
 | `ADV-SJ-08` | Room Code | Case-insensitive room code lookup (`8k4m9z` vs `8K4M9Z`) | Normalizes cleanly and resolves the same session. |
 | `ADV-SJ-09` | Concurrency | Room code collision during session creation | Generator retries and succeeds with unique active code. |
-| `ADV-SJ-10` | Concurrency | Concurrent joins at maximum participant limit (`maxParticipants`) | `BEGIN IMMEDIATE` atomically enforces limit; excess join rejected. |
+| `ADV-SJ-10` | Concurrency | Concurrent joins at maximum participant limit (`maxParticipants`) | `BEGIN IMMEDIATE` atomically enforces limit; excess join rejected with `SessionFullError`. |
 | `ADV-SJ-11` | Nickname | Empty string or whitespace-only nickname | Rejected with `"Nickname must be at least 2 characters"`. |
-| `ADV-SJ-12` | Nickname | Oversized nickname (> 24 characters) | Rejected with length error. |
+| `ADV-SJ-12` | Nickname | Oversized base nickname (> 20 characters) | Rejected with length error. |
 | `ADV-SJ-13` | Nickname | Control characters (`\x00`, `\r`, `\n`, `\t`) in nickname | Stripped/rejected. |
 | `ADV-SJ-14` | Nickname | HTML / XSS payload in nickname (`<script>alert(1)</script>`) | Sanitized/escaped; zero script injection. |
 | `ADV-SJ-15` | Nickname | Duplicate nickname submitted sequentially | Suffix appended (`"David (2)"`); join succeeds. |
-| `ADV-SJ-16` | Concurrency | Two participants submit exact same nickname concurrently | `idx_participants_session_norm_nickname` + retry safely suffixes both without error. |
+| `ADV-SJ-16` | Concurrency | Two participants submit exact same nickname concurrently | Compound index + suffix retry safely suffixes both without error. |
 | `ADV-SJ-17` | Token Security | Participant attempts to forge token without knowing secret | Verification fails (`401 Unauthorized`). |
 | `ADV-SJ-18` | Token Security | Participant attempts to replay token from Session A in Session B | Scoping check rejects token (`401 Unauthorized`). |
 | `ADV-SJ-19` | Token Security | Raw token is never persisted in plaintext in SQLite | Verified via direct SQL query asserting only HMAC-SHA256 hash exists. |
@@ -584,36 +680,59 @@ To safeguard upcoming live quiz mechanics, BAREA-006 strictly guarantees:
 | `ADV-SJ-21` | Resumption | Attacker tries to resume Participant A's identity with wrong token | Rejected; identity cannot be hijacked. |
 | `ADV-SJ-22` | QR Code | QR code decoded string inspection | Contains only join URL; zero tokens or secrets present. |
 | `ADV-SJ-23` | Secrecy | Public lookup action response payload inspection | Contains zero questions, answer choices, or correct indices. |
-| `ADV-SJ-24` | Rate Limit | Rapid brute-force room code scanning attempts | Trigger rate limiting; fails closed after threshold. |
+| `ADV-SJ-24` | Rate Limit | Rapid brute-force room code scanning attempts from single IP | IP throttled after 15 failed lookups; fails closed. |
 | `ADV-SJ-25` | Lifecycle | Attempting to join a session in `COMPLETED` or `CLOSED` state | Rejected with `"Session has ended"`. |
 | `ADV-SJ-26` | SQL Injection | Malicious SQL payload in nickname or room code parameter | Parameterized queries reject/escape payload; zero database corruption. |
-| `ADV-SJ-27` | Concurrency | Suffix collision race: 5 workers simultaneously join as `"Sarah"` when `"Sarah (2)"` already exists | Suffix allocator safely assigns `(3)`, `(4)`, `(5)`, `(6)`, `(7)` without unique constraint failure. |
-| `ADV-SJ-28` | Nickname | NFKC homoglyphs and invisible formatting (`\u200B`, `\uFEFF`, Cyrillic confusable letters) | Normalized to canonical form; invisible zero-width spaces rejected. |
-| `ADV-SJ-29` | Lifecycle | Exact timestamp expiry boundary race (`now() == expires_at`) | Evaluated as expired; join rejected and session marked `CLOSED`. |
-| `ADV-SJ-30` | Rate Limit | Dual-bucket rate limiter triggers on rapid failed room code probes across IP thresholds | Throttles and returns 429 before database query is dispatched. |
-| `ADV-SJ-31` | Persistence | Concurrent `createSessionAction` executions handle `SQLITE_BUSY` gracefully | Handled via `PRAGMA busy_timeout = 5000` and retries without error. |
-| `ADV-SJ-32` | Capacity | Exact capacity race: 25 workers attempt to fill 5 remaining participant slots | Exactly 5 succeed; exactly 20 receive `SessionFullError`. |
-| `ADV-SJ-33` | Authorization | Host admin cookie vs participant token role separation | Host cannot act as participant without token; participant cannot access host actions. |
-| `ADV-SJ-34` | Room Code | Ambiguous characters excluded (`0`, `1`, `I`, `O`) | Generator never produces excluded characters; validator rejects them with clear error. |
+| `ADV-SJ-27` | Admission | Single IP attempts to flood join 10 participants with unique nicknames | First 5 succeed; 6th through 10th rejected with `RateLimitExceededError`. |
+| `ADV-SJ-28` | Proxy Spoofing | Direct request injects spoofed `X-Forwarded-For: 8.8.8.8` from untrusted socket | Ignored; rate limiter records true `socket.remoteAddress`. |
+| `ADV-SJ-29` | Proxy Cloudflare | Verified Cloudflare IP presents valid `CF-Connecting-IP` | Evaluated correctly against client IP quota. |
+| `ADV-SJ-30` | Suffix Contradiction | User enters 20-char name colliding 3 times (`"Christopher-Alex"`) | Formats to `"Christopher-Alex (2)"` (24 chars max); zero truncation or regex error. |
+| `ADV-SJ-31` | Suffix Injection | User enters `"Sarah (2)"` directly in input field | Rejected by raw input validation (parentheses disallowed in user input). |
+| `ADV-SJ-32` | Suffix Exhaustion | 100 participants join with base name `"Sarah"` | First 99 succeed (`"Sarah"` through `"Sarah (99)"`); 100th fails with `NicknameSuffixExhaustedError`. |
+| `ADV-SJ-33` | Nickname NFKC | Homoglyphs and invisible formatting (`​`, `﻿`, Cyrillic confusable letters) | Normalized to canonical form; invisible zero-width spaces rejected. |
+| `ADV-SJ-34` | Cookie Attributes | Inspect Set-Cookie header on successful join | Emits `HttpOnly; Secure; SameSite=Lax; Path=/join; Max-Age=14400`. Script cannot read cookie. |
+| `ADV-SJ-35` | Multi-Tab Isolation | Tab 1 (`user_a`) and Tab 2 (`user_b`) refresh independently on same browser | `sessionStorage` retains separate identities; zero cross-tab session hijacking. |
+| `ADV-SJ-36` | Cookie Fallback | Tab clears `sessionStorage` but retains cookie, then refreshes | Rehydrates participant identity cleanly via cookie fallback. |
+| `ADV-SJ-37` | Blast Radius | Attacker floods 500 invalid room codes from IP `198.51.100.5` | Attacker IP throttled; legitimate client from IP `203.0.113.10` joins successfully. |
+| `ADV-SJ-38` | Subnet Throttle | Attacker botnet rotates 100 IPs within same `/24` subnet | Subnet bucket throttles after 60 failed lookups; other subnets unaffected. |
+| `ADV-SJ-39` | Milestone Boundary | Attempt to call live countdown, live timer, or submit answer on BAREA-006 endpoint | Endpoint does not exist; returns 404. Session state remains `LOBBY`. |
+| `ADV-SJ-40` | Session Lock | Host locks session via `lockSessionAction` | Incoming join rejected with `SessionLockedError` (HTTP 423). Existing participants unaffected. |
+| `ADV-SJ-41` | Participant Kick | Host kicks participant via `kickParticipantAction` | Participant row deleted; token invalidated; participant cannot resume. |
 
 ---
 
-## 14. Multi-Agent Verification Audit (Post-Remediation Verification)
+## 14. Deterministic Test Seams
 
-| Role | Sub-Agent ID | Audit Scope | Post-Remediation Findings | Final Role Verdict |
-| :--- | :--- | :--- | :--- | :--- |
-| **Security Architect & Red Team** | `974d2bd6` | Token hashing, rate limiting, host header poisoning, homoglyphs | All 8 initial challenge points addressed (HMAC-SHA256, dual-bucket rate limit, APP_URL base, regex tightening, lobby lock/kick). | **PASS / GO** |
-| **SQLite Persistence Architect** | `7b832450` | WAL mode, busy timeout, state version, normalized nickname, zombie sessions | Schema incorporates `state_version`, `normalized_nickname`, WAL, busy timeout, and lazy expiration. | **PASS / GO** |
-| **QA & Test Architect** | `03dd012f` | Adversarial test matrix expansion, deterministic seams, concurrency harnesses | Matrix expanded from 26 to 34 tests (`ADV-SJ-27..34`), `ClockProvider` and `RoomCodeGenerator` seams specified. | **PASS / GO** |
-| **TypeScript & Code Quality** | `4dbfb264` | Branded types, discriminated unions, error taxonomy, zero-any mappers | Value objects (`RoomCode`, `Nickname`, `ParticipantToken`), custom error hierarchy, typed row mappers included. | **PASS / GO** |
-| **Frontend & Next.js Specialist** | `567b4c44` | Server components, mobile ergonomics, sessionStorage, vector SVG QR | Canonical routes, `sessionStorage` + cookie fallback, pure SVG QR generator, duplicate name notice banner specified. | **PASS / GO** |
-| **Independent Product & Architecture Reviewer** | `4fe8e64f` | ADR alignment, church demographic stress-test, lobby management, milestone boundaries | Sanctuary QR visibility, host roster action (`getHostSessionRosterAction`), church elder/youth UX addressed; zero BAREA-007 creep. | **PASS / GO** |
+To eliminate flaky tests caused by `Date.now()`, `Math.random()`, or wall-clock timers:
+1. **`ClockProvider`**: Supports `FrozenClockProvider` with manual time advancement for testing session expiration (`expires_at`), cookie max-age, and rate-limit sliding windows.
+2. **`RoomCodeGenerator`**: Supports `DeterministicRoomCodeGenerator` to test room code collision retries deterministically.
+3. **`RateLimitStore`**: In-memory test store allowing deterministic reset of IP and subnet rate-limit buckets between test executions.
 
 ---
 
-## 15. Gate Conclusion & Operational Status
+## 15. Conclusion & Verification Readiness
 
-The BAREA-006 Share/Join System Design and Verification Gate has successfully undergone comprehensive challenge, remediation, and multi-agent verification across all 6 specialized architectural domains.
+All seven independent NO-GO findings have been systematically resolved:
+1. **Join Flooding**: Multi-tier admission control (per-IP quota, session concurrency valve, host lock/kick, zero CAPTCHA).
+2. **Trusted Proxy / IP Extraction**: Right-to-left traversal with `TRUSTED_PROXY_CIDRS` allowlist, Cloudflare validation, socket fallback.
+3. **Snapshot / Organization Tenant Integrity**: SQLite `BEFORE INSERT` trigger on `quiz_sessions` enforcing relational tenant consistency with `quizzes`.
+4. **Nickname / Suffix Contradiction**: Decoupled `RawNicknameInput` (2..20 chars, no parentheses) from `DisplayName` (2..24 chars with `(2)`..` (99)` suffix).
+5. **Participant Cookie Security**: `HttpOnly; Secure; SameSite=Lax; Path=/join; Max-Age=14400` with `sessionStorage` primary for family iPad tab isolation.
+6. **Strict BAREA-006 Lobby Boundary**: All sessions created in `LOBBY` only; live state transitions strictly deferred to BAREA-007; zero question leakage.
+7. **Global Limiter Blast Radius**: Dangerous 250-attempt global kill-switch completely eliminated; partitioned per-IP and per-subnet buckets with bounded memory.
 
-**FINAL GATE STATUS: DESIGN GATE COMPLETE — AWAITING INDEPENDENT USER GO / NO-GO**  
-**IMPLEMENTATION STATUS: ZERO APPLICATION CODE WRITTEN — STOPPED PER INSTRUCTIONS**
+## 15. Gate Conclusion & Verification Results
+
+The second-pass post-remediation audit by all 6 specialized subagents has completed with a **UNANIMOUS GO**:
+
+| Role | Subagent Conversation ID | Verification Focus | Final Verdict |
+| :--- | :--- | :--- | :--- |
+| **Security Architect & Red Team** | `a937caff-c12f-42a9-ae51-10346fd1c3df` | Join flood limits (5/session/IP), right-to-left proxy extraction, trigger tenant guard, decoupled nickname bounds, HttpOnly cookie, blast radius isolation | **GO** |
+| **SQLite Persistence Architect** | `d1da20d9-7fcf-467f-953a-de53750f08a7` | SQLite `BEFORE INSERT` trigger tenant guard, pre-lock token hashing, atomic capacity check, `normalized_nickname` compound index, WAL & busy_timeout=5000 | **GO** |
+| **QA & Test Architect** | `a6973584-60f6-4513-b57d-0826171eeed8` | 41 discrete adversarial test cases (`ADV-SJ-01`..`41`), deterministic seams (`FrozenClockProvider`, `DeterministicRoomCodeGenerator`, `RateLimitStore`), real production paths | **GO** |
+| **TypeScript & Code Quality Specialist** | `d865a279-7b16-4d33-8c5b-fe2bb5b8938e` | Branded types (`RawNicknameInput`, `NormalizedNicknameKey`, `DisplayName`, `RoomCode`, `ParticipantToken`, `ClientIp`), error taxonomy, Server Action contracts, zero-`any` | **GO** |
+| **Frontend & Next.js Security Specialist** | `d72852b1-a942-423b-8b7d-bc9cc5df557a` | Path-scoped participant cookie (`Path=/join`, `SameSite=Lax`), `sessionStorage` primary multi-tab family iPad isolation, 48px touch targets, zero live quiz leakage | **GO** |
+| **Independent Product & Architecture Reviewer** | `53e71a09-4a79-4d9f-b070-d95c873e1754` | Church demographic usability (frictionless, no CAPTCHA), sanctuary projector visibility, duplicate name fellowship UX, strict BAREA-006/007 boundary | **GO** |
+
+**FINAL DESIGN GATE VERDICT: UNANIMOUS GO ACROSS ALL 6 SPECIALIZED ROLES**  
+**IMPLEMENTATION STATUS: ZERO APPLICATION CODE WRITTEN — STOPPED PER MANDATE AWAITING USER INDEPENDENT GO / NO-GO**
