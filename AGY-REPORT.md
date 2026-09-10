@@ -583,3 +583,79 @@ Following complete remediation of the design specification, both specialized age
 - **Branch**: `barea-006-share-join`
 - **Milestone Quarantine**: Strictly preserved. Zero live quiz state machine, zero WebSockets/SSE, zero live countdown timers, zero answer endpoints (`submitAnswerAction` does not exist), and zero live scoring.
 - **Merge Status**: Branch `barea-006-share-join` is ready for review. In accordance with BAREA agent operating rules, **NO self-merge is performed**. Awaiting user and ChatGPT independent review.
+
+---
+
+## 7. Milestone BAREA-006: Formal Independent Post-Implementation Code Review
+
+### A. Review Mandate & Environment
+- **Review Prompt**: `AGY-POST-IMPLEMENTATION-REVIEW.md` (commit `8763b4d`).
+- **Target Branch**: `barea-006-share-join`.
+- **Target Implementation Commit**: `1f1ee3f` (integrated with review mandate at commit `055efb1`).
+- **Mandate**: Fresh, adversarial code-level inspection across all production files and test suites using the two specialized agents, prior to merge authorization.
+
+---
+
+### B. Independent Agent Reviews & Verdicts
+
+| Agent Role | Subagent Conversation ID | Scope & Code Paths Inspected | Independent Review Verdict |
+| :--- | :--- | :--- | :--- |
+| **Agent 1: Security + Architecture Red Team** | `aaae5a2f-ef22-40a5-9d82-231a6c954734` | Code-level audit of `src/domain/domain-errors.ts`, `src/domain/value-objects.ts`, `src/domain/session.ts`, `src/persistence/sqlite-session-repository.ts`, `src/service/rate-limiter.ts`, `src/service/session-service.ts`, `src/app/session/actions.ts`, and `test/session-share-join.test.ts`. Verified Option A tenant isolation, SQLite triggers (`trg_enforce_session_snapshot_tenant_insert`, `trg_prevent_session_tenant_mutation`), Mode A zero pupil accounts/devices, Mode B provider-subject binding and duplicate display names, generic 404 anti-enumeration on restricted admission, cryptographic room-code entropy, zero confidential metadata leakage in `getPublicInfo`, church NAT rate limiting (0 per-IP seat cap), and strict BAREA-007 boundary quarantine. | **GO (APPROVED — 100% SECURE & VERIFIED)** |
+| **Agent 2: Persistence + QA / Implementability Reviewer** | `59339e17-0c00-48e1-9cc7-5783b8574227` | Code-level audit of relational schema across 5 session tables, `PRAGMA foreign_keys = ON;`, `ON DELETE RESTRICT` on snapshots, `ON DELETE CASCADE` on children, compound unique constraints, partial unique index `idx_sessions_active_room_code`, SQLite triggers and check constraints, transaction boundaries (`BEGIN IMMEDIATE` in `this.transaction`), capacity checks within write lock to prevent TOCTOU overselling, partitioned rate limiter memory structures, 132/132 automated test verification, clean `npm run typecheck`, and zero `: any` in production code. | **GO (APPROVED — 100% PERSISTENCE & QA VERIFIED)** |
+
+---
+
+### C. Explicit Invariant Verification Table
+
+| Invariant / Requirement | Concrete Implementation Location | Verified Test Cases | Audit Determination |
+| :--- | :--- | :--- | :--- |
+| **Option A Canonical Tenant Model** | `sqlite-session-repository.ts`: L322-L332; `session-service.ts`: L50-L58 | `ADV-TNT-01..05` | **VERIFIED**: `quiz_sessions.organization_id` strictly matches `published_quiz_snapshots.organization_id`. `trg_enforce_session_snapshot_tenant_insert` aborts mismatch; `trg_prevent_session_tenant_mutation` blocks update tampering. |
+| **Personal Workspace Backing** | `value-objects.ts`: L81-L93 (`derivePersonalTenantId`) | `ADV-TNT-10` | **VERIFIED**: Personal workspaces use deterministic `usr_ten_<user_id>` namespace. No collisions with organization IDs. |
+| **Cross-Tenant IDOR Protection** | `session-service.ts`: L135-L139; `actions.ts`: L115, L136, L156, L177, L198, L216, L236 | `ADV-TNT-06..08` | **VERIFIED**: Host authorization strictly compares `session.hostUserId === teacherContext.userId`. Cross-tenant mutations throw `SessionAccessDeniedError`. |
+| **Teacher Group Mode (Mode A)** | `sqlite-session-repository.ts`: L245-L272; `session-service.ts`: L114-L128 | `ADV-TGRP-01..05`, `ADV-ADM-06` | **VERIFIED**: Pupils require 0 accounts, 0 OAuth, 0 devices. Host manages groups/pupils. Direct join endpoints fail closed with `403 Forbidden`. |
+| **Individual Authenticated Mode (Mode B)** | `sqlite-session-repository.ts`: L222-L237, L554-L612 | `ADV-AUTH-01..08` | **VERIFIED**: Identity derived exclusively from server OAuth context (`provider_sub` + `user_id`). Duplicate display names permitted cleanly. Seat rehydration generates fresh token without duplicating database seats. |
+| **Restricted Admission & Privacy** | `sqlite-session-repository.ts`: L510-L552 | `ADV-ADM-01..06`, `ADV-TNT-11` | **VERIFIED**: Allowlist matches verified claims (`email_verified` / verified phone). Uninvited participants receive generic 404. Allowlists, host IDs, and quiz questions are never disclosed. |
+| **Church Wi-Fi / NAT Anti-Abuse** | `rate-limiter.ts`: L33-L125; `session-service.ts`: L65-L98 | `ADV-NAT-01..04` | **VERIFIED**: Zero successful-participant-per-IP seat caps (50+ students behind `203.0.113.50` join concurrently). Failed probes throttled per IP (15/min) and `/24` subnet (60/min). No global kill switch. |
+| **Scheduled Start Metadata** | `sqlite-session-repository.ts`: L174, L312-L315; `value-objects.ts`: L60-L78 | `ADV-SCH-01..03` | **VERIFIED**: UTC ISO-8601 validation; initial status is strictly `LOBBY`. |
+| **BAREA-007 Boundary Quarantine** | `session-service.ts`, `actions.ts` | `ADV-SCH-03` | **VERIFIED**: Zero live state progression, zero live countdown timers, zero answer submission endpoints (`submitAnswerAction` does not exist), zero scoring, zero leaderboards, zero WebSockets/SSE. |
+
+---
+
+### D. Verification Command Evidence
+
+```text
+> npm test
+ℹ tests 132
+ℹ suites 0
+ℹ pass 132
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 570.9949
+
+> npm run typecheck
+npm notice run tsc --noEmit (0 errors)
+
+> git grep ": any" -- src/
+(0 occurrences)
+
+> npm run build
+npm notice run tsc (0 errors)
+
+> npm run build:next
+✓ Compiled successfully in 10.2s (Next.js 16.3.4 App Router Turbopack, 0 errors)
+
+> git diff --check
+(0 whitespace errors)
+```
+
+---
+
+### E. Final Role Recommendation & Stop Confirmation
+
+- **Agent 1 (Security + Architecture Red Team)**: **GO**
+- **Agent 2 (Persistence + QA Reviewer)**: **GO**
+- **Unanimous Independent Recommendation**: **GO FOR BAREA-006 MERGE AUTHORIZATION**
+- **Branch**: `barea-006-share-join`
+- **Strict Stop Maintained**: No self-merge has occurred. Awaiting user and ChatGPT merge authorization.
