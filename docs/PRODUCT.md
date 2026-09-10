@@ -104,13 +104,19 @@ At minimum BAREA should support:
 - A client cannot authorize itself by simply typing an allowed email address or phone number.
 - Restricted admission cannot be bypassed by a QR code, link, room access code, or future invite code.
 
-### 3.4 Creator Scope
+### 3.4 Creator Scope & Canonical Tenant Model
 
-Quizzes may be created by:
+Quizzes and sessions may be created by:
 - a teacher or authorized member of a church/organization workspace; or
 - an individual creator using their personal BAREA workspace.
 
-Personal and organizational ownership should use the same tenant/workspace isolation model so that individual creators do not require special cross-tenant authorization exceptions.
+**Canonical Tenant Invariant (Option A):**
+- Personal and organizational ownership share the same underlying authoritative tenant identity model compatible with BAREA-005's `organization_id` persistence column.
+- An organization workspace has an authoritative organization tenant ID (e.g. `org_berea_central`).
+- A personal workspace has its own isolated, deterministic personal tenant ID (e.g. `usr_ten_<user_id>`), derived strictly on the server from the authenticated creator's identity.
+- A quiz, its published snapshot, and any derived live session belong to exactly one authoritative tenant identity.
+- Cross-tenant references fail closed: a personal creator cannot reference another personal creator's snapshot or an organization snapshot, and vice versa.
+- Individual creators operate with complete multi-tenant security guarantees without requiring special-case authorization bypasses.
 
 ---
 

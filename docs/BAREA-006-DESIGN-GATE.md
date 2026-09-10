@@ -27,7 +27,7 @@ BAREA-006 replaces the obsolete anonymous nickname model with two distinct, firs
   - Optional: scheduledStartAt (UTC ISO-8601)
                ↓
 [Server creates Session in LOBBY status]
-  - Reference to published_quiz_snapshots(id) verified for matching workspace_id
+  - Reference to published_quiz_snapshots(id) verified for matching authoritative tenant (organization_id)
   - SQLite BEFORE INSERT trigger enforces relational workspace integrity
   - Generates 6-char cryptographic room code & high-contrast vector SVG QR Code
                ↓
@@ -100,9 +100,11 @@ BAREA-006 replaces the obsolete anonymous nickname model with two distinct, firs
    - `TEACHER_ASSIGNED`: Managed exclusively by the host for teacher-controlled group mode.
    - `OPEN`: Authenticated individual users may join subject to capacity and anti-abuse limits.
    - `RESTRICTED`: Authenticated individual users must have a verified claim (canonical lowercase email or normalized E.164 phone number) matching the stored `session_invitations` allowlist.
-3. **Unified Workspace & Creator Model**:
+3. **Unified Workspace & Canonical Tenant Model (Option A)**:
    - Supports both `ORGANIZATION` workspaces (churches, ministries) and `PERSONAL` workspaces (individual creators).
-   - Strict tenant isolation enforced at persistence layer via SQLite triggers.
+   - **Option A Canonical Invariant**: Personal workspaces are backed by a deterministic, isolated personal tenant ID (e.g. `usr_ten_<user_id>`) that maps directly into the existing BAREA-005 `organization_id` persistence column.
+   - Zero modifications, zero migrations, and zero breaking changes to BAREA-005 tables (`quizzes`, `quiz_questions`, `published_quiz_snapshots`).
+   - Strict tenant isolation enforced at persistence layer via SQLite triggers: a session can only reference a snapshot owned by the exact same authoritative tenant identity.
 4. **Transport & Entry Decoupling**:
    - Entry mechanisms (QR code, canonical direct URL `/join/[roomCode]`, 6-character room access code) are transport discovery mechanisms **only** and never grant authorization by themselves.
    - Future Quiz Invite Code contract defined as an abstract extension point (not implemented in BAREA-006).
@@ -171,7 +173,8 @@ export type QuizSession =
   | {
       readonly id: string;
       readonly workspaceType: WorkspaceType;
-      readonly workspaceId: string;
+      readonly organizationId: string;         // Authoritative tenant identity matching BAREA-005 organization_id (e.g. 'org_berea_central' or 'usr_ten_u123')
+      readonly workspaceId: string;            // Alias getter returning organizationId
       readonly publishedQuizSnapshotId: string;
       readonly hostUserId: string;
       readonly roomCode: RoomCode;
@@ -189,7 +192,8 @@ export type QuizSession =
   | {
       readonly id: string;
       readonly workspaceType: WorkspaceType;
-      readonly workspaceId: string;
+      readonly organizationId: string;         // Authoritative tenant identity matching BAREA-005 organization_id
+      readonly workspaceId: string;            // Alias getter returning organizationId
       readonly publishedQuizSnapshotId: string;
       readonly hostUserId: string;
       readonly roomCode: RoomCode;
@@ -441,7 +445,12 @@ Entry mechanisms are **transport discovery channels**, NOT authorization primiti
 
 ## 9. Persistence Schema & Relational Integrity
 
-Persistence is implemented in `src/persistence/sqlite-session-repository.ts` using Node.js `node:sqlite` (`DatabaseSync`).
+Persistence is specified for `src/persistence/sqlite-session-repository.ts` using Node.js `node:sqlite` (`DatabaseSync`).
+
+### Option A Canonical Tenant Architecture
+1. **Zero BAREA-005 Schema Breaking Changes**: BAREA-005 tables (`quizzes`, `quiz_questions`, `published_quiz_snapshots`) remain completely unmodified.
+2. **Authoritative Tenant Column (`organization_id`)**: `quiz_sessions` stores `organization_id TEXT NOT NULL`, representing the authoritative tenant identity (e.g. `org_berea_central` for organizations, or `usr_ten_<user_id>` for personal workspaces).
+3. **Session Tenant & Snapshot Immutability**: Once created, a session's tenant binding (`organization_id`) and snapshot binding (`published_quiz_snapshot_id`) are **strictly immutable**. Any attempted UPDATE triggers an immediate transaction ABORT.
 
 ### Pragmas
 ```sql
@@ -457,8 +466,8 @@ PRAGMA foreign_keys = ON;
 -- 1. Quiz Sessions Table
 CREATE TABLE IF NOT EXISTS quiz_sessions (
   id TEXT PRIMARY KEY,
-  workspace_type TEXT NOT NULL CHECK(workspace_type IN ('ORGANIZATION', 'PERSONAL')),
-  workspace_id TEXT NOT NULL,
+  tenant_type TEXT NOT NULL CHECK(tenant_type IN ('ORGANIZATION', 'PERSONAL')),
+  organization_id TEXT NOT NULL, -- Authoritative tenant identity matching BAREA-005 organization_id
   published_quiz_snapshot_id TEXT NOT NULL,
   host_user_id TEXT NOT NULL,
   room_code TEXT NOT NULL,
@@ -467,7 +476,7 @@ CREATE TABLE IF NOT EXISTS quiz_sessions (
   status TEXT NOT NULL CHECK(status IN ('LOBBY', 'ACTIVE', 'COMPLETED', 'CLOSED')),
   scheduled_start_at TEXT CHECK(scheduled_start_at IS NULL OR (length(scheduled_start_at) = 20 AND scheduled_start_at LIKE '%Z')),
   is_locked INTEGER NOT NULL DEFAULT 0 CHECK(is_locked IN (0, 1)),
-  state_version INTEGER NOT NULL DEFAULT 1,
+  state_version INTEGER NOT NULL DEFAULT 1 CHECK(state_version >= 1),
   max_participants INTEGER NOT NULL DEFAULT 100 CHECK(max_participants BETWEEN 1 AND 1000),
   created_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
@@ -476,6 +485,10 @@ CREATE TABLE IF NOT EXISTS quiz_sessions (
   CONSTRAINT chk_mode_admission_compatibility CHECK (
     (participation_mode = 'TEACHER_GROUP' AND admission_policy = 'TEACHER_ASSIGNED') OR
     (participation_mode = 'INDIVIDUAL_AUTHENTICATED' AND admission_policy IN ('OPEN', 'RESTRICTED'))
+  ),
+  CONSTRAINT chk_closed_consistency CHECK (
+    (status IN ('LOBBY', 'ACTIVE') AND closed_at IS NULL) OR
+    (status IN ('COMPLETED', 'CLOSED') AND closed_at IS NOT NULL)
   )
 );
 
@@ -483,34 +496,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_active_room_code
 ON quiz_sessions(room_code)
 WHERE status IN ('LOBBY', 'ACTIVE');
 
-CREATE INDEX IF NOT EXISTS idx_sessions_workspace
-ON quiz_sessions(workspace_id, status);
+CREATE INDEX IF NOT EXISTS idx_sessions_organization
+ON quiz_sessions(organization_id, status);
 
--- 2. Persistence-Level Tenant Integrity Triggers
+CREATE INDEX IF NOT EXISTS idx_sessions_host
+ON quiz_sessions(host_user_id, status);
+
+-- 2. Persistence-Level Tenant Integrity & Immutability Triggers
 CREATE TRIGGER IF NOT EXISTS trg_enforce_session_snapshot_tenant_insert
 BEFORE INSERT ON quiz_sessions
 FOR EACH ROW
 BEGIN
-  SELECT RAISE(ABORT, 'Tenant mismatch: referenced snapshot does not belong to session workspace')
+  SELECT RAISE(ABORT, 'Tenant mismatch: referenced snapshot does not belong to session organization/tenant')
   WHERE NOT EXISTS (
     SELECT 1
     FROM published_quiz_snapshots pqs
     WHERE pqs.id = NEW.published_quiz_snapshot_id
-      AND pqs.organization_id = NEW.workspace_id
+      AND pqs.organization_id = NEW.organization_id
   );
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_enforce_session_snapshot_tenant_update
-BEFORE UPDATE OF published_quiz_snapshot_id, workspace_id ON quiz_sessions
+-- Strict Immutability Trigger: Prohibit mutating tenant or snapshot references post-creation
+CREATE TRIGGER IF NOT EXISTS trg_prevent_session_tenant_mutation
+BEFORE UPDATE OF organization_id, published_quiz_snapshot_id ON quiz_sessions
 FOR EACH ROW
 BEGIN
-  SELECT RAISE(ABORT, 'Tenant mismatch: snapshot reference cannot cross workspace boundaries')
-  WHERE NOT EXISTS (
-    SELECT 1
-    FROM published_quiz_snapshots pqs
-    WHERE pqs.id = NEW.published_quiz_snapshot_id
-      AND pqs.organization_id = NEW.workspace_id
-  );
+  SELECT RAISE(ABORT, 'IMMUTABILITY_VIOLATION: Session tenant and snapshot binding are immutable and cannot be updated');
 END;
 
 -- 3. Individual Authenticated Participants Table
@@ -729,10 +740,18 @@ To enforce strict milestone quarantine:
 - `ADV-TGRP-04`: **Session-Scoped Boundary**: Groups for session S1 cannot be accessed or manipulated from session S2.
 - `ADV-TGRP-05`: **Cross-Tenant Group Guard**: Teacher in Organization B cannot view or modify groups in Organization A.
 
-### Tenant & Workspace Security
-- `ADV-TNT-01`: **Cross-Tenant Snapshot Rejection**: Teacher in Org A creates session referencing snapshot belonging to Org B; SQLite trigger immediately raises abort.
-- `ADV-TNT-02`: **Personal Workspace Isolation**: Individual creator creates session in personal workspace; Org A admin cannot access or manage it.
-- `ADV-TNT-03`: **Privacy Leakage Defense**: Public endpoints (`lookupRoomAction`) NEVER expose `provider_sub`, `verified_email`, `verified_phone`, or allowlists.
+### Tenant & Workspace Security (Option A Verification)
+- `ADV-TNT-01`: **Personal Creator A vs Personal Creator B Cross-Tenant Rejection**: Personal Creator A (`usr_ten_userA`) creates session referencing snapshot owned by Personal Creator B (`usr_ten_userB`); database trigger `trg_enforce_session_snapshot_tenant_insert` aborts transaction; Server Action returns `403 CROSS_TENANT_SNAPSHOT_FORBIDDEN`.
+- `ADV-TNT-02`: **Personal Creator referencing Organization Snapshot Rejection**: Personal Creator A (`usr_ten_userA`) creates session referencing an organization-owned snapshot (`org_berea_central`); SQLite trigger immediately aborts with tenant mismatch.
+- `ADV-TNT-03`: **Organization referencing Personal Creator Snapshot Rejection**: Church Org 1 (`org_berea_central`) creates session referencing a personal creator's snapshot (`usr_ten_userA`); SQLite trigger immediately aborts with tenant mismatch.
+- `ADV-TNT-04`: **Organization A referencing Organization B Snapshot Rejection**: Org A creates session referencing Org B's snapshot; SQLite trigger immediately aborts with tenant mismatch.
+- `ADV-TNT-05`: **Session Tenant & Snapshot Immutability Defense**: Direct SQL UPDATE or Server Action attempting to mutate `organization_id` or `published_quiz_snapshot_id` on an existing session is aborted by `trg_prevent_session_tenant_mutation` raising `IMMUTABILITY_VIOLATION`.
+- `ADV-TNT-06`: **Cross-Personal Session Management IDOR Defense**: Personal User B calls `closeSessionAction`, `lockSessionAction`, or `createSessionGroupAction` on Personal User A's session; rejected with `403 Forbidden` (`SESSION_ACCESS_DENIED`).
+- `ADV-TNT-07`: **Organization Member Tampering on Personal Session**: Organization teacher/admin calls host management action on a personal creator's session; rejected with `403 Forbidden`.
+- `ADV-TNT-08`: **Personal Creator Tampering on Organization Session**: Personal creator calls host management action on an organization's session; rejected with `403 Forbidden`.
+- `ADV-TNT-09`: **Concurrent Cross-Tenant Session Creation**: Parallel attempts to insert invalid cross-tenant sessions under load roll back atomically inside SQLite write locks with zero orphaned records.
+- `ADV-TNT-10`: **Tenant Namespace Collision Defense**: Organization creation strictly validates that organization IDs cannot use or mimic the reserved personal tenant prefix (`usr_ten_`).
+- `ADV-TNT-11`: **Privacy Leakage Defense**: Public endpoints (`lookupRoomAction`) NEVER expose `organization_id`, `host_user_id`, `provider_sub`, `verified_email`, `verified_phone`, or invitation allowlists. Personal workspaces display sanitized `workspaceName = "Personal Study"`.
 
 ### Entry Mechanisms & QR
 - `ADV-ENTRY-01`: **QR Code Contains Zero Secrets**: Decoded QR string contains only canonical URL; zero tokens or secrets present.
@@ -770,12 +789,13 @@ To eliminate flaky tests caused by `Date.now()`, `Math.random()`, or wall-clock 
 
 ## 15. Conclusion & Verification Readiness
 
-The redesigned BAREA-006 Share/Join System Design Gate resolves all architectural deficiencies:
-1. **Mode A & Mode B**: First-class support for both Teacher-Controlled Groups (no child devices/accounts) and Individual Authenticated Mode (OAuth provider-backed identity).
-2. **Decoupled Admission Policies**: `TEACHER_ASSIGNED`, `OPEN`, and `RESTRICTED` (verified email/phone allowlists).
-3. **Church Wi-Fi / NAT Support**: Completely abolished the hostile 5-join-per-IP quota.
-4. **Tenant & Workspace Integrity**: Unified support for `PERSONAL` and `ORGANIZATION` workspaces with SQLite trigger protection.
-5. **Milestone Boundary Quarantined**: Scheduled start persisted without premature live game state advancement.
+The corrected BAREA-006 Share/Join System Design Gate resolves all architectural deficiencies and the snapshot ownership blocker:
+1. **Option A Canonical Tenant Architecture**: Resolved personal workspace vs BAREA-005 snapshot ownership mismatch by backing personal workspaces with deterministic, isolated personal tenant IDs (`usr_ten_<user_id>`) compatible with BAREA-005's `organization_id` column. Zero breaking schema changes to BAREA-005.
+2. **Strict Persistence Invariant**: Every session references an immutable snapshot owned by the exact same authoritative tenant identity. Enforced via `trg_enforce_session_snapshot_tenant_insert` and locked via `trg_prevent_session_tenant_mutation`.
+3. **Mode A & Mode B**: First-class support for both Teacher-Controlled Groups (no child devices/accounts) and Individual Authenticated Mode (OAuth provider-backed identity).
+4. **Decoupled Admission Policies**: `TEACHER_ASSIGNED`, `OPEN`, and `RESTRICTED` (verified email/phone allowlists).
+5. **Church Wi-Fi / NAT Support**: Completely abolished the hostile 5-join-per-IP quota.
+6. **Milestone Boundary Quarantined**: Scheduled start persisted without premature live game state advancement.
 
 **STATUS: READY FOR TWO-AGENT SECOND-PASS VERIFICATION AUDIT**
-**IMPLEMENTATION STATUS: ZERO APPLICATION CODE WRITTEN — STRICT STOP MAINTAINED**
+**IMPLEMENTATION STATUS: ZERO BAREA-006 APPLICATION CODE WRITTEN — STRICT STOP MAINTAINED**

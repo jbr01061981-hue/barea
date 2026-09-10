@@ -450,12 +450,17 @@ Following independent review of PR #7 (commit `38745a2`), a targeted remediation
 
 ---
 
-## 6. BAREA-006: Share/Join — Two-Agent Design Gate Execution Report
+## 6. BAREA-006: Share/Join — Two-Agent Design Gate Execution Report (Option A Blocker Correction Cycle)
 
 ### A. Executive Summary & Status
 - **Status**: **DESIGN GATE COMPLETE — TWO-AGENT SECOND-PASS VERIFIED (UNANIMOUS GO)**
 - **Implementation Status**: **ZERO BAREA-006 APPLICATION CODE WRITTEN (STRICT STOP MAINTAINED)**
-- **Product Model**: Redesigned around clarified BAREA product architecture:
+- **Blocker Resolution**: Resolved the architectural blocker from `AGY-PROMPT-BAREA-006-CORRECTION.md` regarding Personal Workspace vs BAREA-005 Snapshot Ownership:
+  - Formally adopted **Option A**: Every personal creator's workspace is backed by an isolated, deterministic personal tenant ID (e.g. `usr_ten_<user_id>`) that maps directly into the existing BAREA-005 `organization_id` persistence column.
+  - Zero schema migrations, zero table alterations, and zero breaking changes to BAREA-005 tables (`quizzes`, `quiz_questions`, `published_quiz_snapshots`) or immutability triggers.
+  - Symmetrical relational integrity: SQLite trigger `trg_enforce_session_snapshot_tenant_insert` validates `pqs.organization_id = NEW.organization_id`.
+  - Strict immutability trigger: `trg_prevent_session_tenant_mutation` raises `IMMUTABILITY_VIOLATION` on any attempted update to `organization_id` or `published_quiz_snapshot_id`.
+- **Product Model**: Grounded in the two-mode architecture:
   1. **Mode A (Teacher-Controlled Group Mode)**: Sunday School classroom setting where pupils have NO accounts, NO OAuth, NO phones/laptops/devices. Authorized teacher creates groups, assigns pupils, and records/marks answers.
   2. **Mode B (Individual Authenticated Mode)**: Participants authenticate via existing BAREA OAuth architecture (e.g. Google `provider_sub`), canonical identity is immutable provider subject + internal `user_id`. Display names are presentation data only (duplicates allowed without artificial suffixing).
   3. **Decoupled Admission Policies**: `TEACHER_ASSIGNED` (Mode A), `OPEN` (Mode B), `RESTRICTED` (Mode B with verified email or E.164 phone allowlists matched against verified OAuth claims; client body claims never trusted).
@@ -468,43 +473,40 @@ Following independent review of PR #7 (commit `38745a2`), a targeted remediation
 
 ---
 
-### B. Two-Agent Pre-Remediation Challenge Findings
+### B. Two-Agent Pre-Remediation Challenge Findings (Option A vs Option B)
 
-In accordance with `AGY-PROMPT.md`, two specialized agents conducted the pre-remediation challenge against the multi-mode architectural mandates:
+In accordance with `AGY-PROMPT-BAREA-006-CORRECTION.md`, two specialized agents audited the personal workspace vs BAREA-005 snapshot ownership mismatch:
 
 | Specialized Sub-Agent | Conversation ID | Focus & Challenge Findings |
 | :--- | :--- | :--- |
-| **Agent 1: Security + Architecture Red Team** | `ca61378b-1677-47d4-a5d3-d9c7fd4e3bcc` | 1. **Church Wi-Fi NAT Blackout**: Confirmed the previous 5-joins-per-IP limit would brick church sanctuary deployments where 30-100 participants join behind a single gateway NAT IP.<br>2. **Claim Spoofing vs Verified OAuth**: Identified that self-reported client body emails or phones must never be accepted as admission proof; identity must bind strictly to verified claims (`provider_sub`, `verified_email`, `verified_phone`).<br>3. **Allowlist Enumeration**: Private allowlists and participant phone/email identifiers must never be reflected in public room lookups or lobby rosters.<br>4. **Personal Workspace Isolation**: Quizzes created in personal creator workspaces must not be accessible or claimable by organization members unless explicitly shared. |
-| **Agent 2: Persistence + QA / Implementability Reviewer** | `4855d788-0ba7-4db3-86d3-5ffda6b9bff7` | 1. **Schema DDL Definition**: Formulated SQLite DDL for `quiz_sessions`, `session_participants`, `session_groups`, `session_group_pupils`, `session_invitations`.<br>2. **Compound Checks & Triggers**: Designed `chk_mode_admission_compatibility` check constraint and `BEFORE INSERT`/`UPDATE` triggers enforcing session snapshot workspace integrity.<br>3. **Unique Constraints**: Designed `UNIQUE(session_id, user_id)` and `UNIQUE(session_id, provider_type, provider_sub)` on `session_participants` to prevent multi-seat race conditions.<br>4. **Deterministic Seams**: Defined `ClockProvider` (`FrozenClockProvider`), `RoomCodeGenerator` (`DeterministicRoomCodeGenerator`), and `RateLimitStore` seams for reproducible test execution. |
+| **Agent 1: Security + Architecture Red Team** | `709d41d4-74d5-48ba-a22a-3448c6b78fff` | 1. **Option A Unanimous Endorsement**: Confirmed Option A eliminates all cross-tenant ambiguities with zero BAREA-005 schema churn.<br>2. **Namespace Collision Defense**: Mandated reserved prefix `usr_ten_` for personal tenants; organization registration must forbid `usr_ten_` to prevent impersonation.<br>3. **Session Immutability Trigger**: Identified need for `trg_prevent_session_tenant_mutation` to prevent post-creation tenant or snapshot retargeting.<br>4. **Host Management IDOR**: Verified caller-to-session authorization contracts for `closeSessionAction`, `lockSessionAction`, and group management.<br>5. **Public Leakage**: Public endpoints must sanitize personal workspaces to `"Personal Study"` without exposing creator emails or tenant IDs. |
+| **Agent 2: Persistence + QA / Implementability Reviewer** | `4634c7f0-d77d-40be-a8c3-8fc4c4219513` | 1. **Option A Superiority**: Option B would violate BAREA-005 snapshot immutability triggers and require breaking repository migrations. Option A is 100% congruent.<br>2. **Column Naming Rigor**: Defined `organization_id TEXT NOT NULL` in `quiz_sessions` matching `published_quiz_snapshots.organization_id`, with `tenant_type TEXT CHECK(tenant_type IN ('ORGANIZATION', 'PERSONAL'))`.<br>3. **Trigger Validation**: Specified `trg_enforce_session_snapshot_tenant_insert` asserting `pqs.organization_id = NEW.organization_id`.<br>4. **Adversarial Test Formulations**: Formulated concrete specifications for `ADV-TNT-01` through `ADV-TNT-11` covering all cross-tenant permutation vectors. |
 
 ---
 
 ### C. Exact Architecture Remediation Synthesized into Design Gate
 
-[`docs/BAREA-006-DESIGN-GATE.md`](file:///C:/Users/Mr.Babu%20Rao/BAREA/docs/BAREA-006-DESIGN-GATE.md) and [`docs/PRODUCT.md`](file:///C:/Users/Mr.Babu%20Rao/BAREA/docs/PRODUCT.md) were completely updated with the following architectural remediations:
+[`docs/BAREA-006-DESIGN-GATE.md`](file:///C:/Users/Mr.Babu%20Rao/BAREA/docs/BAREA-006-DESIGN-GATE.md) and [`docs/PRODUCT.md`](file:///C:/Users/Mr.Babu%20Rao/BAREA/docs/PRODUCT.md) were updated with the following architectural remediations:
 
-1. **Obsolete Anonymous Nickname Model Removed**:
-   - Replaced self-entered nicknames with provider-backed authentication (Google OAuth `provider_sub`) for individual mode.
-   - Display names are presentation data only; duplicate display names are permitted without artificial suffixing.
-2. **Teacher-Controlled Group Mode (Mode A)**:
-   - Sunday school pupils do not authenticate, have no accounts, no devices, and no QR/join requirements.
-   - Authorized teacher creates groups (`session_groups`) and assigns pupils (`session_group_pupils`).
-   - Group records are session-scoped and teacher-managed.
-3. **Decoupled Admission Policies**:
-   - `TEACHER_ASSIGNED`: Exclusive to `TEACHER_GROUP` mode.
-   - `OPEN`: Authenticated individual users join subject to capacity and anti-abuse.
-   - `RESTRICTED`: Authenticated individual users matched against normalized verified email or E.164 phone allowlist (`session_invitations`).
-4. **Church Wi-Fi / NAT Anti-Abuse**:
-   - Eliminated any successful-participant-per-IP quota. Dozens or hundreds of participants behind `203.0.113.50` can join.
-   - Rate limiting partitioned into failed room lookups (15/60s/IP), failed admission attempts, and subnet burst protection (`/24` capped at 60/min). No global kill switches.
-5. **Tenant & Workspace Integrity**:
-   - Explicit `workspace_type` (`ORGANIZATION` | `PERSONAL`) and `workspace_id`.
-   - SQLite `BEFORE INSERT` and `BEFORE UPDATE` triggers verify `published_quiz_snapshots` matches `NEW.workspace_id`.
-6. **Privacy & Anti-Enumeration**:
-   - Public room lookups return only title, duration, mode, and participant count.
-   - Zero disclosure of emails, phones, allowlists, or provider subjects in public responses or rosters.
-7. **Adversarial Test Matrix**:
-   - 41 concrete named test specifications (`ADV-AUTH-01..08`, `ADV-ADM-01..06`, `ADV-TGRP-01..05`, `ADV-TNT-01..03`, `ADV-ENTRY-01..04`, `ADV-NAT-01..04`, `ADV-SCH-01..03`, `ADV-CONC-01..04`).
+1. **Option A Canonical Tenant Architecture**:
+   - `quiz_sessions.organization_id TEXT NOT NULL` is the authoritative tenant identity matching BAREA-005 `organization_id`.
+   - Personal creators operate with deterministic personal tenant IDs (`usr_ten_<user_id>`).
+   - Zero modifications to BAREA-005 tables or repositories.
+2. **Session Tenant & Snapshot Immutability Triggers**:
+   - `trg_enforce_session_snapshot_tenant_insert`: Verifies snapshot belongs to session's `organization_id`.
+   - `trg_prevent_session_tenant_mutation`: Raises `IMMUTABILITY_VIOLATION` on attempted update of `organization_id` or `published_quiz_snapshot_id`.
+3. **Multi-Tenant Adversarial Test Matrix (`ADV-TNT-01` to `ADV-TNT-11`)**:
+   - `ADV-TNT-01`: Personal Creator A vs Personal Creator B Cross-Tenant Rejection.
+   - `ADV-TNT-02`: Personal Creator referencing Organization Snapshot Rejection.
+   - `ADV-TNT-03`: Organization referencing Personal Creator Snapshot Rejection.
+   - `ADV-TNT-04`: Organization A referencing Organization B Snapshot Rejection.
+   - `ADV-TNT-05`: Session Tenant & Snapshot Immutability Defense.
+   - `ADV-TNT-06`: Cross-Personal Session Management IDOR Defense.
+   - `ADV-TNT-07`: Organization Member Tampering on Personal Session.
+   - `ADV-TNT-08`: Personal Creator Tampering on Organization Session.
+   - `ADV-TNT-09`: Concurrent Cross-Tenant Session Creation.
+   - `ADV-TNT-10`: Tenant Namespace Collision Defense.
+   - `ADV-TNT-11`: Privacy Leakage Defense (sanitized `"Personal Study"` display).
 
 ---
 
@@ -514,14 +516,14 @@ Following complete remediation of the design specification, both specialized age
 
 | Specialized Role | Subagent Conversation ID | Verification Scope & Finding | Final Role Verdict |
 | :--- | :--- | :--- | :--- |
-| **Agent 1: Security + Architecture Red Team** | `8e204b86-03a4-4ed8-9914-5812a1710e7d` | Verified complete removal of anonymous nickname model. Confirmed Mode A child zero-device/zero-auth invariants, Mode B OAuth canonical identity (`provider_sub`), allowlist verification rules (zero trust for client claims), privacy/enumeration shielding, Church Wi-Fi NAT support (0 quota on successful joins), trusted proxy resolution, and strict BAREA-006 lobby quarantine. | **GO (PASSED)** |
-| **Agent 2: Persistence + QA / Implementability Reviewer** | `918bd694-17d7-4f8b-8ed6-a7767c9e2968` | Verified SQLite DDL for all 5 session tables, `chk_mode_admission_compatibility` check constraint, compound indexes, workspace integrity triggers (`trg_enforce_session_snapshot_tenant_insert`/`update`), transaction boundaries with `BEGIN IMMEDIATE`, deterministic test seams (`FrozenClockProvider`, `DeterministicRoomCodeGenerator`, `RateLimitStore`), and the 41 adversarial test specifications. Confirmed engineering implementability without ambiguity. | **GO (PASSED)** |
+| **Agent 1: Security + Architecture Red Team** | `0fc44c67-a3f1-4847-9cc9-da1c1c978dab` | Verified Option A resolution, canonical tenant backing (`usr_ten_<user_id>`), DB-level trigger tenant assertion, `trg_prevent_session_tenant_mutation` immutability trigger, `ADV-TNT-01..11` coverage, zero privacy leakage, and confirmed zero application code written. | **GO (PASSED)** |
+| **Agent 2: Persistence + QA / Implementability Reviewer** | `87125758-a1d4-4157-a14e-1f095dd17be4` | Verified SQLite DDL for all session tables, `organization_id TEXT NOT NULL` column matching BAREA-005 snapshots, `chk_mode_admission_compatibility` and `chk_closed_consistency` constraints, transaction boundaries with `BEGIN IMMEDIATE`, and confirmed zero BAREA-006 application code written. | **GO (PASSED)** |
 
 ---
 
 ### E. Remaining Non-Blocking Observations
-1. **Provider Mapping Abstraction**: During BAREA-006 implementation, ensure `provider_type` (`GOOGLE`, `FACEBOOK`, etc.) and `provider_sub` are indexed together `(provider_type, provider_sub)` to support multi-provider scaling cleanly.
-2. **Deterministic Time Injection in Tests**: Ensure test suites wire `ClockProvider` into both session creation (for `scheduled_start_at` validation) and participant token expiration checks.
+1. **Tenant ID Prefix Validation**: In future organization onboarding/creation modules, enforce server-side validation rejecting the reserved `usr_ten_` prefix to guarantee complete namespace isolation.
+2. **Deterministic Seams in Test Runner**: Ensure the integration test runner wires `FrozenClockProvider` into both session creation and participant token expiration tests.
 
 ---
 
