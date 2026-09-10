@@ -1,529 +1,322 @@
-# BAREA-004 — CRITICAL SECURITY FIX
-
-Repository: `jbr01061981-hue/barea`
-PR: `#6 — feat(review): implement BAREA-004 Teacher Review & Approval foundation`
-Branch: `barea-004-teacher-review`
-
-## Mission
-
-Work locally on the PC on the existing `barea-004-teacher-review` branch. Inspect the actual code and PR diff, fix the release-blocking authorization vulnerability described below, add genuine security tests, run tests, review the final diff, commit, and push the changes to the SAME branch.
-
-DO NOT merge PR #6. DO NOT create another PR. DO NOT start BAREA-005. DO NOT modify unrelated functionality.
-
-## Critical security defect
-
-In `src/app/teacher/review/db.ts`, `isTestEnvironment()` currently treats arbitrary `process.execArgv` values beginning with `--test-` or `--test=` as proof of trusted test execution. This is unsafe because `isTestEnvironment()` gates `setAuthorizedTeacherContext()` and `getAuthorizedTeacherContext()`.
-
-The current dangerous logic is conceptually:
-
-```ts
-arg === '--test' || arg.startsWith('--test-') || arg.startsWith('--test=')
-```
-
-An attacker-controlled runtime argument such as `--test-evil` can therefore activate the test authorization path.
-
-## Required security invariant
-
-NO UNTRUSTED RUNTIME INPUT may ever establish an authorized teacher context.
-
-The implementation MUST NOT use arbitrary `process.argv`/`process.execArgv` strings as sufficient proof of trusted test execution.
-
-In particular, these MUST NOT activate test authorization:
-
-- `--arg-with-test`
-- `contest`
-- `testing-suite`
-- `--test-evil`
-- `--test-attacker`
-- `--test-not-real`
-- `--test=attacker`
-- `--test-fake`
-- `--test-anything`
-
-Do not merely patch the tests. Fix the actual authorization boundary.
-
-## Inspect first
-
-Before editing, inspect:
-
-- `src/app/teacher/review/db.ts`
-- `src/app/teacher/review/actions.ts`
-- `src/app/teacher/review/page.tsx`
-- `test/teacher-review.test.ts`
-- `package.json`
-- test scripts/configuration
-- Node version requirements
-- CI configuration
-- complete PR #6 diff
-
-Understand the complete flow:
-
-`isTestEnvironment()` → `setAuthorizedTeacherContext()` → `mockTeacherContext` → `getAuthorizedTeacherContext()` → authorized teacher context.
-
-## Correct implementation
-
-Design a robust trusted mechanism appropriate to this repository for allowing genuine automated tests to establish their fixture context.
-
-Do NOT replace one string-prefix heuristic with another.
-Do NOT treat arbitrary `--test-*` or `--test=` strings as trusted proof.
-Do NOT introduce a browser/API parameter that enables test mode.
-Do NOT allow browser input to establish teacher identity or organization identity.
-Do NOT restore any hard-coded organization fallback.
-
-If the architecture cannot safely distinguish genuine test execution from arbitrary runtime arguments, redesign the test authorization boundary rather than adding another CLI string heuristic.
-
-## Environment rules
-
-Preserve these fail-closed requirements:
-
-1. `NODE_ENV=production` → production teacher authentication required; no fixture authorization.
-2. Unset `NODE_ENV` → fail closed unless using the repository's genuinely trusted test mechanism.
-3. Unknown/staging `NODE_ENV` → fail closed unless using the repository's genuinely trusted test mechanism.
-4. `NODE_ENV=development` → development teacher context allowed ONLY with explicit non-empty `BAREA_DEV_ORG_ID`.
-5. Whitespace-only `BAREA_DEV_ORG_ID` → fail closed.
-6. No hard-coded organization fallback such as `church-berea-default`.
-
-## Test fixture hook
-
-Audit `setAuthorizedTeacherContext()` as a security-sensitive function.
-
-It must not be callable successfully in production or an untrusted runtime merely because process arguments contain test-looking strings.
-
-Explicitly test an attacker context such as:
-
-```ts
-{
-  userId: 'attacker',
-  organizationId: 'org-attacker',
-  displayName: 'Attacker',
-  role: 'teacher'
-}
-```
-
-and prove that arbitrary runtime arguments cannot establish this context.
-
-## Tests 21 and 22
-
-Rewrite/extend `test/teacher-review.test.ts`.
-
-### Test 21
-
-It must test the REAL authorization boundary, not merely `isTestEnvironment()`.
-
-Cover arbitrary values in both `process.argv` and `process.execArgv` where applicable, including:
-
-- `--arg-with-test`
-- `contest`
-- `testing-suite`
-- `--test-evil`
-- `--test-attacker`
-- `--test-not-real`
-- `--test=attacker`
-
-Prove these cannot cause `setAuthorizedTeacherContext(attackerContext)` to establish authorization.
-
-### Test 22
-
-It must prove that the legitimate test execution mechanism still works.
-
-Do NOT simply assign:
-
-```ts
-process.execArgv = ['--test-isolation=process', '--test-concurrency=0'];
-```
-
-and call that proof of genuine Node test execution. That only proves the current predicate accepts `--test-*` strings.
-
-Test the actual trusted mechanism used by the corrected implementation.
-
-The tests must distinguish genuine trusted test execution from fake test-looking arguments.
-
-## Tenant security
-
-Preserve server-derived:
-
-- `teacherContext.userId`
-- `teacherContext.organizationId`
-- `teacherContext.role`
-
-Browser query parameters such as `?org=` or `?id=` must not become authorization inputs.
-
-Preserve and run existing cross-tenant tests for:
-
-- read
-- update
-- approval
-- batch approval
-- archive
-- regeneration
-
-## BAREA-002 / BAREA-003 regression
-
-Do not break existing BAREA-002 or BAREA-003 behavior or service/repository boundaries. Run the relevant existing tests and the complete test suite. Do not start BAREA-005.
-
-## Adversarial testing
-
-Actively test combinations such as:
-
-- production + `--test`
-- production + `--test-evil`
-- production + `--test=evil`
-- unset NODE_ENV + `--test-evil`
-- unset NODE_ENV + `--test-attacker`
-- staging + `--test-evil`
-- staging + `--test=attacker`
-- arbitrary `process.execArgv` test-looking values
-
-The objective is to prove an attacker cannot manufacture trusted teacher authorization.
-
-## Do not cheat
-
-Do NOT:
-
-- delete security tests;
-- weaken assertions;
-- skip failing tests;
-- change expected security behavior merely to make tests pass;
-- add production bypasses;
-- rely on AGY-REPORT.md;
-- claim tests passed without actually running them.
-
-## Final repository audit
-
-Search the final repository for:
-
-- `includes('test')`
-- `includes("test")`
-- `startsWith('--test-')`
-- `startsWith("--test-")`
-- `startsWith('--test=')`
-- `startsWith("--test=")`
-- `BAREA_DEV_ORG_ID`
-- `church-berea-default`
-- `setAuthorizedTeacherContext`
-- `isTestEnvironment`
-- `mockTeacherContext`
-
-Confirm there is no alternate authorization path.
-
-## Test execution
-
-Run targeted Teacher Review/security tests first, then the full existing test suite.
-
-Record the actual commands and results. Do not report 81/81 or any other number unless actually executed locally.
-
-Also run:
-
-```text
-git status
-git diff
-git diff --check
-```
-
-Review the complete final diff for unrelated changes.
-
-## Git requirements
-
-Remain on:
-
-`barea-004-teacher-review`
-
-Commit the implementation and test changes with a clear security-focused commit message, e.g.:
-
-`fix(review): harden test authorization boundary`
-
-Then push to:
-
-`origin/barea-004-teacher-review`
-
-After pushing, verify the remote branch contains the new commit.
-
-DO NOT merge PR #6.
-DO NOT close PR #6.
-DO NOT create PR #7.
-DO NOT start BAREA-005.
-
-## Final report
-
-Report:
-
-### Implementation
-- exact files changed
-- what was unsafe
-- how the trusted test mechanism now works
-
-### Security
-Explicit PASS/FAIL for:
-- arbitrary CLI substring
-- `--arg-with-test`
-- `contest`
-- `testing-suite`
-- `--test-evil`
-- `--test-attacker`
-- `--test=attacker`
-- production
-- unset NODE_ENV
-- staging/unknown NODE_ENV
-- development without BAREA_DEV_ORG_ID
-- development with BAREA_DEV_ORG_ID
-- browser tenant manipulation
-- teacher identity manipulation
-- cross-tenant access
-- test fixture abuse
-
-### Tests
-- targeted tests: PASS/FAIL
-- full suite: PASS/FAIL
-- security tests: PASS/FAIL
-- actual commands executed
-
-### Git
-- branch
-- previous commit
-- new commit
-- push result
-- remote verification
-
-Completion requires the implementation fix, genuine security tests, successful targeted/full test execution, final diff review, commit, and push to `barea-004-teacher-review`.
-
----
-
-# BAREA-006 — REMEDIATION REQUIRED AFTER INDEPENDENT SECURITY REVIEW
+# AGY PROMPT — BAREA-006 FINAL SECURITY REMEDIATION
 
 Repository: `jbr01061981-hue/barea`
 Branch: `barea-006-share-join`
-Implementation commit under review: `1f1ee3fd0768c36187f3ae1ea42afbc8ff505c37`
+Current implementation commit: `67920a6783b98b8ba23dcd04a9fbba1bd6dd9407`
 
-## Current authorization status
+## Authorization status
 
-**NO-GO — DO NOT MERGE `1f1ee3f` yet.**
+**NO-GO — DO NOT MERGE `67920a6` yet.**
 
-An independent review of the actual implementation identified TWO release-blocking security defects that must be fixed before merge authorization.
+ChatGPT independently re-reviewed the actual `67920a6` implementation after the post-remediation report.
 
-Do not treat AGY's existing post-implementation GO report as sufficient. Reproduce the findings against the actual code, fix the root causes, add regression/adversarial tests, and obtain the required two-agent re-review.
+Finding 2 (unexpected internal error disclosure) is accepted as remediated.
 
-## Finding 1 — Client-controlled IP must not be trusted
+Finding 1 still has one security blocker: **IP header provenance is not actually established.**
 
-In the current implementation, public Server Actions including:
+The current `resolveServerClientIp()` validates whether `CF-Connecting-IP`, `X-Forwarded-For`, or `X-Real-IP` contains a syntactically valid IP, but syntax validation does not prove that the header was inserted by a trusted proxy. An attacker who can reach the application directly may be able to supply a valid-looking forwarding header and thereby choose the rate-limit bucket.
 
-- `lookupRoomAction(roomCode: string, clientIp?: string)`
-- `joinSessionAction(roomCode: string, clientIp?: string)`
+The current implementation must therefore be corrected before merge.
 
-accept `clientIp` as a direct caller-supplied Server Action argument and pass it into the service/rate-limiting path.
+---
 
-This is not an authoritative client IP. A malicious caller can submit arbitrary IP values and potentially evade per-IP/subnet throttling by rotating/spoofing the supplied value.
+# SINGLE REMAINING BLOCKER — TRUSTED PROXY / IP PROVENANCE
 
-### Required invariant
+## Required security invariant
 
-**NO CLIENT-SUPPLIED VALUE may be treated as the authoritative source of network client IP.**
+**A valid-looking IP address is NOT sufficient evidence of client identity for rate limiting.**
 
-The server must derive the effective client IP from a trusted server/deployment boundary.
+The effective IP used by abuse controls MUST originate from a server/deployment boundary that the caller cannot control.
 
-Requirements:
+The application MUST be able to distinguish:
 
-1. Remove `clientIp` as an authoritative input from public Server Action APIs.
-2. Do not accept a hidden/browser/form/query/body parameter as a substitute.
-3. Derive the IP server-side using the actual hosting/runtime request metadata available to this application.
-4. If a reverse proxy is involved, trust forwarding headers only according to an explicit trusted-proxy/deployment model. Do not blindly trust arbitrary `X-Forwarded-For` values supplied by an untrusted client.
-5. If a trusted IP cannot be established, fail closed for the IP-based protection or use a safe server-side fallback that cannot be selected by the caller.
-6. Preserve the existing NAT/subnet anti-abuse objective; do not remove rate limiting merely to eliminate the vulnerability.
-7. Keep authentication/authorization independent of the IP value. IP is an abuse-control signal, not an identity signal.
+```text
+attacker-supplied forwarding header
+                !=
+trusted proxy-supplied client IP
+```
 
-Inspect the complete path, not only the Server Action signatures:
+Do not merely add more regex validation.
 
-`lookupRoomAction` / `joinSessionAction` → `session-service` → rate limiter → request/IP source.
+## Required implementation
 
-Also inspect all callers and tests to ensure no browser-controlled value remains an authoritative IP input.
+Inspect the actual deployment/runtime architecture first and choose a concrete trusted-IP strategy.
 
-### Mandatory adversarial tests for Finding 1
+Acceptable approaches include, where genuinely supported by the deployment:
 
-Add genuine tests proving at minimum:
+1. Use the framework/platform's authoritative request IP supplied by the trusted runtime/proxy.
+2. Use a deployment-specific trusted proxy contract where the application only trusts forwarding headers after establishing that the request came through that trusted proxy.
+3. If the deployment cannot establish trusted proxy provenance, do NOT treat forwarding headers as authoritative. Use a safe server-side fallback or another non-client-selectable abuse-control mechanism.
 
-- supplying a forged `clientIp` cannot select the rate-limit bucket;
-- changing a caller-supplied IP cannot bypass the intended per-IP/subnet protection;
-- the effective IP comes from the trusted server-side source;
-- arbitrary forwarding headers cannot manufacture a trusted IP when the deployment configuration does not trust that proxy/header;
-- legitimate trusted proxy handling, if used, still works under the configured deployment model;
-- existing NAT/subnet anti-abuse behavior remains intact;
-- authenticated participant rate limiting remains intact.
+The implementation MUST NOT blindly trust:
 
-Do not merely test that a parameter was renamed. Test the actual security boundary.
+- `CF-Connecting-IP`
+- `X-Forwarded-For`
+- `X-Real-IP`
+- any renamed equivalent
 
-## Finding 2 — Unexpected internal errors must not leak raw messages
+merely because the value parses as an IP address.
 
-In the current `src/app/session/actions.ts`, `errorResponse(err)` returns `err.message` for unexpected/non-domain exceptions through the `INTERNAL_ERROR` response path.
+## Cloudflare specifically
 
-This can expose database, implementation, infrastructure, or other internal details to an untrusted client.
+If `CF-Connecting-IP` is supported, document and enforce the actual Cloudflare trust boundary rather than simply checking whether the header is present and syntactically valid.
 
-### Required invariant
+If the application cannot reliably establish that the incoming request passed through Cloudflare, do not treat `CF-Connecting-IP` as authoritative.
 
-**Unexpected internal exceptions must never expose their raw message to the client.**
+## X-Forwarded-For specifically
 
-Requirements:
+Do not assume the leftmost entry is trustworthy merely because it is conventionally the original client address.
 
-1. Preserve deliberate, safe `BareaDomainError` public messages where the application explicitly defines them as client-safe.
-2. For unexpected/non-domain exceptions, return a generic public error such as `INTERNAL_ERROR` with a safe generic message.
-3. Log the detailed exception server-side using the repository's existing logging/error-reporting mechanism, without exposing it to the caller.
-4. Do not put stack traces, SQL/database errors, provider errors, filesystem paths, environment values, secrets, or implementation details into the public response.
-5. Ensure the fix applies consistently across the relevant Server Actions, not just one test case.
+A caller can send an arbitrary `X-Forwarded-For` header unless a trusted upstream proxy is known to overwrite/construct it and the application can rely on that deployment contract.
 
-### Mandatory adversarial tests for Finding 2
+If there is no independently trusted proxy boundary, `X-Forwarded-For` MUST NOT determine the effective client IP.
 
-Add tests that force representative unexpected failures, for example:
+## X-Real-IP specifically
 
-- database/repository exception;
-- generic `Error('secret internal implementation detail')`;
-- error containing a SQL/table/path/provider message.
+Apply the same provenance requirement. Syntax validation is not provenance validation.
 
-Prove that:
+## Fallback
 
-- the client receives only the approved generic public error;
-- the sensitive/raw internal message is absent from the response;
-- domain errors that are intentionally client-safe still preserve their expected public message;
-- detailed error information is logged server-side according to the repository's existing logging approach.
+If no trustworthy client IP can be established, the fallback MUST be selected entirely by the server and MUST NOT be influenced by request headers, query parameters, form data, Server Action parameters, cookies, or other client-controlled values.
 
-## Scope preservation
+Preserve the intended NAT scalability behavior. Do not reintroduce a per-IP participant seat quota merely to solve this issue.
 
-Do NOT redesign BAREA-006 or reopen already-approved architecture unless the security fix genuinely requires it.
+IP remains an abuse-control signal only; it MUST NOT become an authentication or authorization identity.
 
-Preserve:
+---
 
-- teacher-controlled `TEACHER_GROUP` participation;
+# Required adversarial tests
+
+Do not only test that the `clientIp` action parameter is gone. Test the actual provenance boundary.
+
+Add tests proving:
+
+### 1. Direct attacker headers
+
+When the application is NOT behind a configured trusted proxy, arbitrary caller-supplied values in:
+
+- `CF-Connecting-IP`
+- `X-Forwarded-For`
+- `X-Real-IP`
+
+cannot select the effective IP used for rate limiting.
+
+Example attacker input:
+
+```text
+X-Forwarded-For: 203.0.113.99
+CF-Connecting-IP: 203.0.113.100
+X-Real-IP: 203.0.113.101
+```
+
+The attacker must not be able to rotate these values to evade the same server-side rate-limit bucket.
+
+### 2. Trusted proxy path
+
+If the chosen deployment supports a trusted proxy:
+
+- test the legitimate trusted-proxy path;
+- test that the trusted proxy's client IP is accepted;
+- test that an untrusted/direct request cannot impersonate the proxy;
+- test malformed and conflicting forwarding headers.
+
+### 3. Header injection / malformed values
+
+Test:
+
+- multiple `X-Forwarded-For` entries;
+- invalid IPs;
+- mixed valid/invalid entries;
+- whitespace;
+- duplicate forwarding headers if the framework exposes them;
+- attacker-controlled first/leftmost address;
+- attacker-controlled last/rightmost address.
+
+### 4. Rate-limit bypass
+
+Prove that changing only attacker-controlled forwarding headers cannot move a caller into a fresh IP bucket.
+
+The test must exercise the actual action/service/rate-limiter path.
+
+### 5. Existing protections
+
+Preserve and test:
+
+- NAT/subnet anti-abuse behavior;
+- authenticated participant rate limiting;
+- room lookup throttling;
+- tenant/authorization boundaries;
+- BAREA-007 quarantine.
+
+---
+
+# Required code audit
+
+Inspect the complete path:
+
+`lookupRoomAction()` / `joinSessionAction()`
+→ `resolveServerClientIp()`
+→ `session-service`
+→ rate limiter.
+
+Search the repository for every use of:
+
+- `resolveServerClientIp`
+- `CF-Connecting-IP`
+- `X-Forwarded-For`
+- `X-Real-IP`
+- `clientIp`
+- `setTrustedClientIpForTesting`
+
+Confirm there is no alternate public path through which a caller can choose the rate-limit identity.
+
+Also inspect the testing hook carefully. It may only affect controlled tests and development as appropriate; it MUST NOT create a production bypass.
+
+---
+
+# Preserve Finding 2 remediation
+
+Do not regress the already-approved error disclosure fix.
+
+Unexpected/non-domain exceptions must continue to return only the generic public `INTERNAL_ERROR` response.
+
+Detailed exceptions may be logged server-side, but must never be exposed to the client.
+
+Safe `BareaDomainError` public messages may remain intact.
+
+---
+
+# Scope restrictions
+
+Do NOT:
+
+- restore client-supplied `clientIp` action parameters;
+- trust a renamed client parameter;
+- blindly trust forwarding headers;
+- solve the issue with regex alone;
+- remove rate limiting;
+- reintroduce anonymous nickname admission;
+- introduce client-selected tenant/organization identity;
+- weaken authentication or authorization;
+- modify BAREA-007 behavior;
+- start BAREA-007 implementation;
+- make unrelated architectural changes;
+- delete or weaken existing security tests;
+- self-merge.
+
+Preserve the approved BAREA-006 architecture including:
+
+- `TEACHER_GROUP` teacher-controlled participation;
 - authenticated individual participation;
-- `OPEN` and `RESTRICTED` admission policies;
+- `OPEN` and `RESTRICTED` admission;
 - verified provider identity / stable provider `sub` mapping;
 - personal workspace Option A isolated tenant mapping;
 - server-derived ownership and authorization;
 - existing IDOR/cross-tenant protections;
-- NAT/subnet anti-abuse controls;
-- BAREA-007 authoritative start-time/transition boundary and quarantine.
+- NAT scalability objective;
+- BAREA-007 quarantine.
 
-Do not introduce anonymous nickname admission, client-selected tenant/organization identity, or any browser-controlled authorization mechanism.
+---
 
-## Required inspection before editing
+# Verification requirements
 
-Inspect the actual commit and current branch state before making changes:
+After fixing the blocker, run:
 
-- `1f1ee3fd0768c36187f3ae1ea42afbc8ff505c37`
-- `src/app/session/actions.ts`
-- `src/service/session-service.ts`
-- all session lookup/join callers
-- rate-limiter implementation
-- request/IP extraction utilities or deployment configuration
-- relevant BAREA-006 tests
-- existing error-handling/logging utilities
-- package/test configuration
-- complete BAREA-006 diff
+```text
+npm test
+npm run typecheck
+npm run build
+npm run build:next
+git grep ": any" -- src/
+git diff --check
+git status
+git diff
+```
 
-Reproduce both findings independently before fixing them.
+Report the actual commands and actual results. Do not claim PASS without executing the command.
 
-## Testing requirements
+Confirm the remote branch contains the resulting commit.
 
-Add focused regression/adversarial tests for BOTH findings.
+---
 
-Then run:
+# REQUIRED TWO-AGENT RE-REVIEW
 
-1. targeted BAREA-006/security tests;
-2. complete test suite;
-3. `npm run typecheck`;
-4. `npm run build`;
-5. `npm run build:next`;
-6. `git grep ": any" -- src/`;
-7. `git diff --check`;
-8. final `git status` and complete diff review.
+After implementation, run exactly these two independent reviewer roles again:
 
-Record actual commands and actual results. Never claim a test count or PASS unless it was actually executed.
+## Agent 1 — Security + Architecture Red Team
 
-## Two-agent re-review — REQUIRED
+Must independently verify:
 
-After implementation, perform a fresh review using exactly these two reviewer roles:
+- forwarding-header provenance;
+- direct-request spoof resistance;
+- Cloudflare/proxy trust boundary if applicable;
+- `X-Forwarded-For` handling;
+- `X-Real-IP` handling;
+- rate-limit bucket spoof resistance;
+- test-hook production isolation;
+- Finding 2 error disclosure remediation;
+- tenant/authorization boundaries;
+- BAREA-007 quarantine.
 
-### Agent 1 — Security + Architecture Red Team
+## Agent 2 — Persistence + QA / Implementability Reviewer
 
-Independently inspect the actual remediation and determine whether:
+Must independently verify:
 
-- client-controlled IP can still influence rate limiting;
-- proxy/header handling has a trusted deployment boundary;
-- IP spoofing/rate-limit bypass remains possible;
-- unexpected internal error messages can leak to clients;
-- any alternate public action exposes the same vulnerabilities;
-- BAREA-006 authorization/tenant boundaries remain secure;
-- BAREA-007 remains quarantined.
+- actual action/service/rate-limiter integration;
+- test realism and adversarial coverage;
+- legitimate deployment behavior;
+- NAT scalability;
+- authenticated rate limiting;
+- persistence/session behavior;
+- error sanitization;
+- full test/typecheck/build results.
 
-### Agent 2 — Persistence + QA / Implementability Reviewer
+Both agents MUST provide explicit GO/NO-GO verdicts and identify any remaining blocker.
 
-Independently inspect the actual remediation and determine whether:
+If either reviewer finds a credible security blocker, report NO-GO and fix it. Do not manufacture unanimous approval.
 
-- the fix is correctly implemented across action/service/persistence boundaries;
-- tests exercise the real security boundary rather than mocks that merely prove the implementation's assumptions;
-- legitimate behavior remains intact;
-- NAT/subnet anti-abuse behavior remains functional;
-- error logging is appropriate and does not itself expose secrets;
-- typecheck/build/full suite pass;
-- the remediation is complete and implementable.
+---
 
-Both agents must provide explicit GO/NO-GO findings and identify any remaining blocker.
+# Git / merge rules
 
-Do not manufacture unanimous approval. If either reviewer identifies a credible blocker, report NO-GO and fix it before requesting final authorization.
+Remain on:
 
-## Do not cheat
+`barea-006-share-join`
 
-Do NOT:
-
-- remove or weaken rate limiting;
-- trust a renamed client parameter;
-- blindly trust arbitrary `X-Forwarded-For`/forwarded headers;
-- add a client-visible switch for trusted IP selection;
-- return raw unexpected `err.message`;
-- swallow errors without appropriate server-side logging;
-- delete or weaken adversarial tests;
-- change expected security behavior merely to make tests pass;
-- claim tests passed without executing them;
-- rely only on the previous AGY audit;
-- self-merge.
-
-## Git requirements
-
-Remain on `barea-006-share-join`.
-
-Commit the remediation and tests with a clear security-focused message.
-
-Push the resulting commit to:
+Commit the remediation with a clear security-focused commit message and push it to:
 
 `origin/barea-006-share-join`
 
-Verify the remote branch contains the new commit.
+**DO NOT MERGE.**
+**DO NOT SELF-MERGE.**
+**DO NOT START BAREA-007.**
 
-**DO NOT merge the branch.**
-**DO NOT self-merge.**
-**DO NOT start BAREA-007.**
+After the remediation and the two-agent re-review are complete, STOP and wait for **ChatGPT's independent security re-review and explicit merge authorization**.
 
 ## Final report to ChatGPT
 
-Report exactly:
+Report:
 
 ### Remediation
-- previous implementation commit
+- previous commit
 - new commit
 - exact files changed
-- Finding 1 root cause
-- Finding 1 fix
-- Finding 2 root cause
-- Finding 2 fix
+- deployment/proxy trust model used
+- why attacker-controlled forwarding headers cannot establish the effective IP
 
 ### Security verification
-- client-supplied IP influence: PASS/FAIL
-- spoofed IP rate-limit bypass: PASS/FAIL
-- trusted proxy handling: PASS/FAIL/NOT USED
+- direct header spoofing: PASS/FAIL
+- CF-Connecting-IP provenance: PASS/FAIL/NOT USED
+- X-Forwarded-For provenance: PASS/FAIL/NOT USED
+- X-Real-IP provenance: PASS/FAIL/NOT USED
+- rate-limit bucket spoofing: PASS/FAIL
 - NAT/subnet anti-abuse: PASS/FAIL
 - authenticated participant rate limiting: PASS/FAIL
-- unexpected error disclosure: PASS/FAIL
-- safe domain-error disclosure: PASS/FAIL
-- server-side error logging: PASS/FAIL
-- BAREA-006 tenant/authorization regression: PASS/FAIL
+- Finding 2 error disclosure: PASS/FAIL
+- tenant/authorization regression: PASS/FAIL
 - BAREA-007 quarantine: PASS/FAIL
 
-### Tests and verification
+### Tests
 - targeted security tests: PASS/FAIL
 - full suite: PASS/FAIL
 - typecheck: PASS/FAIL
@@ -531,7 +324,6 @@ Report exactly:
 - build:next: PASS/FAIL
 - `git grep ": any" -- src/`: PASS/FAIL
 - `git diff --check`: PASS/FAIL
-- actual commands executed
 
 ### Two-agent re-review
 - Agent 1 Security + Architecture Red Team: GO/NO-GO + findings
@@ -544,4 +336,4 @@ Report exactly:
 - push result
 - remote verification
 
-Completion of this task does NOT authorize merge. After the remediation and two-agent re-review are complete, stop and wait for **ChatGPT's independent security re-review and explicit merge authorization**.
+**Completion of this task does NOT authorize merge. Wait for ChatGPT's independent security re-review.**
