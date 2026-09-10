@@ -1,308 +1,529 @@
-# AGY — BAREA-006 Share/Join — DESIGN GATE REMEDIATION
+# AGY — BAREA-006 Share/Join — PRODUCT-ALIGNED DESIGN GATE
 
 ## STATUS
 
-**BAREA-006 DESIGN GATE IS NO-GO FOR IMPLEMENTATION.**
+**BAREA-006 IS DESIGN-ONLY. DO NOT WRITE APPLICATION CODE.**
 
-The independent review found seven targeted design issues. Do NOT write BAREA-006 application code until these are remediated and independently re-verified.
+The product model has materially changed since the previous BAREA-006 design. The old anonymous nickname-based participant design is obsolete and MUST NOT be patched incrementally.
 
-Current design:
+BAREA-005 remains completed and merged. Do not start BAREA-007 implementation.
+
+Primary design document:
 - `docs/BAREA-006-DESIGN-GATE.md`
-- Branch: `main`
-- Design commit reported: `7232218`
 
-BAREA-005 remains completed and merged. Do not start BAREA-007.
+Product source of truth to align with:
+- `docs/PRODUCT.md`
 
----
-
-# 1. MANDATORY SIX-AGENT REMEDIATION CHALLENGE
-
-Before modifying the design, use six specialized sub-agents independently:
-
-1. **Security / Red Team**
-   - challenge join flooding and rate-limit bypass;
-   - trusted proxy/IP spoofing;
-   - snapshot/organization authorization;
-   - participant token/cookie security;
-   - nickname abuse and collision attacks;
-   - session lifecycle and host/participant privilege separation.
-
-2. **SQLite / Persistence Architect**
-   - verify organization-to-snapshot integrity;
-   - join capacity and nickname collision atomicity;
-   - WAL/busy_timeout/BEGIN IMMEDIATE semantics;
-   - lazy expiration and room-code recycling;
-   - transaction boundaries and state_version;
-   - identify any concurrency assumptions that are not actually guaranteed by SQLite.
-
-3. **QA / Test Architect**
-   - turn every finding below into explicit adversarial tests;
-   - identify missing join-flood, IP-spoofing, cookie, nickname-suffix, tenant-integrity and lifecycle tests;
-   - require deterministic ClockProvider, RoomCodeGenerator and rate-limit seams;
-   - verify tests exercise production paths after implementation.
-
-4. **TypeScript / Code Quality Specialist**
-   - review branded types and runtime validation;
-   - review server-action input/output contracts;
-   - inspect nickname and generated-suffix typing;
-   - require zero unsafe `any` in implementation;
-   - challenge ambiguous domain/error semantics.
-
-5. **Frontend / Next.js Security Specialist**
-   - review participant cookie attributes;
-   - sessionStorage/cookie interaction;
-   - public `/join` boundary;
-   - QR/join URL construction;
-   - trusted proxy assumptions;
-   - ensure no BAREA-007 live functionality leaks into the design.
-
-6. **Independent Architecture/Product Reviewer**
-   - compare the complete design against BAREA-005, ADRs, roadmap and church-use requirements;
-   - challenge all seven findings and identify additional contradictions;
-   - provide an independent final recommendation.
-
-Record only actual sub-agent participation and findings. Never fabricate IDs, transcripts or conclusions.
+Before implementation, redesign BAREA-006 around the product model below, then perform the required multi-agent challenge and verification. The final stop point is another design gate awaiting the user's independent review.
 
 ---
 
-# 2. MANDATORY DESIGN CORRECTIONS
+# 1. PRODUCT MODEL — MANDATORY
 
-## Finding 1 — JOIN FLOODING / ADMISSION ABUSE
+BAREA supports two fundamentally different participation modes.
 
-The current design rate-limits room-code lookup and join endpoints, but does not sufficiently define protection against repeated joins using a known valid room code and many different nicknames.
+## A. TEACHER-CONTROLLED GROUP QUIZ
 
-Add an explicit admission-control design covering:
+A Sunday School teacher/host may create groups and assign pupils to groups.
 
-- per-IP join-attempt limit;
-- per-session join-attempt limit;
-- successful-join accounting where appropriate;
-- interaction with maxParticipants;
-- exact response behavior when throttled;
-- fail-closed behavior;
-- bounded memory/state for the limiter;
-- deterministic test seam.
+Children/pupils:
+- do NOT need BAREA accounts;
+- do NOT need Google/social login;
+- may have no phone, laptop, or other device;
+- do NOT directly join through the public join page;
+- do NOT authenticate as individual participants.
 
-Do not introduce CAPTCHA as a normal church-user requirement. If an escalation mechanism is specified, it must preserve low-friction normal joining.
+The teacher/host:
+- creates the quiz/session;
+- creates named groups/teams;
+- assigns pupils to groups;
+- displays questions on a screen/projector;
+- records/marks each group's answer through the authorized host interface;
+- is the authoritative operator for group participation.
 
-Add explicit adversarial coverage for valid-room-code join flooding.
+The design must support teacher-controlled group identity and membership without inventing child accounts.
 
----
+## B. INDIVIDUAL AUTHENTICATED QUIZ
 
-# 3. FINDING 2 — TRUSTED PROXY / IP EXTRACTION
+An individual may participate using their own BAREA account.
 
-The current design says to use `CF-Connecting-IP` / `X-Forwarded-For` with fallback, but does not define which proxy is trusted.
+Authentication:
+- reuse the existing BAREA OAuth/social-login architecture already established by the project;
+- do not invent a second incompatible authentication system;
+- Google is an existing provider; design the participant identity boundary so additional providers such as Facebook or X/Twitter can be supported later without changing the domain identity model;
+- canonical identity MUST use the provider's stable subject/identifier, not a display name;
+- verified email/phone claims must come from the trusted authentication/verification boundary, never from arbitrary client input.
 
-Specify:
+The participant may enter through:
+- QR code;
+- shareable link;
+- room/session access code;
+- a future quiz invite code.
 
-- authoritative deployment/proxy boundary;
-- which header is trusted;
-- that arbitrary client-supplied forwarding headers cannot override the trusted identity;
-- behavior when the trusted header is absent;
-- fallback behavior;
-- normalization/validation of the resulting IP identifier;
-- tests proving spoofed `X-Forwarded-For` and `CF-Connecting-IP` cannot bypass rate limiting.
-
-Do not treat arbitrary HTTP forwarding headers as trustworthy security identity by default.
-
----
-
-# 4. FINDING 3 — SNAPSHOT / ORGANIZATION TENANT INTEGRITY
-
-Make the following invariant explicit and mandatory:
-
-> A session can reference only a published snapshot belonging to the same organization as the authorized host context.
-
-Session creation must resolve the snapshot through the authorized organization and verify its organization identity before insertion.
-
-Where practical, strengthen the SQLite schema with an integrity relationship preventing an inconsistent session organization/snapshot organization pair.
-
-Define exact behavior for cross-tenant attempts: fail closed without revealing whether the other tenant's snapshot exists.
-
-Add/retain adversarial test coverage for this invariant, including direct persistence-level integrity where feasible.
+Entry mechanism is NOT authorization. All entry paths must converge on the same admission-policy checks.
 
 ---
 
-# 5. FINDING 4 — NICKNAME / GENERATED SUFFIX CONTRADICTION
+# 2. ADMISSION POLICY — SEPARATE FROM PARTICIPATION MODE
 
-The current user nickname regex does not allow parentheses, while collision suffixing generates names such as `Sarah (2)`.
+Do NOT conflate "who participates" with "how they participate".
 
-Resolve this explicitly.
+The design MUST define an explicit admission policy, at minimum:
 
-Define separately:
+1. `TEACHER_ASSIGNED`
+   - used for teacher-controlled group mode;
+   - teacher determines group membership;
+   - no child authentication required.
 
-- raw user-input validation;
-- canonical normalized nickname;
-- server-generated display-name suffixing;
-- normalized uniqueness key;
-- final display-name length limit;
-- behavior when a base name is near the 24-character maximum;
-- maximum suffix `(99)` behavior;
-- collision exhaustion behavior;
-- transaction/unique-constraint retry behavior.
+2. `OPEN`
+   - authenticated individual quiz;
+   - anyone who reaches the quiz through a valid share/join mechanism may attempt to participate, subject to session state, capacity and abuse controls;
+   - authentication is still required for individual participation.
 
-Do not silently allow arbitrary parentheses in user input merely to solve this contradiction.
+3. `INVITED_ALLOWLIST`
+   - authenticated individual quiz;
+   - creator specifies allowed participants by email and/or phone number;
+   - participant must authenticate through the trusted BAREA identity boundary;
+   - allowlist matching MUST use verified identity attributes only;
+   - arbitrary client-entered email/phone MUST NEVER establish authorization.
 
-Ensure generated names remain valid by the domain's own representation rules.
-
-Add adversarial tests for:
-- 24-character base nickname;
-- `Sarah`, `Sarah (2)`, etc.;
-- suffix collision races;
-- suffix exhaustion;
-- Unicode/NFKC collisions.
+The design may use different names for these values, but the separation and semantics are mandatory.
 
 ---
 
-# 6. FINDING 5 — PARTICIPANT COOKIE SECURITY
+# 3. CREATOR / TENANT MODEL
 
-The participant authentication cookie is a bearer credential.
+The current implementation is organization-centric, but the product requirement is broader: a church/organization can create quizzes, and an individual creator may also create and publish a quiz.
 
-The design must explicitly require:
+The design MUST resolve this cleanly without weakening tenant isolation.
 
-- `HttpOnly`;
-- `Secure` in production;
-- `SameSite=Lax` (or a stronger justified policy);
-- `Path=/join`;
-- appropriate expiration/max-age;
-- no Domain attribute unless specifically justified;
-- explicit local-development/test behavior without weakening production requirements.
-
-The cookie must never be intentionally script-readable.
-
-Keep sessionStorage if desired for tab isolation, but clearly define precedence and reconciliation between sessionStorage and the secure cookie.
-
-Add an adversarial/security test that verifies the emitted cookie attributes.
-
----
-
-# 7. FINDING 6 — BAREA-006 LOBBY BOUNDARY
-
-The design may model future statuses, but BAREA-006 must not become the live-state authority.
+Prefer a unified workspace/tenant model in which a personal workspace can behave as a tenant, rather than introducing authorization exceptions for individuals.
 
 Explicitly define:
+- creator identity;
+- organization/workspace ownership;
+- personal creator ownership;
+- teacher authorization;
+- cross-tenant isolation;
+- who may create/publish sessions;
+- who may manage groups and participants.
 
-- BAREA-006 creates sessions in `LOBBY` only;
-- BAREA-006 join/resume/lock/kick operations do not advance the live quiz state;
-- `LOBBY -> ACTIVE` is exclusively owned by BAREA-007;
-- BAREA-006 does not implement authoritative timers, question progression, answer submission, scoring, WebSockets, SSE or Socket.IO;
-- if resume accepts `ACTIVE` for forward compatibility, specify that BAREA-006 merely authenticates/preserves identity and does not control the ACTIVE state.
-
-Add a boundary test/specification preventing accidental live-state implementation.
+Do not silently assume every quiz belongs to a church organization.
 
 ---
 
-# 8. FINDING 7 — GLOBAL RATE-LIMITER BLAST RADIUS
+# 4. SESSION / QUIZ ENTRY MODEL
 
-The current global sentinel (`250 consecutive invalid attempts`) could itself become a denial-of-service mechanism against legitimate users.
+The session design should continue to support:
+- immutable published quiz snapshot from BAREA-005;
+- secure share URL;
+- QR code;
+- short human-entered access code;
+- future quiz invite code;
+- safe public session metadata;
+- capacity and lifecycle controls.
 
-Redesign or precisely constrain it.
+### Future invite-code requirement
+
+Design an extension point for a **quiz invite code**, but do not implement the invite-code feature in BAREA-006 unless it is already within the approved milestone scope.
+
+The future invite code MUST be treated as an entry credential/discovery mechanism, not as a replacement for authentication or authorization.
+
+When eventually implemented:
+- invite code resolves to the intended quiz/session/invitation context;
+- the same admission policy still applies;
+- restricted quizzes cannot be bypassed merely by knowing the code;
+- code entropy, brute-force resistance, expiration/revocation and replay semantics must eventually be defined;
+- do not expose answers or private participant information through code lookup.
+
+Document the future extension point and keep implementation out of this milestone.
+
+---
+
+# 5. INDIVIDUAL IDENTITY MODEL
+
+Replace the old anonymous nickname-as-identity model.
+
+For authenticated individual participation:
+- participant identity is the authenticated BAREA user identity;
+- provider identity is represented by a stable provider subject;
+- display name is presentation data, NOT an authorization key;
+- duplicate display names are allowed;
+- display-name suffixing MUST NOT be required for security;
+- email and phone are sensitive identity attributes and MUST NOT appear in public participant rosters;
+- participants must not be able to impersonate another account by entering their display name.
+
+Define session participation uniqueness so the same authenticated identity cannot create multiple active participant records for the same session merely by changing display name, provider presentation, or browser storage.
+
+Define secure rejoin/resume semantics for authenticated participants.
+
+If a session-bound credential is retained for transport/resumption, it must supplement—not replace—the authenticated identity boundary.
+
+---
+
+# 6. RESTRICTED EMAIL / PHONE ADMISSION
+
+The design MUST support creator-managed allowlists for individual quizzes.
+
+Email:
+- normalize according to a clearly documented canonical comparison policy;
+- require a trusted verified email identity claim before authorization;
+- do not authorize from an arbitrary form field;
+- define behavior for case differences and provider email changes;
+- do not expose allowlist entries to other participants.
+
+Phone:
+- normalize to a documented canonical/E.164 representation;
+- require trusted verification before authorization;
+- do not authorize from arbitrary client-entered phone numbers;
+- define provider/verification boundary and behavior when phone is unverified or unavailable;
+- do not expose phone numbers to participants.
+
+If the existing BAREA OAuth layer does not yet provide verified phone identity, the design MUST explicitly identify the verification mechanism required before phone-based restricted admission can be considered secure. Do not pretend an OAuth profile phone field is automatically verified.
+
+Allowlist checks must be server-authoritative and fail closed.
+
+Add adversarial cases for:
+- forged email;
+- forged phone;
+- unverified email;
+- unverified phone;
+- Unicode/canonicalization edge cases;
+- provider subject mismatch;
+- account/provider-link changes;
+- allowlist bypass through room code, QR, URL or future invite code.
+
+---
+
+# 7. TEACHER GROUP MODEL
+
+Design a first-class group/team model for teacher-controlled sessions.
+
+At minimum define:
+- group/team ID;
+- session ownership;
+- group name/display name;
+- membership/assigned pupil representation;
+- teacher authorization boundary;
+- group ordering if required by the UI;
+- lifecycle behavior when groups/members are changed;
+- privacy boundaries.
+
+Do not create persistent child BAREA accounts merely to model pupils.
+
+Define how a teacher can record/mark a group's answer while preventing unauthorized participants from changing group answers.
+
+Do not implement live scoring or question progression in BAREA-006. The design may identify the future answer-recording boundary for BAREA-007 or later milestones.
+
+Explicitly distinguish:
+- group membership/roster data;
+- host-entered group answer data;
+- future live answer/scoring state.
+
+---
+
+# 8. SCHEDULING / AUTOMATIC START
+
+A creator may optionally specify a scheduled start time for a quiz session.
+
+BAREA-006 MUST define storage, validation, timezone/UTC semantics, display semantics and authorization for `scheduledStartAt` (or equivalent).
+
+However, preserve the milestone boundary:
+- BAREA-006 creates/configures the session and schedule;
+- BAREA-007 owns the authoritative `LOBBY -> ACTIVE` live-state transition and gameplay scheduler;
+- BAREA-006 must not implement live timers, question progression, answer submission, scoring, WebSockets, SSE or Socket.IO;
+- if the design needs a scheduler responsibility, specify it as a future BAREA-007 responsibility rather than implementing it here.
+
+Define boundary behavior for:
+- start time in the past;
+- session already closed;
+- locked session;
+- timezone/DST conversion;
+- duplicate scheduler execution;
+- host manually starting before scheduled time, if permitted by product policy.
+
+---
+
+# 9. CHURCH WI-FI / NAT — CRITICAL CORRECTION
+
+Do NOT impose a hard successful-participant quota per public IP.
+
+Churches commonly place many legitimate participants behind one NAT/public IP. IP address is an anti-abuse signal, not a participant identity.
+
+Therefore:
+- remove any design requirement such as "maximum 5 successful joins per session per IP";
+- IP-based controls may limit abusive request rates/failed attempts;
+- legitimate authenticated identities must not be rejected merely because many people share one public IP;
+- use identity/session/room/request dimensions where appropriate;
+- retain bounded resource protection against automated flooding.
+
+Add an adversarial test demonstrating that many legitimate authenticated participants behind one public IP can join up to the configured session capacity.
+
+---
+
+# 10. RATE LIMITING / ABUSE CONTROL
+
+Redesign admission protection around layered controls rather than IP-as-identity.
+
+Consider separately:
+- room-code lookup attempts;
+- join attempts;
+- authenticated identity attempts;
+- session/resource capacity;
+- invitation/allowlist probing;
+- future invite-code brute force;
+- IP/subnet abuse signals.
 
 Specify:
+- exact scope;
+- threshold/window;
+- failure behavior;
+- bounded memory/state;
+- concurrency/atomicity;
+- legitimate-user recovery;
+- no global kill switch that lets one attacker disable every church session.
 
-- exact scope of the global bucket;
-- whether it affects lookup only or join as well;
-- threshold semantics;
-- duration/cooldown;
-- recovery behavior;
-- whether valid requests remain possible;
-- atomicity/concurrency;
-- bounded memory;
-- observability without leaking sensitive information.
+Do not make CAPTCHA a normal church-user requirement.
 
-Prefer rate limiting with bounded blast radius. A malicious actor must not trivially be able to disable joining for every church session by generating invalid requests.
-
-Add adversarial tests for attacker-triggered limiter exhaustion and legitimate-user recovery.
+Use the existing trusted-proxy design only after clearly defining the authoritative proxy boundary.
 
 ---
 
-# 9. REQUIRED SECOND-PASS CHALLENGE
+# 11. TRUSTED AUTHENTICATION / PROVIDER BOUNDARY
 
-After all design corrections are made, use all six agents again.
+The design must explicitly separate:
 
-Each must specifically challenge the seven findings above and any changes caused by them.
+`browser claim -> trusted BAREA authentication session -> canonical BAREA user -> provider subject / verified identity attributes -> admission decision`
 
-Required second-pass roles:
+Never:
+- trust a posted `userId`;
+- trust a posted provider subject;
+- trust a posted email/phone;
+- use display name as identity;
+- allow a room/invite code to bypass authenticated authorization.
 
-- Security Red Team
-- SQLite/Persistence Architect
-- QA/Test Architect
-- TypeScript/Code Quality Specialist
-- Frontend/Next.js Security Specialist
+The design should reuse the existing BAREA OAuth login architecture rather than duplicate it.
+
+Additional social providers may be added behind a provider abstraction later.
+
+---
+
+# 12. ROOM CODE / QR / FUTURE INVITE CODE
+
+Keep the useful properties of the previous design:
+- cryptographically generated room/session code;
+- unambiguous alphabet where appropriate;
+- collision handling;
+- canonical join URL;
+- QR contains only safe discovery information;
+- base URL is not derived from an untrusted Host header;
+- lookup errors do not disclose private quiz/session data.
+
+But distinguish clearly:
+- room/session access code;
+- future quiz invite code;
+- authenticated BAREA identity;
+- authorization/admission policy.
+
+Do not collapse them into one credential concept.
+
+---
+
+# 13. PRIVACY
+
+Define safe public versus authenticated/host-only projections.
+
+Public join/lookup MUST NOT expose:
+- participant email;
+- participant phone;
+- OAuth provider subject;
+- internal user IDs unless explicitly safe;
+- allowlist entries;
+- private organization data;
+- question answer keys.
+
+Host-only views may expose only the participant/group information needed to operate the session.
+
+Individual participants must not be able to enumerate invitees or restricted users.
+
+---
+
+# 14. BAREA-006 LIVE-STATE BOUNDARY
+
+Strictly preserve the milestone boundary:
+
+BAREA-006 may design and persist session setup, entry, admission, identity anchoring, groups and scheduling metadata.
+
+BAREA-006 MUST NOT implement:
+- authoritative live quiz state machine;
+- `LOBBY -> ACTIVE` transition;
+- question progression;
+- authoritative timers/countdowns;
+- participant answer submission;
+- scoring;
+- standings/leaderboards/podium;
+- WebSockets;
+- SSE;
+- Socket.IO;
+- live projector gameplay state.
+
+BAREA-007 owns the live gameplay state machine and automatic-start execution boundary.
+
+---
+
+# 15. REQUIRED SIX-AGENT DESIGN CHALLENGE
+
+Before finalizing the redesigned design document, use six specialized sub-agents independently:
+
+1. **Security / Red Team**
+   - OAuth/provider spoofing;
+   - verified email/phone bypass;
+   - allowlist bypass;
+   - room-code/future invite-code abuse;
+   - cross-tenant access;
+   - group/teacher privilege escalation;
+   - identity duplication/replay;
+   - church NAT behavior;
+   - privacy leaks;
+   - rate-limit abuse.
+
+2. **Identity / Authentication Architect**
+   - reuse of existing BAREA OAuth login;
+   - provider subject identity;
+   - account/provider linking;
+   - verified email semantics;
+   - phone verification boundary;
+   - rejoin/resume;
+   - logout/provider changes;
+   - future multi-provider support.
+
+3. **SQLite / Persistence Architect**
+   - tenant/workspace ownership;
+   - session-to-snapshot integrity;
+   - group/member persistence;
+   - allowlist persistence;
+   - authenticated participation uniqueness;
+   - schedule fields and indexes;
+   - transaction/concurrency semantics;
+   - future invite-code extension without schema traps.
+
+4. **QA / Test Architect**
+   - convert every requirement into adversarial tests;
+   - test production authorization paths;
+   - test same-IP legitimate participants;
+   - test allowlist normalization;
+   - test provider spoofing;
+   - test group authorization;
+   - test scheduling boundaries;
+   - test future invite-code non-bypass assumptions.
+
+5. **TypeScript / Next.js Security Specialist**
+   - server/client identity boundaries;
+   - action input/output contracts;
+   - safe public projections;
+   - cookie/session handling;
+   - route boundaries;
+   - no unsafe `any`;
+   - no accidental live-state implementation.
+
+6. **Independent Architecture/Product Reviewer**
+   - compare the redesigned model with `docs/PRODUCT.md`, BAREA-004/005, roadmap and milestone boundaries;
+   - challenge whether group and authenticated individual modes can coexist cleanly;
+   - challenge organization versus personal creator ownership;
+   - identify contradictions or missing product decisions.
+
+Record actual sub-agent participation and findings only. Never fabricate IDs, transcripts or conclusions.
+
+---
+
+# 16. REQUIRED DESIGN DOCUMENT CONTENT
+
+`docs/BAREA-006-DESIGN-GATE.md` must explicitly contain:
+
+- [ ] two participation modes: teacher-controlled group and authenticated individual;
+- [ ] separate admission policies;
+- [ ] existing BAREA OAuth reuse;
+- [ ] stable provider-subject identity;
+- [ ] verified email/phone allowlist semantics;
+- [ ] personal creator/workspace support without tenant-isolation exceptions;
+- [ ] teacher group/team model without child accounts;
+- [ ] teacher-only group management/recording boundary;
+- [ ] QR/link/room-code entry;
+- [ ] future quiz invite-code extension point, explicitly not implemented now;
+- [ ] invite code cannot bypass admission/authentication;
+- [ ] authenticated participant uniqueness and resume semantics;
+- [ ] duplicate display names allowed without security suffixing;
+- [ ] church-NAT-safe rate limiting;
+- [ ] trusted proxy boundary;
+- [ ] bounded anti-abuse controls;
+- [ ] optional scheduled start metadata;
+- [ ] BAREA-007 ownership of automatic live start;
+- [ ] privacy-safe projections;
+- [ ] tenant/workspace integrity;
+- [ ] immutable BAREA-005 snapshot reference;
+- [ ] adversarial test matrix;
+- [ ] no BAREA-006 application code;
+- [ ] no BAREA-007 implementation.
+
+---
+
+# 17. REQUIRED SECOND-PASS VERIFICATION
+
+After redesign/remediation, run all six agents again:
+
+- Security / Red Team
+- Identity / Authentication Architect
+- SQLite / Persistence Architect
+- QA / Test Architect
+- TypeScript / Next.js Security Specialist
 - Independent Architecture/Product Reviewer
 
-No implementation is authorized merely because the agents say GO. The final design must be internally consistent and demonstrably implementable.
+Each must explicitly challenge the final design against all requirements above and any new findings from the first pass.
 
-Record actual findings only.
-
----
-
-# 10. REQUIRED DESIGN-GATE CHECKLIST
-
-Before stopping, verify that `docs/BAREA-006-DESIGN-GATE.md` explicitly contains:
-
-- [ ] join admission rate limiting;
-- [ ] trusted proxy/IP identity contract;
-- [ ] session/snapshot organization integrity;
-- [ ] nickname vs generated suffix semantics;
-- [ ] final nickname length/suffix rules;
-- [ ] secure participant cookie attributes;
-- [ ] sessionStorage/cookie reconciliation;
-- [ ] strict BAREA-006 lobby boundary;
-- [ ] bounded global limiter/blast radius;
-- [ ] deterministic test seams;
-- [ ] adversarial tests for all seven findings;
-- [ ] 6-agent post-remediation verification;
-- [ ] zero BAREA-007 implementation;
-- [ ] zero application code written.
-
-Also check for any additional contradictions discovered by the second-pass agents.
+No implementation is authorized merely because the agents say GO.
 
 ---
 
-# 11. DOCUMENTATION
+# 18. DOCUMENTATION UPDATE
 
 Update:
-
 - `docs/BAREA-006-DESIGN-GATE.md`
 - `AGY-REPORT.md`
+- `docs/PRODUCT.md` if product-level clarification is needed
 
 Do not modify application source files.
 
 The report must include:
-
-1. initial seven independent findings;
-2. pre-remediation six-agent findings;
+1. the obsolete assumptions being replaced;
+2. first-pass six-agent findings;
 3. exact design changes;
-4. post-remediation six-agent findings;
-5. exact remaining non-blocking observations, if any;
+4. second-pass six-agent findings;
+5. remaining non-blocking observations;
 6. final design recommendation;
 7. confirmation that ZERO BAREA-006 application code was written.
 
-Never claim that implementation has begun.
-
 ---
 
-# 12. STOP CONDITION
+# 19. STOP CONDITION
 
-If all seven findings are fully addressed and the second six-agent review finds no blocker:
+If blockers remain:
+
+**DO NOT IMPLEMENT.** Fix only the design and repeat the six-agent verification.
+
+If the redesigned specification is internally consistent and the second six-agent verification finds no blocker:
 
 **STOP — DO NOT IMPLEMENT.**
 
 Return:
-
-- design-gate commit SHA;
-- six-agent pre-remediation summary;
-- seven remediation results;
-- six-agent post-remediation summary;
+- final design-gate commit SHA;
+- first-pass six-agent summary;
+- remediation summary;
+- second-pass six-agent summary;
 - final design status;
 - confirmation of zero application code.
 
-The next step will be my independent review.
-
-If any blocker remains:
-
-**DO NOT IMPLEMENT.** Fix only the design and repeat the six-agent verification.
+The next step is the user's independent review and GO/NO-GO.
 
 ## FINAL SEQUENCE
 
-`INDEPENDENT NO-GO → 6-AGENT CHALLENGE → DESIGN REMEDIATION → 6-AGENT VERIFICATION → USER INDEPENDENT REVIEW → GO/NO-GO → IMPLEMENTATION`
+`PRODUCT CLARIFICATION → DESIGN REDESIGN → 6-AGENT CHALLENGE → DESIGN REMEDIATION → 6-AGENT VERIFICATION → USER INDEPENDENT REVIEW → GO/NO-GO → IMPLEMENTATION`
