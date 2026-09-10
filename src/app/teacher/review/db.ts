@@ -6,12 +6,18 @@ import { QuizService } from '../../../service/quiz-service';
 import { AIGenerationService } from '../../../ai/service/ai-generation-service';
 import { FakeAIProvider } from '../../../ai/provider/fake-ai-provider';
 import { GeminiAIProvider } from '../../../ai/provider/gemini-ai-provider';
+import { SqliteSessionRepository } from '../../../persistence/sqlite-session-repository';
+import { SessionService } from '../../../service/session-service';
+import { InMemoryRateLimiter } from '../../../service/rate-limiter';
 
 let globalRepo: SqliteQuestionRepository | null = null;
 let globalBankService: QuestionBankService | null = null;
 let globalQuizRepo: SqliteQuizRepository | null = null;
 let globalQuizService: QuizService | null = null;
 let globalAIService: AIGenerationService | null = null;
+let globalSessionRepo: SqliteSessionRepository | null = null;
+let globalSessionService: SessionService | null = null;
+let globalRateLimiter: InMemoryRateLimiter | null = null;
 
 export function getQuestionBankService(): QuestionBankService {
   if (!globalBankService) {
@@ -57,6 +63,31 @@ export function getAIGenerationService(): AIGenerationService {
 export function setAIGenerationService(service: AIGenerationService | null): void {
   globalAIService = service;
 }
+
+export function getRateLimiter(): InMemoryRateLimiter {
+  if (!globalRateLimiter) {
+    globalRateLimiter = new InMemoryRateLimiter();
+  }
+  return globalRateLimiter;
+}
+
+export function setRateLimiter(limiter: InMemoryRateLimiter | null): void {
+  globalRateLimiter = limiter;
+}
+
+export function getSessionService(): SessionService {
+  if (!globalSessionService) {
+    const dbPath = process.env.BAREA_DB_PATH || path.join(process.cwd(), 'barea.db');
+    globalSessionRepo = new SqliteSessionRepository(dbPath);
+    globalSessionService = new SessionService(globalSessionRepo, getRateLimiter());
+  }
+  return globalSessionService;
+}
+
+export function setSessionService(service: SessionService | null): void {
+  globalSessionService = service;
+}
+
 
 export interface TeacherContext {
   userId: string;
@@ -144,4 +175,49 @@ export function setAuthorizedTeacherContext(context: TeacherContext | null): voi
     throw new Error('Forbidden: test authorization overrides cannot be executed in production or unauthorized environments.');
   }
   mockTeacherContext = context;
+}
+
+
+export interface AuthenticatedUserContext {
+  userId: string;
+  providerType: string;
+  providerSub: string;
+  email: string | null;
+  emailVerified: boolean;
+  phone: string | null;
+  phoneVerified: boolean;
+  displayName: string;
+}
+
+let mockUserContext: AuthenticatedUserContext | null = null;
+
+export async function getAuthenticatedUserContext(): Promise<AuthenticatedUserContext> {
+  if (mockUserContext !== null) {
+    if (!isTestEnvironment() && !isDevelopmentEnvironment()) {
+      throw new Error('Forbidden: test authorization overrides are disabled in non-test/production environments.');
+    }
+    return mockUserContext;
+  }
+
+  if (!isDevelopmentEnvironment()) {
+    throw new Error('Unauthorized: participant authentication is required.');
+  }
+
+  return {
+    userId: process.env.BAREA_DEV_USER_ID || 'user-dev-001',
+    providerType: 'GOOGLE',
+    providerSub: 'google-sub-dev-001',
+    email: 'dev.participant@church.org',
+    emailVerified: true,
+    phone: '+12125550199',
+    phoneVerified: true,
+    displayName: 'Dev Participant'
+  };
+}
+
+export function setAuthenticatedUserContext(context: AuthenticatedUserContext | null): void {
+  if (process.env.NODE_ENV === 'production' || (!isTestEnvironment() && !isDevelopmentEnvironment())) {
+    throw new Error('Forbidden: test authorization overrides cannot be executed in production.');
+  }
+  mockUserContext = context;
 }
