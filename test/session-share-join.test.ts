@@ -47,6 +47,7 @@ import {
   setAuthorizedTeacherContext,
   setAuthenticatedUserContext,
   setTrustedClientIpForTesting,
+  setMockRequestHeadersForTesting,
   resolveServerClientIp,
   setSessionService,
   setRateLimiter,
@@ -784,7 +785,84 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
       assert.ok(joinRes.data?.token);
     }
 
-    // Reset test client IP hook to clean state
+    // Reset test client IP hook
+    setTrustedClientIpForTesting(null);
+
+    // 5. PROVENANCE & DIRECT ATTACKER HEADER SPOOFING:
+    // Without BAREA_TRUSTED_PROXY configured, an attacker sending forwarding headers cannot select IP
+    delete process.env.BAREA_TRUSTED_PROXY;
+
+    // Attacker sends arbitrary forwarding headers directly to application
+    setMockRequestHeadersForTesting({
+      'cf-connecting-ip': '203.0.113.100',
+      'x-forwarded-for': '203.0.113.99, 10.0.0.1',
+      'x-real-ip': '203.0.113.101'
+    });
+
+    const directResolvedIp = await resolveServerClientIp();
+    // Provenance failure: Must fail closed to server fallback '127.0.0.1', completely ignoring attacker headers
+    assert.equal(directResolvedIp, '127.0.0.1');
+
+    // 6. RATE-LIMIT BUCKET SPOOF RESISTANCE:
+    // Attacker rotating headers while unconfigured cannot escape rate-limit bucket
+    rateLimiter.reset();
+    for (let i = 0; i < 15; i++) {
+      setMockRequestHeadersForTesting({
+        'cf-connecting-ip': `198.51.100.${i + 1}`,
+        'x-forwarded-for': `198.51.100.${i + 1}`,
+        'x-real-ip': `198.51.100.${i + 1}`
+      });
+      await lookupRoomAction('222222');
+    }
+    // Attempting to lookup room with yet another spoofed header still gets throttled because effective IP is 127.0.0.1
+    setMockRequestHeadersForTesting({
+      'cf-connecting-ip': '198.51.100.99',
+      'x-forwarded-for': '198.51.100.99',
+      'x-real-ip': '198.51.100.99'
+    });
+    const spoofEvadeAttempt = await lookupRoomAction(session.roomCode);
+    assert.equal(spoofEvadeAttempt.success, false);
+    if (!spoofEvadeAttempt.success) {
+      assert.equal(spoofEvadeAttempt.error.code, 'RATE_LIMIT_EXCEEDED');
+    }
+
+    // 7. TRUSTED PROXY PATH (Cloudflare deployment):
+    process.env.BAREA_TRUSTED_PROXY = 'cloudflare';
+    rateLimiter.reset();
+
+    // Legitimate Cloudflare proxy request with verified CF-Connecting-IP
+    setMockRequestHeadersForTesting({
+      'cf-connecting-ip': '192.0.2.55'
+    });
+    const cfResolved = await resolveServerClientIp();
+    assert.equal(cfResolved, '192.0.2.55');
+
+    // Malformed Cloudflare header fails closed to 127.0.0.1
+    setMockRequestHeadersForTesting({
+      'cf-connecting-ip': 'invalid-ip-string; drop table'
+    });
+    const cfMalformed = await resolveServerClientIp();
+    assert.equal(cfMalformed, '127.0.0.1');
+
+    // 8. TRUSTED PROXY PATH (Reverse Proxy deployment):
+    process.env.BAREA_TRUSTED_PROXY = 'reverse-proxy';
+    setMockRequestHeadersForTesting({
+      'x-forwarded-for': '198.51.100.42, 10.0.0.1',
+      'x-real-ip': '198.51.100.42'
+    });
+    const proxyResolved = await resolveServerClientIp();
+    assert.equal(proxyResolved, '198.51.100.42');
+
+    // Malformed X-Forwarded-For falls back safely
+    setMockRequestHeadersForTesting({
+      'x-forwarded-for': 'attacker-payload'
+    });
+    const proxyMalformed = await resolveServerClientIp();
+    assert.equal(proxyMalformed, '127.0.0.1');
+
+    // Clean up test environment
+    delete process.env.BAREA_TRUSTED_PROXY;
+    setMockRequestHeadersForTesting(null);
     setTrustedClientIpForTesting(null);
   });
 

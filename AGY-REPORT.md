@@ -722,3 +722,59 @@ npm notice run tsc (0 errors)
 ### D. Final Status
 - **Branch**: `barea-006-share-join`
 - **Merge Status**: Strictly paused. **NO self-merge is performed**. Awaiting ChatGPT's independent security re-review and explicit merge authorization.
+
+---
+
+## 9. Milestone BAREA-006: IP Header Provenance & Deployment Boundary Remediation
+
+### A. Blocker & Root Cause
+Following `AGY_PROMPT.md` (commit `2cc239b`), the final remaining blocker was addressed:
+- **Blocker**: Syntax validation of forwarding headers (`CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`) is not IP provenance. An attacker issuing direct HTTP requests to the application can arbitrarily forge `CF-Connecting-IP` or `X-Forwarded-For`. If the application blindly reads these headers without knowing whether it is deployed behind an authentic reverse proxy, attackers can rotate spoofed headers across requests to evade or switch rate-limiting buckets.
+- **Root Cause & Fix**:
+  - In [src/app/teacher/review/db.ts](file:///C:/Users/Mr.Babu%20Rao/BAREA/src/app/teacher/review/db.ts), `resolveServerClientIp()` now requires an explicit deployment contract via `process.env.BAREA_TRUSTED_PROXY`.
+  - If `BAREA_TRUSTED_PROXY` is unset, empty, or `'none'` (default safe direct deployment): ALL incoming forwarding headers (`CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`) are discarded. The client IP strictly resolves to server fallback `'127.0.0.1'`. An attacker rotating headers is collapsed into the same bucket and blocked after 15 failed probes.
+  - If `BAREA_TRUSTED_PROXY === 'cloudflare'`: Only `CF-Connecting-IP` is evaluated (validated with `parseValidIp`).
+  - If `BAREA_TRUSTED_PROXY === 'reverse-proxy'`: Only `X-Forwarded-For` / `X-Real-IP` are evaluated (validated with `parseValidIp`).
+  - Malformed or injection payloads (e.g. `'invalid-ip; drop table'`) fail regex parsing and fail closed to `'127.0.0.1'`.
+  - Test harness helper `setMockRequestHeadersForTesting(headersMap)` and `setTrustedClientIpForTesting(ip)` are protected by fail-closed production guards (`process.env.NODE_ENV === 'production'`).
+  - Finding 2 unexpected error disclosure sanitization and server-side logging remain intact.
+
+### B. Two-Agent Independent Final Provenance Re-Review
+
+| Subagent Role | Conversation ID | Scope & Invariants Inspected | Verdict |
+| :--- | :--- | :--- | :--- |
+| **Agent 1: Security + Architecture Red Team** | `2bbe81ca-3356-4101-9444-f7632510206e` | Verified direct header spoof resistance when unconfigured, rate-limit bucket hopping prevention, explicit `BAREA_TRUSTED_PROXY` contract gating, test hook isolation in production, Finding 2 generic 500 error disclosure sanitization, Option A tenant triggers, and strict BAREA-007 boundary quarantine. | **GO** |
+| **Agent 2: Persistence + QA / Implementability Reviewer** | `c11e7471-3942-40f3-8e22-c40bc6c3cfca` | Verified adversarial tests in `test/session-share-join.test.ts` (direct spoofing, bucket hopping resistance, Cloudflare path, reverse-proxy path, malformed header parsing, church NAT Wi-Fi 50-participant concurrency), lazy session expiration checks, 134 passing tests, clean typecheck, Turbopack production build, and 0 `: any` occurrences. | **GO** |
+
+### C. Verification Command Evidence
+```text
+> npm test
+✔ test/session-share-join.test.ts (10 subtests)
+ℹ tests 134
+ℹ suites 0
+ℹ pass 134
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 643.746
+
+> npm run typecheck
+npm notice run tsc --noEmit (0 errors)
+
+> git grep ": any" -- src/
+(0 occurrences)
+
+> npm run build
+npm notice run tsc (0 errors)
+
+> npm run build:next
+✓ Compiled successfully in 1321ms (Next.js 16.3.4 App Router Turbopack, 0 errors)
+
+> git diff --check
+(0 whitespace errors)
+```
+
+### D. Final Status
+- **Branch**: `barea-006-share-join`
+- **Merge Status**: Strictly paused. **NO self-merge is performed**. Awaiting ChatGPT's independent security re-review and explicit merge authorization.

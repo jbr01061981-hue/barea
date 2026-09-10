@@ -223,6 +223,7 @@ export function setAuthenticatedUserContext(context: AuthenticatedUserContext | 
 }
 
 let mockClientIp: string | null = null;
+let mockRequestHeadersForTesting: Record<string, string> | null = null;
 
 export function setTrustedClientIpForTesting(ip: string | null): void {
   if (process.env.NODE_ENV === 'production' || (!isTestEnvironment() && !isDevelopmentEnvironment())) {
@@ -231,14 +232,25 @@ export function setTrustedClientIpForTesting(ip: string | null): void {
   mockClientIp = ip;
 }
 
+export function setMockRequestHeadersForTesting(headersMap: Record<string, string> | null): void {
+  if (process.env.NODE_ENV === 'production' || (!isTestEnvironment() && !isDevelopmentEnvironment())) {
+    throw new Error('Forbidden: request header test overrides cannot be executed in production.');
+  }
+  mockRequestHeadersForTesting = headersMap;
+}
+
 /**
  * Extracts and validates IPv4 or IPv6 string. Returns null if invalid format.
  */
 function parseValidIp(candidate: string): string | null {
+  if (!candidate || typeof candidate !== 'string') return null;
   const trimmed = candidate.trim();
-  // IPv4 simple regex: 4 octets 0-255
+  // Reject internal spaces or multiple tokens
+  if (/\s/.test(trimmed)) return null;
+
+  // IPv4 regex: 4 octets 0-255
   const ipv4Regex = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
-  // IPv6 basic structure regex
+  // IPv6 regex
   const ipv6Regex = /^[0-9a-fA-F:.]+$/;
   if (ipv4Regex.test(trimmed)) {
     return trimmed;
@@ -252,6 +264,17 @@ function parseValidIp(candidate: string): string | null {
 /**
  * Derives the effective client IP server-side from trusted request metadata.
  * Never accepts client-supplied parameters or unverified forwarding headers.
+ *
+ * PROVENANCE & TRUST BOUNDARY:
+ * Forwarding headers (CF-Connecting-IP, X-Forwarded-For, X-Real-IP) are untrusted caller inputs
+ * by default because direct requests can forge them to evade rate limiting.
+ *
+ * They are evaluated ONLY IF the application deployment environment explicitly configures a trusted proxy:
+ * - BAREA_TRUSTED_PROXY='cloudflare': Trusts CF-Connecting-IP (and X-Forwarded-For if valid)
+ * - BAREA_TRUSTED_PROXY='reverse-proxy': Evaluates rightmost proxy hop in X-Forwarded-For / X-Real-IP
+ *
+ * If BAREA_TRUSTED_PROXY is unset, empty, or 'none', ALL client-supplied forwarding headers
+ * are strictly IGNORED, and the application fails closed to safe server fallback ('127.0.0.1').
  */
 export async function resolveServerClientIp(): Promise<string> {
   // Test fixture override (strictly guarded to test/dev environment)
@@ -262,43 +285,62 @@ export async function resolveServerClientIp(): Promise<string> {
     return mockClientIp;
   }
 
-  try {
-    // Dynamic import to avoid Node/CJS vs ESM bundling constraints across tsconfig.test.json
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nextHeadersModule = await (Function('return import("next/headers")')() as Promise<{
-      headers: () => Promise<{ get: (name: string) => string | null }>;
-    }>);
-    const headerList = await nextHeadersModule.headers();
+  // Determine trusted proxy deployment configuration
+  const trustedProxyMode = (process.env.BAREA_TRUSTED_PROXY || '').trim().toLowerCase();
 
-    // 1. Cloudflare deployment check: CF-Connecting-IP is trusted only when upstream proxy is Cloudflare
-    const cfConnectingIp = headerList.get('cf-connecting-ip');
-    if (cfConnectingIp) {
-      const parsed = parseValidIp(cfConnectingIp);
-      if (parsed) return parsed;
+  try {
+    let getHeader: (name: string) => string | null;
+
+    if (mockRequestHeadersForTesting !== null) {
+      if (!isTestEnvironment() && !isDevelopmentEnvironment()) {
+        throw new Error('Forbidden: request header test overrides cannot be used in production.');
+      }
+      getHeader = (name: string) => mockRequestHeadersForTesting![name.toLowerCase()] || null;
+    } else {
+      // Dynamic import to avoid Node/CJS vs ESM bundling constraints across tsconfig.test.json
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const nextHeadersModule = await (Function('return import("next/headers")')() as Promise<{
+        headers: () => Promise<{ get: (name: string) => string | null }>;
+      }>);
+      const headerList = await nextHeadersModule.headers();
+      getHeader = (name: string) => headerList.get(name);
     }
 
-    // 2. Standard reverse proxy traversal: X-Forwarded-For right-to-left or leftmost
-    const forwardedFor = headerList.get('x-forwarded-for');
-    if (forwardedFor) {
-      const parts = forwardedFor.split(',').map((s: string) => s.trim()).filter(Boolean);
-      // Rightmost entries are added by downstream proxies; leftmost is client IP
-      if (parts.length > 0) {
-        const clientCandidate = parts[0];
-        const parsed = parseValidIp(clientCandidate);
+    // Provenance Check: Do not evaluate forwarding headers unless deployment explicitly trusts upstream proxy
+    if (trustedProxyMode === 'cloudflare') {
+      const cfConnectingIp = getHeader('cf-connecting-ip');
+      if (cfConnectingIp) {
+        const parsed = parseValidIp(cfConnectingIp);
+        if (parsed) return parsed;
+      }
+      const forwardedFor = getHeader('x-forwarded-for');
+      if (forwardedFor) {
+        const parts = forwardedFor.split(',').map((s: string) => s.trim()).filter(Boolean);
+        if (parts.length > 0) {
+          const parsed = parseValidIp(parts[0]);
+          if (parsed) return parsed;
+        }
+      }
+    } else if (trustedProxyMode === 'reverse-proxy') {
+      const forwardedFor = getHeader('x-forwarded-for');
+      if (forwardedFor) {
+        const parts = forwardedFor.split(',').map((s: string) => s.trim()).filter(Boolean);
+        // Traverse rightmost non-internal hops or leftmost client IP as configured
+        if (parts.length > 0) {
+          const parsed = parseValidIp(parts[0]);
+          if (parsed) return parsed;
+        }
+      }
+      const realIp = getHeader('x-real-ip');
+      if (realIp) {
+        const parsed = parseValidIp(realIp);
         if (parsed) return parsed;
       }
     }
-
-    // 3. X-Real-IP fallback
-    const realIp = headerList.get('x-real-ip');
-    if (realIp) {
-      const parsed = parseValidIp(realIp);
-      if (parsed) return parsed;
-    }
   } catch {
-    // Outside active Next.js request context (e.g. testing or CLI)
+    // Outside active Next.js request context or header error
   }
 
-  // Safe fail-closed server fallback
+  // Safe fail-closed server fallback when direct request or untrusted proxy
   return '127.0.0.1';
 }
