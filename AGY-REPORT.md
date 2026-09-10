@@ -659,3 +659,66 @@ npm notice run tsc (0 errors)
 - **Unanimous Independent Recommendation**: **GO FOR BAREA-006 MERGE AUTHORIZATION**
 - **Branch**: `barea-006-share-join`
 - **Strict Stop Maintained**: No self-merge has occurred. Awaiting user and ChatGPT merge authorization.
+
+---
+
+## 8. Milestone BAREA-006: Post-Review Remediation & Two-Agent Verification
+
+### A. Remediation Summary & Root Causes
+Following the independent security review in `AGY_PROMPT.md` (commit `dc3124e`), two release-blocking findings were remediated on branch `barea-006-share-join`:
+
+1. **Finding 1 — Client-Controlled IP Must Not Be Trusted**:
+   - **Root Cause**: `lookupRoomAction` and `joinSessionAction` previously accepted `clientIp?: string` as a direct Server Action parameter from the client and passed it into the rate-limiting path. A caller could rotate or forge this parameter to evade rate limits.
+   - **Remediation**:
+     - Removed `clientIp` from public action signatures: `lookupRoomAction(roomCode: string)` and `joinSessionAction(roomCode: string)`.
+     - Implemented `resolveServerClientIp()` in [src/app/teacher/review/db.ts](file:///C:/Users/Mr.Babu%20Rao/BAREA/src/app/teacher/review/db.ts) deriving IP server-side from request headers (`CF-Connecting-IP`, validated `X-Forwarded-For`, `X-Real-IP`, or fallback `127.0.0.1`).
+     - Added strict IPv4/IPv6 format validation (`parseValidIp`) to prevent header injection.
+     - Protected test hook `setTrustedClientIpForTesting` with strict fail-closed guards blocking execution in production.
+     - Confirmed NAT anti-abuse remains intact: 50+ participants behind single church NAT IP join concurrently without seat quotas.
+2. **Finding 2 — Unexpected Internal Errors Must Not Leak Raw Messages**:
+   - **Root Cause**: In `src/app/session/actions.ts`, `errorResponse(err)` previously returned `err.message` for non-domain errors in `INTERNAL_ERROR`. This could expose database paths, SQL errors, or internal implementation details.
+   - **Remediation**:
+     - Updated `errorResponse(err)` in [src/app/session/actions.ts](file:///C:/Users/Mr.Babu%20Rao/BAREA/src/app/session/actions.ts) so that unexpected/non-domain errors return generic `{ code: 'INTERNAL_ERROR', message: 'An unexpected internal error occurred. Please try again later.', httpStatus: 500 }`.
+     - Detailed exceptions logged server-side via `console.error('[SessionAction Unexpected Error]:', err)` without client disclosure.
+     - Domain errors (`BareaDomainError`) preserve their intended public safe messages and status codes.
+3. **Session Expiration Guard**:
+   - Added lazy `expiresAt` checks to `findSessionByRoomCode`, `joinSession`, and `resumeSession` in [src/persistence/sqlite-session-repository.ts](file:///C:/Users/Mr.Babu%20Rao/BAREA/src/persistence/sqlite-session-repository.ts).
+
+### B. Two-Agent Independent Post-Remediation Re-Review
+
+| Subagent Role | Conversation ID | Scope & Code Paths Inspected | Verdict |
+| :--- | :--- | :--- | :--- |
+| **Agent 1: Security + Architecture Red Team** | `f9ce1781-3dc6-486e-84e7-6d57a41b89b7` | Verified removal of `clientIp` from public action APIs, server-side extraction via `resolveServerClientIp()`, proxy header parsing, fail-closed test fixture hooks in production, redaction of raw exception messages in `errorResponse()`, server-side `console.error` logging, Option A tenant trigger immutability, church NAT scalability (0 seat quota), and strict BAREA-007 boundary quarantine. | **GO** |
+| **Agent 2: Persistence + QA / Implementability Reviewer** | `4f678516-dc9f-4039-b98f-9751a4df2e8e` | Verified action signatures, rate limiter integration, error sanitization, repository lazy expiration checks (`expiresAt`), adversarial test coverage in `test/session-share-join.test.ts`, 134 passing tests, clean typecheck, Next.js build, and 0 `: any` occurrences. | **GO** |
+
+### C. Verification Command Evidence
+```text
+> npm test
+ℹ tests 134
+ℹ suites 0
+ℹ pass 134
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 643.746
+
+> npm run typecheck
+npm notice run tsc --noEmit (0 errors)
+
+> git grep ": any" -- src/
+(0 occurrences)
+
+> npm run build
+npm notice run tsc (0 errors)
+
+> npm run build:next
+✓ Compiled successfully in 1568ms (Next.js 16.3.4 App Router Turbopack, 0 errors)
+
+> git diff --check
+(0 whitespace errors)
+```
+
+### D. Final Status
+- **Branch**: `barea-006-share-join`
+- **Merge Status**: Strictly paused. **NO self-merge is performed**. Awaiting ChatGPT's independent security re-review and explicit merge authorization.

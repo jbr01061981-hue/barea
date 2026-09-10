@@ -391,7 +391,12 @@ export class SqliteSessionRepository implements SessionRepository {
       WHERE room_code = ? AND status IN ('LOBBY', 'ACTIVE')
     `);
     const row = stmt.get(roomCode) as unknown as SessionRow | undefined;
-    return row ? this.mapSessionRow(row) : null;
+    if (!row) return null;
+    const session = this.mapSessionRow(row);
+    if (session.expiresAt && new Date(session.expiresAt).getTime() <= Date.now()) {
+      return null;
+    }
+    return session;
   }
 
   getPublicInfo(roomCode: RoomCode): SessionPublicInfo {
@@ -490,6 +495,9 @@ export class SqliteSessionRepository implements SessionRepository {
       if (!session) throw new SessionNotFoundError(sessionId);
 
       if (session.status !== SessionStatus.LOBBY && session.status !== SessionStatus.ACTIVE) {
+        throw new SessionClosedError();
+      }
+      if (session.expiresAt && new Date(session.expiresAt).getTime() <= Date.now()) {
         throw new SessionClosedError();
       }
       if (session.isLocked) {
@@ -626,6 +634,13 @@ export class SqliteSessionRepository implements SessionRepository {
 
     const session = this.findSessionById(sessionId);
     if (!session) throw new SessionNotFoundError(sessionId);
+
+    if (session.status === SessionStatus.CLOSED || session.status === SessionStatus.COMPLETED) {
+      throw new SessionClosedError();
+    }
+    if (session.expiresAt && new Date(session.expiresAt).getTime() <= Date.now()) {
+      throw new SessionClosedError();
+    }
 
     // Update last_active_at
     const nowIso = new Date().toISOString();

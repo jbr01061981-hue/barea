@@ -26,7 +26,8 @@ import {
 import {
   getSessionService,
   getAuthorizedTeacherContext,
-  getAuthenticatedUserContext
+  getAuthenticatedUserContext,
+  resolveServerClientIp
 } from '../teacher/review/db';
 
 function safeRevalidate(path: string) {
@@ -63,12 +64,17 @@ function errorResponse(err: unknown): ActionResult<never> {
       }
     };
   }
-  const msg = err instanceof Error ? err.message : String(err);
+
+  // Finding 2: Unexpected/non-domain errors must never leak raw messages, stack traces,
+  // SQL/database errors, provider errors, or filesystem paths to the client.
+  // Log full error details server-side while returning generic safe message to caller.
+  console.error('[SessionAction Unexpected Error]:', err);
+
   return {
     success: false,
     error: {
       code: 'INTERNAL_ERROR',
-      message: msg,
+      message: 'An unexpected internal error occurred. Please try again later.',
       httpStatus: 500
     }
   };
@@ -240,8 +246,9 @@ export async function getHostSessionRosterAction(sessionId: string): Promise<Act
   }
 }
 
-export async function lookupRoomAction(roomCode: string, clientIp?: string): Promise<ActionResult<SessionPublicInfo>> {
+export async function lookupRoomAction(roomCode: string): Promise<ActionResult<SessionPublicInfo>> {
   try {
+    const clientIp = await resolveServerClientIp();
     const service = getSessionService();
     const info = service.getPublicInfo(roomCode, clientIp);
     return { success: true, data: info };
@@ -250,8 +257,9 @@ export async function lookupRoomAction(roomCode: string, clientIp?: string): Pro
   }
 }
 
-export async function joinSessionAction(roomCode: string, clientIp?: string): Promise<ActionResult<{ participantId: string; token: ParticipantToken }>> {
+export async function joinSessionAction(roomCode: string): Promise<ActionResult<{ participantId: string; token: ParticipantToken }>> {
   try {
+    const clientIp = await resolveServerClientIp();
     const userContext = await getAuthenticatedUserContext();
     const service = getSessionService();
 

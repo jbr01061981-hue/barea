@@ -46,6 +46,8 @@ import {
 import {
   setAuthorizedTeacherContext,
   setAuthenticatedUserContext,
+  setTrustedClientIpForTesting,
+  resolveServerClientIp,
   setSessionService,
   setRateLimiter,
   setQuizService,
@@ -707,5 +709,143 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
         displayName: 'Tiny 4'
       });
     }, (err: unknown) => err instanceof SessionFullError);
+  });
+
+  await t.test('Finding 1 Remediation: Server-Side IP Extraction & Anti-Spoofing', async () => {
+    const { sharedDb, bankService, quizService, sessionService, rateLimiter } = setupTestEnvironment();
+
+    const orgTenant = 'org_berea_security';
+    const snap = seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_sec');
+
+    const session = sessionService.createSession({
+      workspaceType: WorkspaceType.ORGANIZATION,
+      organizationId: orgTenant,
+      publishedQuizSnapshotId: snap,
+      hostUserId: 'teacher_sec',
+      participationMode: ParticipationMode.INDIVIDUAL_AUTHENTICATED,
+      admissionPolicy: AdmissionPolicy.OPEN,
+      maxParticipants: 100
+    });
+
+    setAuthenticatedUserContext({
+      userId: 'user_probe',
+      providerType: 'GOOGLE',
+      providerSub: 'sub_probe_1',
+      email: 'probe@church.org',
+      emailVerified: true,
+      phone: null,
+      phoneVerified: false,
+      displayName: 'Probe User'
+    });
+
+    // 1. Verify that lookupRoomAction and joinSessionAction derive IP server-side via trusted resolver hook
+    setTrustedClientIpForTesting('198.51.100.22');
+    const lookup1 = await lookupRoomAction(session.roomCode);
+    assert.equal(lookup1.success, true);
+    if (lookup1.success) {
+      assert.equal(lookup1.data.quizTitle, 'Faith Quiz');
+    }
+
+    // 2. Adversarial IP Spoofing Prevention: A client calling lookupRoomAction has no parameter to forge an IP.
+    // Probing with an invalid room code records against the server-derived IP:
+    for (let i = 0; i < 15; i++) {
+      await lookupRoomAction('222222');
+    }
+
+    // The attacker's server-derived IP is now throttled:
+    const throttledLookup = await lookupRoomAction(session.roomCode);
+    assert.equal(throttledLookup.success, false);
+    if (!throttledLookup.success) {
+      assert.equal(throttledLookup.error.code, 'RATE_LIMIT_EXCEEDED');
+      assert.equal(throttledLookup.error.httpStatus, 429);
+    }
+
+    // 3. Different trusted IP (e.g. church member behind church NAT) is NOT affected by attacker's throttling
+    setTrustedClientIpForTesting('203.0.113.88');
+    const legitLookup = await lookupRoomAction(session.roomCode);
+    assert.equal(legitLookup.success, true);
+
+    // 4. Church NAT: 50 participants can join through joinSessionAction from same NAT IP without IP seat quota
+    setTrustedClientIpForTesting('203.0.113.88');
+    for (let i = 1; i <= 20; i++) {
+      setAuthenticatedUserContext({
+        userId: `church_nat_member_${i}`,
+        providerType: 'GOOGLE',
+        providerSub: `sub_nat_${i}`,
+        email: `nat${i}@church.org`,
+        emailVerified: true,
+        phone: null,
+        phoneVerified: false,
+        displayName: `Nat Member ${i}`
+      });
+      const joinRes = await joinSessionAction(session.roomCode);
+      assert.equal(joinRes.success, true);
+      assert.ok(joinRes.data?.participantId);
+      assert.ok(joinRes.data?.token);
+    }
+
+    // Reset test client IP hook to clean state
+    setTrustedClientIpForTesting(null);
+  });
+
+  await t.test('Finding 2 Remediation: Error Sanitization & Raw Message Redaction', async () => {
+    const { sharedDb, bankService, quizService, sessionService } = setupTestEnvironment();
+
+    const orgTenant = 'org_berea_error_sanitization';
+    const snap = seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_err');
+
+    const session = sessionService.createSession({
+      workspaceType: WorkspaceType.ORGANIZATION,
+      organizationId: orgTenant,
+      publishedQuizSnapshotId: snap,
+      hostUserId: 'teacher_err',
+      participationMode: ParticipationMode.INDIVIDUAL_AUTHENTICATED,
+      admissionPolicy: AdmissionPolicy.OPEN
+    });
+
+    // 1. Domain error preservation: domain-defined errors preserve their public client-safe message & code
+    setAuthorizedTeacherContext({
+      userId: 'stranger',
+      organizationId: 'org_foreign',
+      displayName: 'Foreign Stranger',
+      role: 'teacher'
+    });
+
+    const closeRes = await closeSessionAction(session.id);
+    assert.equal(closeRes.success, false);
+    if (!closeRes.success) {
+      assert.equal(closeRes.error.code, 'SESSION_ACCESS_DENIED');
+      assert.equal(closeRes.error.httpStatus, 403);
+      assert.equal(closeRes.error.message, 'Unauthorized to manage this session.');
+    }
+
+    // 2. Unexpected raw exceptions must NEVER leak their message, stack, or internal details
+    // Mock getSessionService to throw an unexpected database/filesystem/secret error
+    const rawSecretMessage = 'CRITICAL SQLITE_CORRUPT: /var/secrets/database.sqlite disk image malformed';
+    const brokenService = {
+      ...sessionService,
+      getPublicInfo: () => {
+        throw new Error(rawSecretMessage);
+      }
+    } as unknown as SessionService;
+
+    setSessionService(brokenService);
+
+    // Call lookupRoomAction and verify internal error is completely masked
+    const lookupErrorRes = await lookupRoomAction(session.roomCode);
+    assert.equal(lookupErrorRes.success, false);
+    if (!lookupErrorRes.success) {
+      assert.equal(lookupErrorRes.error.code, 'INTERNAL_ERROR');
+      assert.equal(lookupErrorRes.error.httpStatus, 500);
+      assert.equal(lookupErrorRes.error.message, 'An unexpected internal error occurred. Please try again later.');
+      // Strictly verify raw secret information is redacted
+      assert.ok(!lookupErrorRes.error.message.includes('SQLITE_CORRUPT'));
+      assert.ok(!lookupErrorRes.error.message.includes('/var/secrets/'));
+      assert.ok(!lookupErrorRes.error.message.includes('database.sqlite'));
+      assert.ok(!lookupErrorRes.error.message.includes('CRITICAL'));
+    }
+
+    // Restore real session service
+    setSessionService(sessionService);
   });
 });

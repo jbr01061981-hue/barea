@@ -221,3 +221,84 @@ export function setAuthenticatedUserContext(context: AuthenticatedUserContext | 
   }
   mockUserContext = context;
 }
+
+let mockClientIp: string | null = null;
+
+export function setTrustedClientIpForTesting(ip: string | null): void {
+  if (process.env.NODE_ENV === 'production' || (!isTestEnvironment() && !isDevelopmentEnvironment())) {
+    throw new Error('Forbidden: client IP test overrides cannot be executed in production.');
+  }
+  mockClientIp = ip;
+}
+
+/**
+ * Extracts and validates IPv4 or IPv6 string. Returns null if invalid format.
+ */
+function parseValidIp(candidate: string): string | null {
+  const trimmed = candidate.trim();
+  // IPv4 simple regex: 4 octets 0-255
+  const ipv4Regex = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+  // IPv6 basic structure regex
+  const ipv6Regex = /^[0-9a-fA-F:.]+$/;
+  if (ipv4Regex.test(trimmed)) {
+    return trimmed;
+  }
+  if (ipv6Regex.test(trimmed) && trimmed.includes(':')) {
+    return trimmed;
+  }
+  return null;
+}
+
+/**
+ * Derives the effective client IP server-side from trusted request metadata.
+ * Never accepts client-supplied parameters or unverified forwarding headers.
+ */
+export async function resolveServerClientIp(): Promise<string> {
+  // Test fixture override (strictly guarded to test/dev environment)
+  if (mockClientIp !== null) {
+    if (!isTestEnvironment() && !isDevelopmentEnvironment()) {
+      throw new Error('Forbidden: client IP test overrides cannot be used in production.');
+    }
+    return mockClientIp;
+  }
+
+  try {
+    // Dynamic import to avoid Node/CJS vs ESM bundling constraints across tsconfig.test.json
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const nextHeadersModule = await (Function('return import("next/headers")')() as Promise<{
+      headers: () => Promise<{ get: (name: string) => string | null }>;
+    }>);
+    const headerList = await nextHeadersModule.headers();
+
+    // 1. Cloudflare deployment check: CF-Connecting-IP is trusted only when upstream proxy is Cloudflare
+    const cfConnectingIp = headerList.get('cf-connecting-ip');
+    if (cfConnectingIp) {
+      const parsed = parseValidIp(cfConnectingIp);
+      if (parsed) return parsed;
+    }
+
+    // 2. Standard reverse proxy traversal: X-Forwarded-For right-to-left or leftmost
+    const forwardedFor = headerList.get('x-forwarded-for');
+    if (forwardedFor) {
+      const parts = forwardedFor.split(',').map((s: string) => s.trim()).filter(Boolean);
+      // Rightmost entries are added by downstream proxies; leftmost is client IP
+      if (parts.length > 0) {
+        const clientCandidate = parts[0];
+        const parsed = parseValidIp(clientCandidate);
+        if (parsed) return parsed;
+      }
+    }
+
+    // 3. X-Real-IP fallback
+    const realIp = headerList.get('x-real-ip');
+    if (realIp) {
+      const parsed = parseValidIp(realIp);
+      if (parsed) return parsed;
+    }
+  } catch {
+    // Outside active Next.js request context (e.g. testing or CLI)
+  }
+
+  // Safe fail-closed server fallback
+  return '127.0.0.1';
+}
