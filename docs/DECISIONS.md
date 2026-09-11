@@ -350,6 +350,32 @@ To satisfy ADR-012 without coupling BAREA to a single cloud vendor, the deployme
     - Network Layer: Blocked by firewall / security group before TCP handshake completes.
     - Application Layer (Defense-in-Depth): If a network misconfiguration allows a direct request to reach port 3000, the absence of the valid `X-Barea-Edge-Attestation` prevents the caller from forging `X-Barea-Client-IP`. All spoofed headers are ignored.
 
+### Hosting Target Candidate Evaluation Matrix
+
+In accordance with BAREA architectural constraints (church-scale usage, cost, operational simplicity, secret management, origin isolation, Next.js App Router compatibility, and future BAREA-007 WebSocket/live transport), the three supported candidate families are evaluated below:
+
+| Evaluation Dimension | Candidate A: Cloudflare Tunnel + Cloudflare Edge | Candidate B: Private Cloud VPC (AWS ALB / GCP Cloud Armor) | Candidate C: Linux VM + Reverse Proxy (Nginx / Caddy) |
+| :--- | :--- | :--- | :--- |
+| **Monthly Baseline Cost** | **Lowest**: Free tier / $0–$5/mo (Cloudflare Zero Trust free tier includes tunnels; compute on low-cost VM/container). | **Highest**: ~$35–$60+/mo baseline (AWS ALB ~$16–$22/mo + NAT Gateway / VPC endpoints + compute). | **Low to Moderate**: ~$5–$20/mo (Single VPS on Hetzner, DigitalOcean, Linode, or AWS Lightsail). |
+| **Operational Complexity** | **Low**: No public IP required; no inbound firewall ports to open; `cloudflared` initiates outbound connection only. | **High**: Requires VPC setup, public/private subnets, route tables, internet gateways, NAT gateways, security groups. | **Moderate**: Requires OS maintenance, firewall (`nftables`/`ufw`), reverse proxy config, manual/certbot TLS renewal. |
+| **Origin Isolation Strength** | **Exceptional**: Origin has ZERO public listening ports or public IPv4/IPv6 addresses. Directly unreachable from internet. | **Strong**: Origin in private subnet with security group allowing ingress solely from load balancer security group. | **Strong (if configured correctly)**: Origin binds strictly to `127.0.0.1:3000`; OS packet filter drops external packets to 3000. |
+| **IP Provenance Reliability** | **High**: Edge sets `CF-Connecting-IP` / `X-Barea-Client-IP` from ingress socket; tunnel ingress strips incoming spoofed headers. | **High**: ALB strips untrusted `X-Forwarded-For` or appends client IP; security group guarantees packet arrived via ALB. | **High**: Nginx/Caddy sets `$remote_addr` to internal header and discards caller-supplied forwarding headers. |
+| **TLS & DNS Setup** | **Turnkey**: Automated universal TLS and integrated DNS via Cloudflare Dashboard / Terraform. | **Moderate**: ACM / Google-managed SSL certificates + Route 53 / Cloud DNS configuration. | **Moderate**: Automated via Caddy (built-in ACME) or Certbot on Nginx; external DNS setup. |
+| **Secret & Attestation Management** | **Simple**: High-entropy tunnel token + HTTP request header secret injected by Cloudflare Transform Rules or Worker. | **Integrated**: Secret stored in AWS Secrets Manager / Parameter Store and injected via ALB / CloudFront headers. | **Direct**: Secret stored in environment file (`/etc/barea.env`) and configured directly in proxy upstream blocks. |
+| **Observability & Logs** | **Strong**: Cloudflare analytics, tunnel status metrics, and request logging. | **Comprehensive**: CloudWatch / Cloud Logging with detailed access logs and VPC flow logs. | **Basic to Moderate**: Local access logs (`/var/log/nginx/access.log`), systemd journal, optional Loki/Prometheus agent. |
+| **Fit for Next.js App Router** | **Seamless**: Standard Node.js / standalone output proxying over HTTP/1.1 or HTTP/2. | **Seamless**: Standard container/EC2 target behind ALB target groups. | **Seamless**: Standard upstream reverse-proxy configuration. |
+| **Future BAREA-007 Live Transport** | **Excellent**: Cloudflare Tunnel natively supports WebSockets and HTTP/2 Server-Sent Events (SSE) out of the box. | **Excellent**: AWS ALB natively supports WebSockets and long-lived HTTP connections. | **Excellent**: Nginx and Caddy both offer robust, battle-tested WebSocket proxying (`Upgrade` / `Connection` headers). |
+| **Fit for Small Church / Startup Scale** | **Best Fit**: Minimal operational burden, zero maintenance of inbound firewall rules, enterprise-grade edge security for free. | **Overkill for MVP**: Complex setup and recurring fixed infrastructure charges unsuitable for small community budgets. | **Viable**: Inexpensive, but requires manual OS patching, firewall maintenance, and certificate renewal oversight. |
+
+### Target Recommendation
+- **Recommended Target**: **Candidate A (Cloudflare Tunnel + Cloudflare Edge)**.
+- **Rationale**:
+  1. *Zero Inbound Attack Surface*: Origin requires no public IP and no open inbound firewall ports; `cloudflared` initiates outbound-only connections to Cloudflare's edge network.
+  2. *Unmatched Cost-to-Security Ratio*: Eliminates AWS ALB / NAT Gateway recurring fixed costs while providing enterprise-grade DDoS mitigation, automated TLS, and global CDN caching.
+  3. *BAREA-007 Ready*: Native zero-configuration WebSocket and SSE support.
+  4. *Low Operational Burden*: Ideal for church and non-profit administration without dedicated 24/7 DevOps teams.
+- **Selection Status**: **NOT YET SELECTED (AWAITING USER SELECTION)**. In accordance with BAREA governance, Candidate A is the engineering recommendation, but final selection remains deferred until explicit user authorization is provided.
+
 ### Consequences
 - **Positive**: Eliminates IP header spoofing; provides true network provenance; maintains church-scale client isolation and NAT scalability (zero per-IP seat quotas); prevents global rate-limit bucket exhaustion.
 - **Negative**: Requires production infrastructure (private network, firewall, edge proxy configuration) to be provisioned before live internet deployment.

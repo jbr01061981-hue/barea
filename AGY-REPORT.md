@@ -803,9 +803,18 @@ The practical deployment contract designed to satisfy ADR-012 establishes:
 6. **Application Enforcement**: The application verifies edge attestation in constant time before accepting `X-Barea-Client-IP`. Unauthenticated or direct requests fail closed to isolated fallback `127.0.0.1`.
 7. **Health & Observability**: `/api/health` probes operate unauthenticated; rate-limit audit logs redact client IP prefixes for privacy.
 
-### C. Infrastructure State & Release Rule
+### C. Hosting Candidate Evaluation & Recommendation
+- **Candidates Evaluated**:
+  - *Candidate A (Cloudflare Tunnel + Cloudflare Edge)*: $0–$5/mo baseline, zero inbound firewall ports, outbound tunnel daemon (`cloudflared`), native WebSocket/SSE support for BAREA-007, minimal operational overhead.
+  - *Candidate B (Private Cloud VPC - AWS ALB / GCP Cloud Armor)*: ~$35–$60+/mo baseline, high configuration complexity (VPC, subnets, route tables, NAT gateways, security groups), enterprise-grade controls.
+  - *Candidate C (Linux VM + Nginx / Caddy)*: ~$5–$20/mo baseline, host-level packet filter firewall (`nftables`), manual OS maintenance and certificate renewal.
+- **Architectural Recommendation**: **Candidate A (Cloudflare Tunnel + Cloudflare Edge)** due to zero inbound attack surface, zero recurring cloud load balancer costs, low church-scale operational burden, and turnkey WebSocket/SSE capability for BAREA-007.
+- **Selection Decision Gate**: **HOSTING TARGET NOT YET SELECTED — NO INFRASTRUCTURE PROVISIONING AUTHORIZED.** Awaiting user selection before provisioning any infrastructure or writing proxy-attestation application code.
+
+### D. Infrastructure State & Release Rule
 - **Infrastructure Status**: NOT YET PROVISIONED.
 - **Production Hosting Target**: NOT YET SELECTED.
 - **Edge Technology**: NOT YET SELECTED.
+- **Application Code Status**: ZERO application code changed in `src/`. Checkpoint remains at `eb8d4160ec2f0fb99f46ffa5b2153cc477e90976`.
 - **Merge Status**: Branch `barea-006-share-join` remains unmerged. No self-merge to `main`. Zero scope creep into BAREA-007.
 - **Production Prerequisite**: Live production release requires physical provisioning of the edge proxy, origin firewall rules, and deployment secrets before IP-based rate-limit differentiation can be activated.
