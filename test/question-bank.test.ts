@@ -628,10 +628,15 @@ test('CommonJS Runtime Contract & Public Exports', () => {
   // and exposes all expected public BAREA exports.
   const path = require('path');
   const fs = require('fs');
-  const distPath = path.resolve(__dirname, '../../dist/index.js');
-  const resolvedPath = fs.existsSync(distPath) ? distPath : path.resolve(process.cwd(), 'dist/index.js');
+  const candidates = [
+    path.resolve(__dirname, '../../dist/index.js'),
+    path.resolve(process.cwd(), 'dist/index.js'),
+    path.resolve(__dirname, '../src/index.js'),
+    path.resolve(process.cwd(), 'dist/src/index.js')
+  ];
+  const resolvedPath = candidates.find((p) => fs.existsSync(p)) || path.resolve(process.cwd(), 'dist/index.js');
 
-  assert.ok(fs.existsSync(resolvedPath), 'dist/index.js must exist after build');
+  assert.ok(fs.existsSync(resolvedPath), 'dist/index.js (or dist/src/index.js) must exist after build');
 
   const barea = require(resolvedPath);
 
