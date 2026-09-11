@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'BAREA — Teacher Review & Approval',
-  description: 'Synchronized church quiz preparation & teacher review workbench',
+  title: 'BAREA — Church Quiz & Learning Platform',
+  description: 'Prepare scripture-based quizzes with teacher oversight and bring the whole church into the experience.',
 };
 
 export default function RootLayout({
@@ -13,36 +13,43 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="antialiased min-h-screen flex flex-col bg-slate-50 text-slate-900">
-        <header className="border-b border-slate-200 bg-white sticky top-0 z-10">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <span className="font-bold text-lg tracking-tight text-slate-900">
-                BAREA
+      <body className="antialiased min-h-screen flex flex-col bg-[var(--barea-bg)] text-[var(--barea-ink)]">
+        <header className="border-b border-[var(--barea-border)] bg-white">
+          <div className="mx-auto flex h-[4.5rem] max-w-7xl items-center justify-between px-5 sm:px-8 lg:px-10">
+            <a
+              href="/"
+              className="flex min-h-11 items-center gap-3 rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2"
+              aria-label="BAREA home"
+            >
+              <span className="text-xl font-bold tracking-[-0.03em] text-[var(--barea-ink)]">BAREA</span>
+              <span className="hidden border-l border-[var(--barea-border)] pl-3 text-xs font-medium text-[var(--barea-ink-muted)] sm:inline">
+                Church quiz &amp; learning
               </span>
-              <span className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-medium border border-slate-200">
-                Teacher Console
-              </span>
-            </div>
-            <nav className="flex items-center space-x-4">
+            </a>
+
+            <nav aria-label="Primary navigation" className="flex items-center gap-2 sm:gap-4">
               <a
-                href="/teacher/review"
-                className="text-sm font-semibold text-slate-900 border-b-2 border-slate-900 pb-1"
+                href="/#how-it-works"
+                className="hidden min-h-11 items-center rounded-sm px-2 text-sm font-medium text-[var(--barea-ink-muted)] hover:text-[var(--barea-ink)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] sm:inline-flex"
               >
-                Review Queue
+                How it works
+              </a>
+              <a
+                href="/#how-it-works"
+                className="inline-flex min-h-11 items-center justify-center rounded-[var(--barea-radius-control)] bg-[var(--barea-ink)] px-4 text-sm font-semibold text-white transition-colors hover:bg-[var(--barea-ink-soft)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2"
+              >
+                See the teacher workflow
               </a>
             </nav>
           </div>
         </header>
 
-        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          {children}
-        </main>
+        <main className="flex-1 w-full">{children}</main>
 
-        <footer className="border-t border-slate-200 bg-white py-4 mt-auto">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-xs text-slate-500 flex flex-col sm:flex-row justify-between items-center gap-2">
+        <footer className="border-t border-[var(--barea-border)] bg-white">
+          <div className="mx-auto flex max-w-7xl flex-col gap-2 px-5 py-7 text-xs text-[var(--barea-ink-muted)] sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10">
             <span>BAREA Church Education Platform</span>
-            <span>Server-Authoritative • Human Review Gate</span>
+            <span>Teacher-reviewed • Server-authoritative</span>
           </div>
         </footer>
       </body>
