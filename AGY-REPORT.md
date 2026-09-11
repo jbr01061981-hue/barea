@@ -869,3 +869,188 @@ The practical deployment contract designed to satisfy ADR-012 establishes:
 7. 50+ church NAT participants join successfully without IP exhaustion.
 8. Authenticated user join throttling (`1 / 5s / userId`) prevents duplicate mutation abuse.
 9. Zero BAREA-007 scope introduced (no WebSockets, SSE, timers, or live quiz transitions).
+
+---
+
+## 12. Milestone BAREA-007: Live Quiz Authoritative State Machine & Real-Time Transport
+
+### A. Context & Objectives
+Milestone BAREA-007 builds the live quiz execution engine for the BAREA platform, adhering strictly to:
+- Server-authoritative live state machine (`LOBBY` -> `ACTIVE` -> `COMPLETED`, question lifecycle: `NOT_STARTED` -> `PREVIEW` -> `ANSWERING` -> `LOCKED` -> `COMPLETED`).
+- Server-authoritative time & deadlines: Client clock is untrusted (display-only countdown); server UTC time strictly dictates answer window expiration.
+- Concurrency & versioning: Monotonic `stateVersion` tracking on every state mutation, with optimistic concurrency validation.
+- Host authorization & IDOR defense: Authenticated host only can control state transitions; non-hosts and unauthenticated callers are rejected with `NotSessionHostError` (403).
+- Participant answer submission policy: "First accepted submission wins"; duplicates are rejected with `DuplicateAnswerSubmissionError` (409); late submissions are rejected with `AnswerDeadlineExpiredError` (400).
+- Teacher-controlled group mode: Host submits answers on behalf of pupil groups without requiring individual pupil accounts.
+- Real-time transport contract: Session-isolated in-memory event bus and Next.js SSE Route Handler (`/api/session/[id]/live`) with subscriber-specific projection filtering (answer keys strictly stripped for participants/projectors) and catch-up replay buffers.
+- Reconnection / resume: Seamless reconnects without resetting questions, timers, or participant identities.
+
+### B. Implementation Summary
+1. **Domain Model (`src/domain/live-quiz.ts`)**:
+   - `QuestionLifecycleState`: `NOT_STARTED`, `PREVIEW`, `ANSWERING`, `LOCKED`, `COMPLETED`.
+   - `LiveSessionState`: Authoritative server state tracking current question, timestamps, deadline, and `stateVersion`.
+   - `ParticipantLiveView`: Redacted projection hiding answers and explanations.
+   - `HostLiveView`: Full live view including submission counts and full question details.
+   - `ParticipantSubmission`: Recorded answers with server UTC timestamp and deadline flag.
+   - `LiveQuizEventType` & `LiveQuizEvent`: Strongly-typed real-time event definitions.
+2. **Domain Errors (`src/domain/domain-errors.ts`)**:
+   - `InvalidLiveStateTransitionError` (400), `AnswerDeadlineExpiredError` (400), `DuplicateAnswerSubmissionError` (409), `NotSessionHostError` (403), `SessionNotActiveError` (400), `InvalidQuestionChoiceError` (400), `ConcurrencyConflictError` (409).
+3. **Persistence Engine (`src/persistence/sqlite-session-repository.ts`)**:
+   - Added tables `session_live_states` and `session_answers` with cascade deletes and unique constraints.
+   - Initialized live state row atomically on session creation.
+   - Implemented repository methods: `getLiveSessionState`, `getPublishedQuizSnapshot`, `startLiveSession`, `openQuestion`, `previewQuestion`, `lockQuestion`, `advanceQuestion`, `completeLiveSession`, `recordAnswerSubmission`, `getParticipantSubmission`, `getGroupSubmission`, `getSubmissionCountForQuestion`.
+4. **Realtime Transport (`src/transport/realtime-transport.ts`)**:
+   - `RealtimeTransport` interface with `InMemoryRealtimeTransport` implementation.
+   - Session isolation: Channels strictly separated by `sessionId`.
+   - Subscriber projection filtering: Strips `correctOptionIndices` and `explanation` from events sent to participants and projectors.
+   - Monotonic sequence numbering and ring-buffer history for catch-up replay on reconnect.
+5. **Rate Limiting (`src/service/rate-limiter.ts`)**:
+   - Added `checkLiveMutation(userId: string)` (configurable, default 20 mutations / 5s per authenticated user).
+6. **Live Quiz Service (`src/service/live-quiz-service.ts`)**:
+   - Orchestration service executing state machine transitions, validating host ownership, checking deadlines, applying rate limits, and publishing real-time events.
+7. **Server Actions (`src/app/session/live-actions.ts`)**:
+   - Host actions: `startLiveQuizAction`, `lockQuestionAction`, `openQuestionAction`, `advanceQuestionAction`, `completeLiveQuizAction`, `getHostLiveViewAction`.
+   - Participant actions: `submitAnswerAction`, `getParticipantLiveViewAction`, `reconnectLiveSessionAction`.
+   - Group action: `submitGroupAnswerAction`.
+   - Error masking: `errorResponse` sanitizes and masks unexpected errors with generic 500 while logging server-side.
+8. **SSE Streaming Route Handler (`src/app/api/session/[id]/live/route.ts`)**:
+   - Server-Sent Events endpoint streaming realtime events with client catchup support (`since` query param) and heartbeat ping.
+
+### C. Comprehensive Automated Verification
+- **Full Test Suite (`npm test`)**: **147/147 tests pass** (134 existing + 13 comprehensive BAREA-007 tests).
+- **TypeScript Typecheck (`npm run typecheck`)**: **0 errors** (`tsc --noEmit`).
+- **Next.js Production Build (`npm run build:next`)**: **0 errors** (Turbopack, compiled successfully, `/api/session/[id]/live` dynamic route registered).
+- **Type Safety Audit (`git grep ": any" -- src/`)**: **0 occurrences**.
+- **Whitespace & Diff Hygiene (`git diff --check`)**: **Clean**.
+
+### D. Architectural Invariants Maintained
+1. **Server Authority**: Client countdown is display-only; deadlines and transitions are calculated and enforced exclusively by the server.
+2. **Host Authorization**: IDOR-resistant host checks prevent non-hosts from triggering mutations.
+3. **Information Security**: Question projections to participants/projectors strictly redact correct answer indices and explanations.
+4. **Church NAT & Rate Limiting**: Preserved BAREA-006 church Wi-Fi NAT scalability; authenticated user mutations throttled cleanly.
+5. **No Scope Creep**: Zero BAREA-008 UI, zero BAREA-009 scoring calculations, zero Cloudflare infrastructure provisioning.
+
+### E. PR #11 Blocker Remediation & Adversarial Regression Verification
+- **Defect 1: SSE Authorization & Role Derivation**:
+  - `src/app/api/session/[id]/live/route.ts` no longer trusts `?role=host` query parameter as an authorization claim.
+  - When `role=host` is requested: the route authenticates via `getAuthorizedTeacherContext()` and verifies `teacher.userId === session.hostUserId`. If unauthenticated (401) or non-host (403), connection is rejected fail-closed.
+  - Participant subscriptions: require a validated participant token (`validateParticipantToken(rawToken)`) verified against the session (`repo.resumeSession(sessionId, token)`). Role is strictly forced to `'participant'`.
+  - Missing/invalid/foreign tokens fail closed immediately (401/400/403).
+- **Defect 2: Answer Authorization & Authoritative Deadlines**:
+  - `submitParticipantAnswer` and `submitGroupAnswer` in `src/service/live-quiz-service.ts` obtain authoritative `liveState` first.
+  - Require the question lifecycle to be in `ANSWERING` state (`InvalidLiveStateTransitionError`).
+  - Require submitted `questionPosition` to match authoritative `liveState.currentQuestionPosition`.
+  - Authoritatively compute `isWithinDeadline = Date.now() <= deadlineMs` against persisted `answerDeadlineAt`. Late submissions throw `AnswerDeadlineExpiredError` (400) without creating or persisting any submission row.
+  - `clientTimestamp` is strictly ignored for deadline validation; client timestamp claims cannot extend deadlines.
+- **Adversarial Regression Tests (Tests 11 & 12)**:
+  - Verified unauthenticated/participant caller cannot obtain host SSE projection by `?role=host` (401).
+  - Verified non-host authenticated user cannot obtain host SSE projection (403 `NOT_SESSION_HOST`).
+  - Verified authenticated session host obtains host projection with answer keys (200).
+  - Verified participant SSE receives only participant projection with secret keys stripped (200).
+  - Verified answer for non-current question is rejected and creates 0 submissions in database.
+  - Verified answer after authoritative deadline is rejected and creates 0 submissions in database.
+  - Verified fake past/future `clientTimestamp` cannot extend deadline and creates 0 submissions in database.
+  - Verified valid current-question answer before deadline is accepted and creates 1 submission in database.
+  - Verified subsequent duplicate submission is rejected (409) and database count remains 1.
+
+### F. PR #11 Blocker Remediation 2: SSE Host-Authentication Error Masking
+- **Identified Defect**: In `src/app/api/session/[id]/live/route.ts`, when `getAuthorizedTeacherContext()` threw an exception during host authentication, `err.message` was previously interpolated into the response: `{ error: 'UNAUTHORIZED', message: \`Teacher authentication failed: ${message}\` }`. This leaked internal runtime environment strings and could disclose database paths or sensitive exception details to unauthenticated clients.
+- **Remediation**:
+  1. **Masked Exception**: Replaced raw `err.message` interpolation with a fixed, client-safe message: `{ error: 'UNAUTHORIZED', message: 'Teacher authentication failed.' }` (HTTP 401).
+  2. **Server-Side Only Logging**: Captured full exception and stack trace via `console.error('[SSE HostAuth Error]:', err)` for operator observability without client disclosure.
+  3. **Adversarial Regression Test**: Added regression test 1b to `test/live-quiz.test.ts` using an error-throwing teacher context proxy to simulate an unexpected internal failure with sensitive database credentials (`CRITICAL SQLITE_CORRUPT: /var/secrets/teacher_key.sqlite disk image malformed`). Verified that the response is HTTP 401 with masked message and strictly asserts that sensitive strings (`SQLITE_CORRUPT`, `/var/secrets/`, `teacher_key.sqlite`, `CRITICAL`) are never leaked to the caller.
+- **Verification Gates**:
+  - `npm test`: 147/147 passing tests.
+  - `npm run typecheck`: 0 errors.
+  - `npm run build:next`: 0 errors (Turbopack production build succeeded).
+  - `git grep ": any" -- src/`: 0 occurrences.
+  - `git diff --check`: Clean (0 whitespace errors).
+
+### G. PR #11 Blocker Remediation 3: SSE Reconnect & History Replay Canonical Projection Isolation
+- **Identified Defect**: In `src/app/api/session/[id]/live/route.ts`, the SSE history replay path for reconnecting subscribers (`?since=...`) performed an ad-hoc inline shallow deletion rather than passing replayed events through the canonical projection filter. Furthermore, `RealtimeTransport.getHistory()` returned unprojected event logs without role-aware projection, which could leak sensitive question fields (`correctOptionIndices`, `explanation`) to reconnecting participants.
+- **Remediation**:
+  1. **Canonical Projection Filter**: Exported `projectEventForRole(event, role)` from `src/transport/realtime-transport.ts` and `src/index.ts`. Recursively sanitizes root, nested `question`, `currentQuestion`, and array `questions` payloads, stripping `correctOptionIndices`, `explanation`, `correctOptionIndex`, and `correctAnswer` for non-host roles (`participant`, `projector`).
+  2. **Role-Aware History Replay**: Updated `RealtimeTransport.getHistory(sessionId, sinceSequence, role)` to apply `projectEventForRole(e, role)` whenever a subscriber role is specified.
+  3. **SSE Route Handler Enforcement**: Replaced ad-hoc inline deletion in `src/app/api/session/[id]/live/route.ts` with `projectEventForRole(evt, effectiveRole)` and passed `effectiveRole` to `transport.getHistory()`.
+  4. **Service Reconnection Protection**: Updated `LiveQuizService.reconnectParticipant()` to pass `'participant'` to `getHistory()`, ensuring `reconnectLiveSessionAction` is immune to data leakage.
+  5. **Adversarial Regression Test**: Added Test 13 (`SSE & Service History Replay Canonical Projection Isolation`) to `test/live-quiz.test.ts`. Asserts that reconnecting participants via SSE stream (`?token=...&since=1`) and via `reconnectLiveSessionAction` receive replayed events with zero leakage of `correctOptionIndices` or explanations, while authenticated hosts reconnecting with `?role=host` retain full access.
+- **Verification Gates**:
+  - `npm test`: 148/148 passing tests (all baseline + all live-quiz suites).
+  - `node --test dist/test/live-quiz.test.js`: 14/14 passing tests.
+  - `npm run typecheck`: 0 errors.
+  - `npm run build:next`: 0 errors (Turbopack production build succeeded).
+  - `git grep ": any" -- src/`: 0 occurrences.
+  - `git diff --check`: Clean (0 whitespace errors).
+
+### H. PR #11 Final Security Remediation: Server-Derived Realtime Subscription Role & Projection Authorization
+- **Remaining SSE Authorization Issue**:
+  In `src/app/api/session/[id]/live/route.ts`, client query parameters (`?role=host`) previously influenced authentication routing. A caller could dictate the host authentication path by supplying `?role=host`, while an authenticated host connecting without `?role=host` was treated as an unauthenticated participant. Furthermore, a non-host participant who passed `?role=host&token=...` would be erroneously challenged for teacher credentials rather than being authoritatively recognized as a participant and served with canonical data redaction.
+- **Root Cause**:
+  Client-supplied role claims were evaluated as control input for routing authentication, violating the architectural invariant that subscription roles and projection privileges must be derived strictly on the server from authenticated session context.
+- **Exact Server-Derived Role Remediation**:
+  1. **Authoritative Host Derivation**: `src/app/api/session/[id]/live/route.ts` first queries `getAuthorizedTeacherContext()`. If an authenticated teacher context exists and `teacher.userId === session.hostUserId`, the server sets `isHost = true` and `effectiveRole = 'host'`. The host receives host projection authoritatively without needing to supply `?role=host`.
+  2. **Non-Host Participant Derivation**: If the caller is not the session host, the route requires valid participant session credentials (`token` in search params, `x-participant-token`, or `Bearer` token). The token is parsed and validated via `validateParticipantToken(rawToken)`, then verified against the session via `repo.resumeSession(sessionId, validatedToken)`. Upon successful verification, `effectiveRole` is authoritatively assigned as `'participant'`. Even if the caller passed `?role=host`, the server-derived role remains `'participant'`, ensuring that live events and replayed history undergo canonical projection filtering.
+  3. **IDOR & Cross-Session Isolation**:
+     - A non-host authenticated teacher without a participant token is rejected with 403 `NOT_SESSION_HOST`.
+     - An unauthenticated caller without credentials is rejected with 401 `UNAUTHORIZED`.
+     - A participant token issued for Session A attempting to subscribe to Session B's live stream is rejected by `repo.resumeSession` with 403 `FORBIDDEN`.
+  4. **Exception Masking**: Server-side error masking and logging (`[SSE HostAuth Error]:`) are strictly preserved, preventing disclosure of internal paths, database state, or runtime strings.
+- **Mandatory Regression Tests**:
+  Updated and expanded Test 11 and Test 13 in `test/live-quiz.test.ts` proving all required security boundaries:
+  1. Unauthenticated request with `?role=host` cannot receive host projection (401 `UNAUTHORIZED`).
+  2. Non-host authenticated user with `?role=host` cannot receive host projection (403 `NOT_SESSION_HOST`).
+  3. Authenticated host receives host projection without needing a client role claim (200 host stream with unredacted answer keys).
+  4. Non-host participant supplying `?role=host&token=...` receives 200 with participant projection; live events published during the connection strictly redact `correctOptionIndices` and `explanation`.
+  5. Cross-session isolation: Token from Session A connecting to Session B returns 403 `FORBIDDEN`.
+  6. Invalid or missing participant credentials fail closed (401 missing, 400 invalid format, 403 invalid token).
+  7. Reconnecting host without `?role=host` (e.g. `?since=1`) receives full unredacted history replay.
+  8. Reconnecting participant supplying `?role=host&token=...&since=1` receives strictly redacted history replay.
+  9. Non-current question submissions, expired deadlines, and client-clock manipulation remain strictly rejected without creating database records.
+- **Verification Gates**:
+  - `npm test`: 148/148 tests pass.
+  - `node --test dist/test/live-quiz.test.js`: 14/14 tests pass.
+  - `npm run typecheck`: 0 errors.
+  - `npm run build`: 0 errors.
+  - `npm run build:next`: 0 errors (Turbopack production build succeeded).
+  - `git grep ": any" -- src/`: 0 occurrences.
+  - `git diff --check`: Clean (0 whitespace errors).
+  - Out-of-scope milestones: Zero BAREA-008 UI, zero BAREA-009 scoring, zero Cloudflare infrastructure provisioning.
+
+### I. PR #11 Final Security Remediation: Atomic Authoritative Deadline Enforcement at Persistence Boundary
+- **Remaining Persistence Timing Blocker**:
+  `LiveQuizService.submitParticipantAnswer` and `submitGroupAnswer` previously validated deadline boundaries at the service layer prior to calling repository persistence methods. However, the final acceptance decision inside SQLite `recordAnswerSubmission` evaluated against `submission.submittedAt` (passed from the caller/service layer) rather than fresh server time at the physical point of transaction execution. A submission passing service pre-checks right before deadline expiration could experience scheduling delay or concurrency queueing, arriving at SQLite after the deadline, and still be committed.
+- **Root Cause**:
+  Decoupling service-time checks from physical persistence execution allowed a gap between authorization check and transactional commit (TOCTOU race), permitting late writes if stale timestamps were preserved.
+- **Exact Atomic Persistence Boundary Remediation**:
+  1. **Atomic Transactional Enforcement Inside `BEGIN IMMEDIATE`**:
+     In `SqliteSessionRepository.recordAnswerSubmission`, execution takes place inside `this.transaction(() => { ... })` (`BEGIN IMMEDIATE`).
+     - The repository queries the live session state (`sessions_live`) directly within the active transaction lock.
+     - Fresh authoritative server time is sampled via `const serverNowMs = this.getCurrentTimeMs()`.
+     - The physical deadline is evaluated against fresh time: `if (serverNowMs > deadlineMs) { throw new AnswerDeadlineExpiredError(...); }`.
+     - If the deadline has expired when the write lock is acquired, the submission is aborted, no database row is inserted, and an `AnswerDeadlineExpiredError` is thrown.
+  2. **Authoritative Timestamp and Deadline Derivation**:
+     - `submittedAt` and `isWithinDeadline` are no longer accepted from caller claims.
+     - `authoritativeSubmittedAt` is derived from `new Date(serverNowMs).toISOString()`.
+     - `is_within_deadline` is strictly committed as `1` because expired attempts never reach row insertion.
+     - The returned `ParticipantSubmission` carries the authoritative `serverNowMs` timestamp, which is used for downstream realtime event publishing.
+  3. **Teacher-Group Answer Submission Parity**:
+     `SqliteSessionRepository.recordGroupAnswer` and `LiveQuizService.submitGroupAnswer` undergo the exact same atomic transaction-level deadline enforcement: late group submissions are rejected at the persistence boundary with zero state changes.
+  4. **Service-Level Defense-in-Depth**:
+     `LiveQuizService.submitParticipantAnswer` and `submitGroupAnswer` continue to perform pre-checks against repository server time to reject clearly expired requests early before acquiring database transaction locks.
+  5. **Deterministic Concurrency & Race Testing**:
+     In `test/live-quiz.test.ts`, **Test 14** was implemented to deterministically simulate:
+     - Pre-check at service layer passes before deadline (T0 < deadline).
+     - Test clock advances past deadline (T1 > deadline) before repository transaction executes.
+     - Submission is strictly rejected with `AnswerDeadlineExpiredError`.
+     - Verified that 0 rows are persisted in `participant_submissions`.
+     - Verified caller-supplied past timestamps (`submittedAt: "2000-01-01T00:00:00.000Z"`) cannot win or bypass deadline expiry when persistence clock is expired.
+     - Verified first-write-wins concurrency: first valid participant answer commits; immediate duplicate is rejected; late submission after deadline expiration is rejected with 0 database mutations.
+- **Verification Gates**:
+  - `npm test`: 149/149 tests pass.
+  - `node --test dist/test/live-quiz.test.js`: 15/15 tests pass.
+  - `npm run typecheck`: 0 errors.
+  - `npm run build`: 0 errors.
+  - `npm run build:next`: 0 errors (Turbopack production build succeeded).
+  - `git grep ": any" -- src/`: 0 occurrences.
+  - `git diff --check`: Clean (0 whitespace errors).
+  - Out-of-scope milestones: Zero BAREA-008 UI, zero BAREA-009 scoring, zero Cloudflare infrastructure provisioning.

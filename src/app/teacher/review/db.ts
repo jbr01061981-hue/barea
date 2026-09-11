@@ -9,6 +9,8 @@ import { GeminiAIProvider } from '../../../ai/provider/gemini-ai-provider';
 import { SqliteSessionRepository } from '../../../persistence/sqlite-session-repository';
 import { SessionService } from '../../../service/session-service';
 import { InMemoryRateLimiter } from '../../../service/rate-limiter';
+import { LiveQuizService } from '../../../service/live-quiz-service';
+import { InMemoryRealtimeTransport } from '../../../transport/realtime-transport';
 
 let globalRepo: SqliteQuestionRepository | null = null;
 let globalBankService: QuestionBankService | null = null;
@@ -75,17 +77,56 @@ export function setRateLimiter(limiter: InMemoryRateLimiter | null): void {
   globalRateLimiter = limiter;
 }
 
-export function getSessionService(): SessionService {
-  if (!globalSessionService) {
+export function getSessionRepository(): SqliteSessionRepository {
+  if (!globalSessionRepo) {
     const dbPath = process.env.BAREA_DB_PATH || path.join(process.cwd(), 'barea.db');
     globalSessionRepo = new SqliteSessionRepository(dbPath);
-    globalSessionService = new SessionService(globalSessionRepo, getRateLimiter());
+  }
+  return globalSessionRepo;
+}
+
+export function setSessionRepository(repo: SqliteSessionRepository | null): void {
+  globalSessionRepo = repo;
+}
+
+export function getSessionService(): SessionService {
+  if (!globalSessionService) {
+    globalSessionService = new SessionService(getSessionRepository(), getRateLimiter());
   }
   return globalSessionService;
 }
 
 export function setSessionService(service: SessionService | null): void {
   globalSessionService = service;
+}
+
+let globalRealtimeTransport: InMemoryRealtimeTransport | null = null;
+let globalLiveQuizService: LiveQuizService | null = null;
+
+export function getRealtimeTransport(): InMemoryRealtimeTransport {
+  if (!globalRealtimeTransport) {
+    globalRealtimeTransport = new InMemoryRealtimeTransport();
+  }
+  return globalRealtimeTransport;
+}
+
+export function setRealtimeTransport(transport: InMemoryRealtimeTransport | null): void {
+  globalRealtimeTransport = transport;
+}
+
+export function getLiveQuizService(): LiveQuizService {
+  if (!globalLiveQuizService) {
+    globalLiveQuizService = new LiveQuizService(
+      getSessionRepository(),
+      getRateLimiter(),
+      getRealtimeTransport()
+    );
+  }
+  return globalLiveQuizService;
+}
+
+export function setLiveQuizService(service: LiveQuizService | null): void {
+  globalLiveQuizService = service;
 }
 
 

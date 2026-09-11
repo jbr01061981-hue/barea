@@ -30,8 +30,21 @@ import {
   SessionFullError,
   SessionAccessDeniedError,
   CrossTenantSnapshotError,
-  InvalidParticipantTokenError
+  InvalidParticipantTokenError,
+  InvalidLiveStateTransitionError,
+  AnswerDeadlineExpiredError,
+  DuplicateAnswerSubmissionError,
+  NotSessionHostError,
+  SessionNotActiveError,
+  InvalidQuestionChoiceError,
+  ConcurrencyConflictError
 } from '../domain/domain-errors';
+import {
+  QuestionLifecycleState,
+  type LiveSessionState,
+  type ParticipantSubmission
+} from '../domain/live-quiz';
+import type { PublishedQuizSnapshot, SnapshotQuestion } from '../domain/quiz';
 
 export interface CreateSessionPayload {
   readonly workspaceType: WorkspaceType;
@@ -75,6 +88,34 @@ export interface SessionRepository {
   assignPupil(sessionId: string, hostUserId: string, groupId: string, pupilName: string): SessionGroupPupil;
   removePupil(sessionId: string, hostUserId: string, groupId: string, pupilId: string): boolean;
   listGroups(sessionId: string): readonly SessionGroup[];
+
+  // Live Quiz Operations (BAREA-007)
+  getLiveSessionState(sessionId: string): LiveSessionState | null;
+  getPublishedQuizSnapshot(snapshotId: string): PublishedQuizSnapshot | null;
+  startLiveSession(sessionId: string, hostUserId: string, question1: SnapshotQuestion): { session: QuizSession; liveState: LiveSessionState };
+  openQuestion(sessionId: string, hostUserId: string, question: SnapshotQuestion, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState };
+  previewQuestion(sessionId: string, hostUserId: string, question: SnapshotQuestion, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState };
+  lockQuestion(sessionId: string, hostUserId: string, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState };
+  advanceQuestion(sessionId: string, hostUserId: string, nextQuestion: SnapshotQuestion | null, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState };
+  completeLiveSession(sessionId: string, hostUserId: string, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState };
+  recordAnswerSubmission(submission: {
+    sessionId: string;
+    questionPosition: number;
+    questionId: string;
+    participantId?: string | null;
+    userId?: string | null;
+    sessionGroupId?: string | null;
+    sessionGroupPupilId?: string | null;
+    selectedOptionIndices: readonly number[];
+    submittedAt?: string;
+    clientTimestamp?: string;
+    isWithinDeadline?: boolean;
+  }): ParticipantSubmission;
+  getCurrentTimeMs?(): number;
+  setClockForTesting?(clock: (() => number) | null): void;
+  getParticipantSubmission(sessionId: string, questionPosition: number, participantIdOrUserId: string): ParticipantSubmission | null;
+  getGroupSubmission(sessionId: string, questionPosition: number, groupId: string): ParticipantSubmission | null;
+  getSubmissionCountForQuestion(sessionId: string, questionPosition: number): number;
 
   transaction<T>(action: () => T): T;
   close(): void;
@@ -142,8 +183,9 @@ export interface InvitationRow {
 export class SqliteSessionRepository implements SessionRepository {
   private db: DatabaseSync;
   private ownsDb: boolean;
+  private testClock: (() => number) | null = null;
 
-  constructor(dbOrPath: DatabaseSync | string = ':memory:') {
+  constructor(dbOrPath: DatabaseSync | string = ':memory:', clock?: () => number) {
     if (typeof dbOrPath === 'string') {
       this.db = new DatabaseSync(dbOrPath);
       this.ownsDb = true;
@@ -151,7 +193,27 @@ export class SqliteSessionRepository implements SessionRepository {
       this.db = dbOrPath;
       this.ownsDb = false;
     }
+    if (clock) {
+      this.setClockForTesting(clock);
+    }
     this.init();
+  }
+
+  setClockForTesting(clock: (() => number) | null): void {
+    if (process.env.NODE_ENV === 'production' || (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'development')) {
+      throw new Error('Forbidden: test clock overrides cannot be executed in production or unauthorized environments.');
+    }
+    this.testClock = clock;
+  }
+
+  getCurrentTimeMs(): number {
+    if (this.testClock !== null) {
+      if (process.env.NODE_ENV === 'production' || (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'development')) {
+        throw new Error('Forbidden: test clock overrides are disabled in production.');
+      }
+      return this.testClock();
+    }
+    return Date.now();
   }
 
   getDatabase(): DatabaseSync {
@@ -286,6 +348,41 @@ export class SqliteSessionRepository implements SessionRepository {
 
       CREATE INDEX IF NOT EXISTS idx_invitations_lookup
       ON session_invitations(session_id, normalized_identifier);
+
+      CREATE TABLE IF NOT EXISTS session_live_states (
+        session_id TEXT PRIMARY KEY,
+        current_question_position INTEGER NOT NULL DEFAULT 0,
+        current_question_id TEXT,
+        question_state TEXT NOT NULL CHECK(question_state IN ('NOT_STARTED', 'PREVIEW', 'ANSWERING', 'LOCKED', 'COMPLETED')),
+        question_opened_at TEXT,
+        answer_deadline_at TEXT,
+        time_limit_seconds INTEGER,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES quiz_sessions(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS session_answers (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        question_position INTEGER NOT NULL,
+        question_id TEXT NOT NULL,
+        participant_id TEXT,
+        user_id TEXT,
+        session_group_id TEXT,
+        session_group_pupil_id TEXT,
+        selected_option_indices TEXT NOT NULL,
+        submitted_at TEXT NOT NULL,
+        client_submitted_at TEXT,
+        is_within_deadline INTEGER NOT NULL CHECK(is_within_deadline IN (0, 1)),
+        FOREIGN KEY (session_id) REFERENCES quiz_sessions(id) ON DELETE CASCADE,
+        FOREIGN KEY (participant_id) REFERENCES session_participants(id) ON DELETE CASCADE,
+        FOREIGN KEY (session_group_id) REFERENCES session_groups(id) ON DELETE CASCADE,
+        CONSTRAINT uq_session_question_user UNIQUE (session_id, question_position, user_id),
+        CONSTRAINT uq_session_question_group UNIQUE (session_id, question_position, session_group_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_answers_session_pos
+      ON session_answers(session_id, question_position);
     `);
   }
 
@@ -353,6 +450,14 @@ export class SqliteSessionRepository implements SessionRepository {
         nowIso,
         expiresAt
       );
+
+      this.db.prepare(`
+        INSERT INTO session_live_states (
+          session_id, current_question_position, current_question_id,
+          question_state, question_opened_at, answer_deadline_at,
+          time_limit_seconds, updated_at
+        ) VALUES (?, 0, NULL, 'NOT_STARTED', NULL, NULL, NULL, ?)
+      `).run(sessionId, nowIso);
 
       if (payload.invitations && payload.invitations.length > 0) {
         const insertInvStmt = this.db.prepare(`
@@ -847,5 +952,538 @@ export class SqliteSessionRepository implements SessionRepository {
       joinedAt: row.joined_at,
       lastActiveAt: row.last_active_at
     };
+  }
+
+  // --- BAREA-007 Live Quiz Operations ---
+
+  getLiveSessionState(sessionId: string): LiveSessionState | null {
+    const session = this.findSessionById(sessionId);
+    if (!session) return null;
+
+    const snapshot = this.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
+    const totalQuestions = snapshot ? snapshot.questions.length : 0;
+
+    const row = this.db.prepare(
+      'SELECT * FROM session_live_states WHERE session_id = ?'
+    ).get(sessionId) as unknown as {
+      session_id: string;
+      current_question_position: number;
+      current_question_id: string | null;
+      question_state: string;
+      question_opened_at: string | null;
+      answer_deadline_at: string | null;
+      time_limit_seconds: number | null;
+      updated_at: string;
+    } | undefined;
+
+    const now = new Date().toISOString();
+
+    if (!row) {
+      return {
+        sessionId: session.id,
+        organizationId: session.organizationId,
+        hostUserId: session.hostUserId,
+        sessionStatus: session.status,
+        participationMode: session.participationMode,
+        stateVersion: session.stateVersion,
+        totalQuestions,
+        currentQuestionPosition: 0,
+        currentQuestionId: null,
+        questionLifecycleState: QuestionLifecycleState.NOT_STARTED,
+        questionOpenedAt: null,
+        answerDeadlineAt: null,
+        timeLimitSeconds: null,
+        serverTime: now,
+        isLocked: session.isLocked
+      };
+    }
+
+    return {
+      sessionId: session.id,
+      organizationId: session.organizationId,
+      hostUserId: session.hostUserId,
+      sessionStatus: session.status,
+      participationMode: session.participationMode,
+      stateVersion: session.stateVersion,
+      totalQuestions,
+      currentQuestionPosition: row.current_question_position,
+      currentQuestionId: row.current_question_id,
+      questionLifecycleState: row.question_state as QuestionLifecycleState,
+      questionOpenedAt: row.question_opened_at,
+      answerDeadlineAt: row.answer_deadline_at,
+      timeLimitSeconds: row.time_limit_seconds,
+      serverTime: now,
+      isLocked: session.isLocked
+    };
+  }
+
+  getPublishedQuizSnapshot(snapshotId: string): PublishedQuizSnapshot | null {
+    const row = this.db.prepare(
+      'SELECT id, quiz_id, organization_id, title, description, default_time_limit_seconds, scoring_style, option_shuffle, version_number, snapshot_json, published_at, published_by_user_id FROM published_quiz_snapshots WHERE id = ?'
+    ).get(snapshotId) as unknown as {
+      id: string;
+      quiz_id: string;
+      organization_id: string;
+      title: string;
+      description: string | null;
+      default_time_limit_seconds: number;
+      scoring_style: string;
+      option_shuffle: number;
+      version_number: number;
+      snapshot_json: string;
+      published_at: string;
+      published_by_user_id: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    let parsedQuestions: SnapshotQuestion[] = [];
+    try {
+      const parsed = JSON.parse(row.snapshot_json);
+      if (Array.isArray(parsed.questions)) {
+        parsedQuestions = parsed.questions;
+      }
+    } catch {
+      parsedQuestions = [];
+    }
+
+    return {
+      id: row.id,
+      quizId: row.quiz_id,
+      organizationId: row.organization_id,
+      title: row.title,
+      description: row.description,
+      defaultTimeLimitSeconds: row.default_time_limit_seconds,
+      scoringStyle: row.scoring_style as any,
+      optionShuffle: row.option_shuffle === 1,
+      versionNumber: row.version_number,
+      publishedAt: row.published_at,
+      publishedByUserId: row.published_by_user_id,
+      questions: parsedQuestions
+    };
+  }
+
+  startLiveSession(sessionId: string, hostUserId: string, question1: SnapshotQuestion): { session: QuizSession; liveState: LiveSessionState } {
+    return this.transaction(() => {
+      const session = this.findSessionById(sessionId);
+      if (!session) throw new SessionNotFoundError(sessionId);
+      if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
+      if (session.status !== SessionStatus.LOBBY) {
+        throw new InvalidLiveStateTransitionError(`Cannot start session from status '${session.status}'. Session must be in LOBBY.`);
+      }
+      if (session.isLocked) throw new SessionLockedError();
+      const nowMs = Date.now();
+      if (nowMs > new Date(session.expiresAt).getTime()) throw new SessionClosedError();
+
+      const timeLimitSeconds = question1.timeLimitSeconds > 0 ? question1.timeLimitSeconds : 30;
+      const nowIso = new Date(nowMs).toISOString();
+      const deadlineIso = new Date(nowMs + timeLimitSeconds * 1000).toISOString();
+
+      this.db.prepare(`
+        UPDATE quiz_sessions
+        SET status = 'ACTIVE', state_version = state_version + 1
+        WHERE id = ?
+      `).run(sessionId);
+
+      this.db.prepare(`
+        INSERT INTO session_live_states (
+          session_id, current_question_position, current_question_id,
+          question_state, question_opened_at, answer_deadline_at,
+          time_limit_seconds, updated_at
+        ) VALUES (?, 1, ?, 'ANSWERING', ?, ?, ?, ?)
+        ON CONFLICT(session_id) DO UPDATE SET
+          current_question_position = 1,
+          current_question_id = excluded.current_question_id,
+          question_state = 'ANSWERING',
+          question_opened_at = excluded.question_opened_at,
+          answer_deadline_at = excluded.answer_deadline_at,
+          time_limit_seconds = excluded.time_limit_seconds,
+          updated_at = excluded.updated_at
+      `).run(sessionId, question1.id, nowIso, deadlineIso, timeLimitSeconds, nowIso);
+
+      const updatedSession = this.findSessionById(sessionId)!;
+      const liveState = this.getLiveSessionState(sessionId)!;
+      return { session: updatedSession, liveState };
+    });
+  }
+
+  openQuestion(sessionId: string, hostUserId: string, question: SnapshotQuestion, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState } {
+    return this.transaction(() => {
+      const session = this.findSessionById(sessionId);
+      if (!session) throw new SessionNotFoundError(sessionId);
+      if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
+      if (session.status !== SessionStatus.ACTIVE) throw new SessionNotActiveError();
+      if (expectedVersion !== undefined && session.stateVersion !== expectedVersion) {
+        throw new ConcurrencyConflictError(`Expected state version ${expectedVersion} does not match current ${session.stateVersion}.`);
+      }
+
+      const timeLimitSeconds = question.timeLimitSeconds > 0 ? question.timeLimitSeconds : 30;
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const deadlineIso = new Date(nowMs + timeLimitSeconds * 1000).toISOString();
+
+      this.db.prepare(`
+        UPDATE quiz_sessions
+        SET state_version = state_version + 1
+        WHERE id = ?
+      `).run(sessionId);
+
+      this.db.prepare(`
+        UPDATE session_live_states
+        SET current_question_position = ?,
+            current_question_id = ?,
+            question_state = 'ANSWERING',
+            question_opened_at = ?,
+            answer_deadline_at = ?,
+            time_limit_seconds = ?,
+            updated_at = ?
+        WHERE session_id = ?
+      `).run(question.position, question.id, nowIso, deadlineIso, timeLimitSeconds, nowIso, sessionId);
+
+      const updatedSession = this.findSessionById(sessionId)!;
+      const liveState = this.getLiveSessionState(sessionId)!;
+      return { session: updatedSession, liveState };
+    });
+  }
+
+  previewQuestion(sessionId: string, hostUserId: string, question: SnapshotQuestion, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState } {
+    return this.transaction(() => {
+      const session = this.findSessionById(sessionId);
+      if (!session) throw new SessionNotFoundError(sessionId);
+      if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
+      if (session.status !== SessionStatus.ACTIVE) throw new SessionNotActiveError();
+      if (expectedVersion !== undefined && session.stateVersion !== expectedVersion) {
+        throw new ConcurrencyConflictError(`Expected state version ${expectedVersion} does not match current ${session.stateVersion}.`);
+      }
+
+      const nowIso = new Date().toISOString();
+
+      this.db.prepare(`
+        UPDATE quiz_sessions
+        SET state_version = state_version + 1
+        WHERE id = ?
+      `).run(sessionId);
+
+      this.db.prepare(`
+        UPDATE session_live_states
+        SET current_question_position = ?,
+            current_question_id = ?,
+            question_state = 'PREVIEW',
+            question_opened_at = NULL,
+            answer_deadline_at = NULL,
+            time_limit_seconds = ?,
+            updated_at = ?
+        WHERE session_id = ?
+      `).run(question.position, question.id, question.timeLimitSeconds, nowIso, sessionId);
+
+      const updatedSession = this.findSessionById(sessionId)!;
+      const liveState = this.getLiveSessionState(sessionId)!;
+      return { session: updatedSession, liveState };
+    });
+  }
+
+  lockQuestion(sessionId: string, hostUserId: string, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState } {
+    return this.transaction(() => {
+      const session = this.findSessionById(sessionId);
+      if (!session) throw new SessionNotFoundError(sessionId);
+      if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
+      if (session.status !== SessionStatus.ACTIVE) throw new SessionNotActiveError();
+      if (expectedVersion !== undefined && session.stateVersion !== expectedVersion) {
+        throw new ConcurrencyConflictError(`Expected state version ${expectedVersion} does not match current ${session.stateVersion}.`);
+      }
+
+      const liveRow = this.db.prepare(
+        'SELECT * FROM session_live_states WHERE session_id = ?'
+      ).get(sessionId) as any;
+
+      if (!liveRow || liveRow.question_state !== 'ANSWERING') {
+        throw new InvalidLiveStateTransitionError(`Cannot lock question from state '${liveRow ? liveRow.question_state : 'UNKNOWN'}'. Must be in ANSWERING.`);
+      }
+
+      const nowIso = new Date().toISOString();
+
+      this.db.prepare(`
+        UPDATE quiz_sessions
+        SET state_version = state_version + 1
+        WHERE id = ?
+      `).run(sessionId);
+
+      this.db.prepare(`
+        UPDATE session_live_states
+        SET question_state = 'LOCKED',
+            updated_at = ?
+        WHERE session_id = ?
+      `).run(nowIso, sessionId);
+
+      const updatedSession = this.findSessionById(sessionId)!;
+      const liveState = this.getLiveSessionState(sessionId)!;
+      return { session: updatedSession, liveState };
+    });
+  }
+
+  advanceQuestion(sessionId: string, hostUserId: string, nextQuestion: SnapshotQuestion | null, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState } {
+    return this.transaction(() => {
+      const session = this.findSessionById(sessionId);
+      if (!session) throw new SessionNotFoundError(sessionId);
+      if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
+      if (session.status !== SessionStatus.ACTIVE) throw new SessionNotActiveError();
+      if (expectedVersion !== undefined && session.stateVersion !== expectedVersion) {
+        throw new ConcurrencyConflictError(`Expected state version ${expectedVersion} does not match current ${session.stateVersion}.`);
+      }
+
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+
+      if (nextQuestion !== null) {
+        const timeLimitSeconds = nextQuestion.timeLimitSeconds > 0 ? nextQuestion.timeLimitSeconds : 30;
+        const deadlineIso = new Date(nowMs + timeLimitSeconds * 1000).toISOString();
+
+        this.db.prepare(`
+          UPDATE quiz_sessions
+          SET state_version = state_version + 1
+          WHERE id = ?
+        `).run(sessionId);
+
+        this.db.prepare(`
+          UPDATE session_live_states
+          SET current_question_position = ?,
+              current_question_id = ?,
+              question_state = 'ANSWERING',
+              question_opened_at = ?,
+              answer_deadline_at = ?,
+              time_limit_seconds = ?,
+              updated_at = ?
+          WHERE session_id = ?
+        `).run(nextQuestion.position, nextQuestion.id, nowIso, deadlineIso, timeLimitSeconds, nowIso, sessionId);
+      } else {
+        // Quiz completed
+        this.db.prepare(`
+          UPDATE quiz_sessions
+          SET status = 'COMPLETED', closed_at = ?, state_version = state_version + 1
+          WHERE id = ?
+        `).run(nowIso, sessionId);
+
+        this.db.prepare(`
+          UPDATE session_live_states
+          SET question_state = 'COMPLETED',
+              updated_at = ?
+          WHERE session_id = ?
+        `).run(nowIso, sessionId);
+      }
+
+      const updatedSession = this.findSessionById(sessionId)!;
+      const liveState = this.getLiveSessionState(sessionId)!;
+      return { session: updatedSession, liveState };
+    });
+  }
+
+  completeLiveSession(sessionId: string, hostUserId: string, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState } {
+    return this.transaction(() => {
+      const session = this.findSessionById(sessionId);
+      if (!session) throw new SessionNotFoundError(sessionId);
+      if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
+      if (session.status !== SessionStatus.ACTIVE && session.status !== SessionStatus.LOBBY) {
+        throw new InvalidLiveStateTransitionError(`Cannot complete session from status '${session.status}'.`);
+      }
+      if (expectedVersion !== undefined && session.stateVersion !== expectedVersion) {
+        throw new ConcurrencyConflictError(`Expected state version ${expectedVersion} does not match current ${session.stateVersion}.`);
+      }
+
+      const nowIso = new Date().toISOString();
+
+      this.db.prepare(`
+        UPDATE quiz_sessions
+        SET status = 'COMPLETED', closed_at = ?, state_version = state_version + 1
+        WHERE id = ?
+      `).run(nowIso, sessionId);
+
+      this.db.prepare(`
+        UPDATE session_live_states
+        SET question_state = 'COMPLETED',
+            updated_at = ?
+        WHERE session_id = ?
+      `).run(nowIso, sessionId);
+
+      const updatedSession = this.findSessionById(sessionId)!;
+      const liveState = this.getLiveSessionState(sessionId)!;
+      return { session: updatedSession, liveState };
+    });
+  }
+
+  recordAnswerSubmission(submission: {
+    sessionId: string;
+    questionPosition: number;
+    questionId: string;
+    participantId?: string | null;
+    userId?: string | null;
+    sessionGroupId?: string | null;
+    sessionGroupPupilId?: string | null;
+    selectedOptionIndices: readonly number[];
+    submittedAt?: string;
+    clientTimestamp?: string;
+    isWithinDeadline?: boolean;
+  }): ParticipantSubmission {
+    return this.transaction(() => {
+      const session = this.findSessionById(submission.sessionId);
+      if (!session) throw new SessionNotFoundError(submission.sessionId);
+      if (session.status !== SessionStatus.ACTIVE) throw new SessionNotActiveError();
+      if (session.isLocked) throw new SessionLockedError();
+
+      const liveRow = this.db.prepare(
+        'SELECT * FROM session_live_states WHERE session_id = ?'
+      ).get(submission.sessionId) as any;
+
+      if (!liveRow || liveRow.question_state !== 'ANSWERING') {
+        throw new InvalidLiveStateTransitionError('Answer window is not currently open.');
+      }
+
+      if (liveRow.current_question_position !== submission.questionPosition) {
+        throw new InvalidLiveStateTransitionError(`Question position mismatch: live question is at position ${liveRow.current_question_position}, submission was for position ${submission.questionPosition}`);
+      }
+
+      if (!liveRow.answer_deadline_at) {
+        throw new InvalidLiveStateTransitionError('No active answer deadline configured for current question.');
+      }
+
+      // Authoritative deadline check at persistence boundary using fresh server time
+      const serverNowMs = this.getCurrentTimeMs();
+      const deadlineMs = new Date(liveRow.answer_deadline_at).getTime();
+      if (serverNowMs > deadlineMs) {
+        throw new AnswerDeadlineExpiredError();
+      }
+
+      const authoritativeSubmittedAt = new Date(serverNowMs).toISOString();
+
+      // Deterministic duplicate check (First accepted submission wins)
+      if (submission.userId) {
+        const existing = this.db.prepare(
+          'SELECT id FROM session_answers WHERE session_id = ? AND question_position = ? AND user_id = ?'
+        ).get(submission.sessionId, submission.questionPosition, submission.userId);
+        if (existing) {
+          throw new DuplicateAnswerSubmissionError();
+        }
+      } else if (submission.sessionGroupId) {
+        const existing = this.db.prepare(
+          'SELECT id FROM session_answers WHERE session_id = ? AND question_position = ? AND session_group_id = ?'
+        ).get(submission.sessionId, submission.questionPosition, submission.sessionGroupId);
+        if (existing) {
+          throw new DuplicateAnswerSubmissionError();
+        }
+      }
+
+      const id = 'ans_' + crypto.randomUUID();
+      try {
+        this.db.prepare(`
+          INSERT INTO session_answers (
+            id, session_id, question_position, question_id,
+            participant_id, user_id, session_group_id, session_group_pupil_id,
+            selected_option_indices, submitted_at, client_submitted_at, is_within_deadline
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          id,
+          submission.sessionId,
+          submission.questionPosition,
+          submission.questionId,
+          submission.participantId ?? null,
+          submission.userId ?? null,
+          submission.sessionGroupId ?? null,
+          submission.sessionGroupPupilId ?? null,
+          JSON.stringify(submission.selectedOptionIndices),
+          authoritativeSubmittedAt,
+          submission.clientTimestamp ?? null,
+          1 // Accepted answers are authoritatively within deadline
+        );
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) {
+          throw new DuplicateAnswerSubmissionError();
+        }
+        throw err;
+      }
+
+      return {
+        id,
+        sessionId: submission.sessionId,
+        questionPosition: submission.questionPosition,
+        questionId: submission.questionId,
+        participantId: submission.participantId ?? null,
+        userId: submission.userId ?? null,
+        sessionGroupId: submission.sessionGroupId ?? null,
+        sessionGroupPupilId: submission.sessionGroupPupilId ?? null,
+        selectedOptionIndices: submission.selectedOptionIndices,
+        submittedAt: authoritativeSubmittedAt,
+        clientTimestamp: submission.clientTimestamp,
+        isWithinDeadline: true
+      };
+    });
+  }
+
+  getParticipantSubmission(sessionId: string, questionPosition: number, participantIdOrUserId: string): ParticipantSubmission | null {
+    const row = this.db.prepare(`
+      SELECT * FROM session_answers
+      WHERE session_id = ? AND question_position = ? AND (user_id = ? OR participant_id = ?)
+    `).get(sessionId, questionPosition, participantIdOrUserId, participantIdOrUserId) as any;
+
+    if (!row) return null;
+
+    let selectedIndices: number[] = [];
+    try {
+      selectedIndices = JSON.parse(row.selected_option_indices);
+    } catch {
+      selectedIndices = [];
+    }
+
+    return {
+      id: row.id,
+      sessionId: row.session_id,
+      questionPosition: row.question_position,
+      questionId: row.question_id,
+      participantId: row.participant_id,
+      userId: row.user_id,
+      sessionGroupId: row.session_group_id,
+      sessionGroupPupilId: row.session_group_pupil_id,
+      selectedOptionIndices: selectedIndices,
+      submittedAt: row.submitted_at,
+      clientTimestamp: row.client_submitted_at ?? undefined,
+      isWithinDeadline: row.is_within_deadline === 1
+    };
+  }
+
+  getGroupSubmission(sessionId: string, questionPosition: number, groupId: string): ParticipantSubmission | null {
+    const row = this.db.prepare(`
+      SELECT * FROM session_answers
+      WHERE session_id = ? AND question_position = ? AND session_group_id = ?
+    `).get(sessionId, questionPosition, groupId) as any;
+
+    if (!row) return null;
+
+    let selectedIndices: number[] = [];
+    try {
+      selectedIndices = JSON.parse(row.selected_option_indices);
+    } catch {
+      selectedIndices = [];
+    }
+
+    return {
+      id: row.id,
+      sessionId: row.session_id,
+      questionPosition: row.question_position,
+      questionId: row.question_id,
+      participantId: row.participant_id,
+      userId: row.user_id,
+      sessionGroupId: row.session_group_id,
+      sessionGroupPupilId: row.session_group_pupil_id,
+      selectedOptionIndices: selectedIndices,
+      submittedAt: row.submitted_at,
+      clientTimestamp: row.client_submitted_at ?? undefined,
+      isWithinDeadline: row.is_within_deadline === 1
+    };
+  }
+
+  getSubmissionCountForQuestion(sessionId: string, questionPosition: number): number {
+    const row = this.db.prepare(`
+      SELECT COUNT(*) as count FROM session_answers
+      WHERE session_id = ? AND question_position = ?
+    `).get(sessionId, questionPosition) as { count: number } | undefined;
+    return row ? row.count : 0;
   }
 }
