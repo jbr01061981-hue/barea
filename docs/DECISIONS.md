@@ -300,10 +300,12 @@ Conversely, falling back to a universal constant (`127.0.0.1`) collapses all una
 
 To satisfy ADR-012 without coupling BAREA to a single cloud vendor, the deployment contract specifies the required behaviors across 14 operational facets:
 
-1. **Expected Production Hosting Target Candidates**:
-   - *Cloudflare Tunnel + Container/VM Origin*: `cloudflared` daemon runs in the private network/container and forwards traffic directly to Next.js port 3000 over loopback/internal bridge. Public port 3000 has no public listening binding or public IP.
-   - *AWS / GCP Private VPC*: Managed Application Load Balancer (ALB) in public subnet terminates TLS; Next.js origin task runs in private subnet with security group ingress restricted strictly to the ALB security group.
-   - *Bare Metal / Dedicated Linux VM with Reverse Proxy (Nginx / Caddy)*: Edge reverse proxy listens on public ports 80/443; Next.js listens strictly on `127.0.0.1:3000`. OS packet filter (`iptables` / `nftables`) drops all external packets targeting port 3000.
+1. **Production Hosting Target & Edge Technology**:
+   - Status: **NOT YET SELECTED** (Deferred to user selection; technology-neutral contract).
+   - Candidate Architectures:
+     - *Cloudflare Tunnel + Container/VM Origin*: `cloudflared` daemon runs in the private network/container and forwards traffic directly to Next.js port 3000 over loopback/internal bridge. Public port 3000 has no public listening binding or public IP.
+     - *AWS / GCP Private VPC*: Managed Application Load Balancer (ALB) in public subnet terminates TLS; Next.js origin task runs in private subnet with security group ingress restricted strictly to the ALB security group.
+     - *Bare Metal / Dedicated Linux VM with Reverse Proxy (Nginx / Caddy)*: Edge reverse proxy listens on public ports 80/443; Next.js listens strictly on `127.0.0.1:3000`. OS packet filter (`iptables` / `nftables`) drops all external packets targeting port 3000.
 2. **Origin Exposure Model**:
    - The Next.js Node process binds to private interface or loopback only (or private container network).
    - Zero public IPv4/IPv6 routing to origin port 3000.

@@ -795,7 +795,7 @@ npm notice run tsc (0 errors)
 
 ### B. Deployment Contract Specification
 The practical deployment contract designed to satisfy ADR-012 establishes:
-1. **Hosting Candidates**: Cloudflare Tunnel (`cloudflared`) to loopback, AWS/GCP Private VPC with ALB ingress and private subnet origin, or Linux VM with Nginx/Caddy and OS packet filter firewall (`nftables`/`iptables`).
+1. **Production Hosting Target & Edge Technology**: **NOT YET SELECTED** (technology-neutral specification supporting Cloudflare Tunnel to loopback, AWS/GCP Private VPC ALB with private subnet origin, or Linux VM with Nginx/Caddy and OS packet filter firewall).
 2. **Origin Exposure**: Next.js origin port 3000 has zero public routing and is never reachable by arbitrary public internet clients.
 3. **Firewall Requirement**: Drops all inbound TCP traffic to port 3000 from `0.0.0.0/0` and `::/0`. Permits ingress strictly from the reverse proxy security group or internal daemon bridge.
 4. **Header Normalization**: The edge reverse proxy unconditionally strips all public client-supplied headers (`X-Forwarded-For`, `CF-Connecting-IP`, `X-Real-IP`, `X-Barea-*`), extracts client IP strictly from its connection socket, and injects internal `X-Barea-Client-IP`.
@@ -805,5 +805,7 @@ The practical deployment contract designed to satisfy ADR-012 establishes:
 
 ### C. Infrastructure State & Release Rule
 - **Infrastructure Status**: NOT YET PROVISIONED.
+- **Production Hosting Target**: NOT YET SELECTED.
+- **Edge Technology**: NOT YET SELECTED.
 - **Merge Status**: Branch `barea-006-share-join` remains unmerged. No self-merge to `main`. Zero scope creep into BAREA-007.
 - **Production Prerequisite**: Live production release requires physical provisioning of the edge proxy, origin firewall rules, and deployment secrets before IP-based rate-limit differentiation can be activated.
