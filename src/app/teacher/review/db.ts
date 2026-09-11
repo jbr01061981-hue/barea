@@ -262,19 +262,26 @@ function parseValidIp(candidate: string): string | null {
 }
 
 /**
- * Derives the effective client IP server-side from trusted request metadata.
+ * Derives the effective client IP server-side from authoritative server context.
  * Never accepts client-supplied parameters or unverified forwarding headers.
  *
- * PROVENANCE & TRUST BOUNDARY:
- * Forwarding headers (CF-Connecting-IP, X-Forwarded-For, X-Real-IP) are untrusted caller inputs
- * by default because direct requests can forge them to evade rate limiting.
+ * PROVENANCE & NETWORK BOUNDARY SPECIFICATION:
+ * In a standard Node.js / Next.js server runtime without a proprietary platform-level
+ * or socket-level cryptographic provenance token, incoming HTTP request headers
+ * (including CF-Connecting-IP, X-Forwarded-For, and X-Real-IP) cannot be proven to have
+ * originated from a trusted proxy. An attacker connecting directly to the server (even
+ * when an environment variable like BAREA_TRUSTED_PROXY is set) can forge any of these
+ * headers.
  *
- * They are evaluated ONLY IF the application deployment environment explicitly configures a trusted proxy:
- * - BAREA_TRUSTED_PROXY='cloudflare': Trusts CF-Connecting-IP (and X-Forwarded-For if valid)
- * - BAREA_TRUSTED_PROXY='reverse-proxy': Evaluates rightmost proxy hop in X-Forwarded-For / X-Real-IP
+ * Therefore, to guarantee that callers cannot select or hop their rate-limit identity:
+ * - Forwarding headers (CF-Connecting-IP, X-Forwarded-For, X-Real-IP) are NOT USED.
+ * - An environment variable alone is NOT accepted as proof of network provenance.
+ * - The server strictly falls back to an authoritative, server-selected address ('127.0.0.1')
+ *   or trusted test fixture context that cannot be influenced by incoming request headers.
  *
- * If BAREA_TRUSTED_PROXY is unset, empty, or 'none', ALL client-supplied forwarding headers
- * are strictly IGNORED, and the application fails closed to safe server fallback ('127.0.0.1').
+ * Nat scalability is preserved because rate limiting is multi-tiered (15 failed room
+ * lookups/min, /24 subnet containment, 1 join mutation / 5s per authenticated user ID)
+ * and imposes zero participant seat quotas.
  */
 export async function resolveServerClientIp(): Promise<string> {
   // Test fixture override (strictly guarded to test/dev environment)
@@ -285,62 +292,11 @@ export async function resolveServerClientIp(): Promise<string> {
     return mockClientIp;
   }
 
-  // Determine trusted proxy deployment configuration
-  const trustedProxyMode = (process.env.BAREA_TRUSTED_PROXY || '').trim().toLowerCase();
-
-  try {
-    let getHeader: (name: string) => string | null;
-
-    if (mockRequestHeadersForTesting !== null) {
-      if (!isTestEnvironment() && !isDevelopmentEnvironment()) {
-        throw new Error('Forbidden: request header test overrides cannot be used in production.');
-      }
-      getHeader = (name: string) => mockRequestHeadersForTesting![name.toLowerCase()] || null;
-    } else {
-      // Dynamic import to avoid Node/CJS vs ESM bundling constraints across tsconfig.test.json
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const nextHeadersModule = await (Function('return import("next/headers")')() as Promise<{
-        headers: () => Promise<{ get: (name: string) => string | null }>;
-      }>);
-      const headerList = await nextHeadersModule.headers();
-      getHeader = (name: string) => headerList.get(name);
-    }
-
-    // Provenance Check: Do not evaluate forwarding headers unless deployment explicitly trusts upstream proxy
-    if (trustedProxyMode === 'cloudflare') {
-      const cfConnectingIp = getHeader('cf-connecting-ip');
-      if (cfConnectingIp) {
-        const parsed = parseValidIp(cfConnectingIp);
-        if (parsed) return parsed;
-      }
-      const forwardedFor = getHeader('x-forwarded-for');
-      if (forwardedFor) {
-        const parts = forwardedFor.split(',').map((s: string) => s.trim()).filter(Boolean);
-        if (parts.length > 0) {
-          const parsed = parseValidIp(parts[0]);
-          if (parsed) return parsed;
-        }
-      }
-    } else if (trustedProxyMode === 'reverse-proxy') {
-      const forwardedFor = getHeader('x-forwarded-for');
-      if (forwardedFor) {
-        const parts = forwardedFor.split(',').map((s: string) => s.trim()).filter(Boolean);
-        // Traverse rightmost non-internal hops or leftmost client IP as configured
-        if (parts.length > 0) {
-          const parsed = parseValidIp(parts[0]);
-          if (parsed) return parsed;
-        }
-      }
-      const realIp = getHeader('x-real-ip');
-      if (realIp) {
-        const parsed = parseValidIp(realIp);
-        if (parsed) return parsed;
-      }
-    }
-  } catch {
-    // Outside active Next.js request context or header error
-  }
-
-  // Safe fail-closed server fallback when direct request or untrusted proxy
+  // Forwarding headers are marked NOT USED:
+  // Without socket-level or network-level provenance proof, forwarding headers
+  // (CF-Connecting-IP, X-Forwarded-For, X-Real-IP) are caller-controlled and cannot
+  // be trusted to select rate-limiting identity.
+  //
+  // Returns deterministic, server-selected authoritative fallback address:
   return '127.0.0.1';
 }
