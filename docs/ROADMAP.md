@@ -16,7 +16,7 @@ Milestones must be executed in order. No milestone may proceed into application 
 | **BAREA-003** | **AI Quiz Generation** | Structured LLM prompt pipeline, parameter inputs, structural validation | **COMPLETED** |
 | **BAREA-004** | **Teacher Review/Approval** | Production frontend foundation, staging UI, editing, Scripture review, approval gate | **COMPLETED — MERGED** |
 | **BAREA-005** | **Quiz Authoring** | Quiz playlist composition, timer & scoring configurations, publishing | **COMPLETED — MERGED** |
-| **BAREA-006** | **Share/Join** | QR generation, room access codes, URL routing, participant onboarding | NOT STARTED |
+| **BAREA-006** | **Share/Join** | Session creation, QR/access-code sharing, admission policies, participant onboarding | **NOT STARTED — SPECIFICATION RECONCILED** |
 | **BAREA-007** | **Live Quiz** | Authoritative state machine, timer sync, real-time transport | NOT STARTED |
 | **BAREA-008** | **Host/Participant UI** | Dual-interface UX: host control console & responsive mobile participant app | NOT STARTED |
 | **BAREA-009** | **Scoring** | Server-side validation, timestamp verification, score algorithm | NOT STARTED |
@@ -44,6 +44,48 @@ AI Generation
 - **Human teacher review** is strictly required to verify scriptural fidelity and age-appropriateness.
 - **Milestone dependency**: AI generation (BAREA-003) places drafts into a staging state (PENDING_REVIEW). Generated questions cannot bypass review or directly enter the Question Bank or active quizzes without the teacher review/approval gate (BAREA-004).
 - **TypeScript gate**: BAREA-002A must be completed and independently verified before BAREA-003 application implementation begins.
+
+---
+
+## Participation Model
+
+BAREA supports two distinct participation modes. They must not be conflated during implementation:
+
+1. **Teacher-controlled group mode**
+   - The teacher/host creates groups and assigns pupils to groups.
+   - Pupils do not need individual BAREA accounts or devices.
+   - The teacher records/marks the group's answer during the live session.
+   - This mode is designed for Sunday schools, classrooms, and church group activities.
+
+2. **Individual authenticated mode**
+   - An individual participates using their own device and BAREA account.
+   - Authentication uses the configured external identity provider and a stable provider identity mapped to the BAREA user.
+   - Admission may be **OPEN** or **RESTRICTED**.
+   - Restricted admission may use verified email/phone policy as defined by the product requirements; client-supplied identity claims are never trusted as authorization.
+
+The original anonymous-nickname-only participation concept is superseded by this model and must not be reintroduced merely to simplify BAREA-006 implementation.
+
+---
+
+## BAREA-006 Admission Model
+
+BAREA-006 establishes session sharing and admission. It must preserve the separation between **participation mode** and **admission policy**:
+
+### ParticipationMode
+- `TEACHER_GROUP`
+- `INDIVIDUAL_AUTHENTICATED`
+
+### AdmissionPolicy
+- `TEACHER_ASSIGNED`
+- `OPEN`
+- `RESTRICTED`
+
+Rules:
+- Teacher-controlled group sessions use `TEACHER_GROUP` + `TEACHER_ASSIGNED`.
+- Individual sessions use `INDIVIDUAL_AUTHENTICATED` with `OPEN` or `RESTRICTED` admission.
+- A public share link or QR code identifies the session; it does not by itself grant authorization to perform protected actions.
+- Authentication and authorization decisions remain server-authoritative.
+- BAREA-006 does not implement the authoritative live-session state transitions; those belong to BAREA-007.
 
 ---
 
@@ -103,10 +145,18 @@ AI Generation
 - **Deliverable**: Complete Quiz Authoring domain, SQLite persistence engine with immutable snapshot triggers and `BEGIN IMMEDIATE` transaction locking, QuizService orchestration, server actions with runtime payload allowlisting, Teacher Authoring UI (`/teacher/quizzes`, `/teacher/quizzes/[id]`), 40 automated tests (`ADV-QZ-01` through `ADV-QZ-30` plus boundary matrix; 122 total test suite), 0 `any` types, and independent multi-agent release verification pass.
 
 ### BAREA-006: Share/Join
-- Session creation with room access codes.
-- Dynamic QR code generation for projector and mobile devices.
-- Low-friction mobile landing flow: nickname entry, duplicate name handling, session resumption.
-- **Status**: NOT STARTED.
+- Establish session creation and session-sharing primitives required before live quiz execution.
+- Generate a secure, collision-resistant room access code for a shareable session.
+- Generate a dynamic QR code and shareable URL that resolve to the intended session.
+- Provide the mobile/participant entry flow appropriate to the selected participation mode and admission policy.
+- For `TEACHER_GROUP` + `TEACHER_ASSIGNED`, support teacher-controlled group/session association without requiring pupil accounts or individual device authentication.
+- For `INDIVIDUAL_AUTHENTICATED`, require the authenticated BAREA user identity for participation and protected join mutations.
+- For `RESTRICTED` admission, enforce the restriction server-side using verified identity attributes; never authorize from caller-supplied email/phone fields alone.
+- Handle duplicate/resumed participation according to the selected mode without allowing session or identity spoofing.
+- Apply rate limits and abuse controls using only server-authoritative identity/provenance established by the deployment architecture; do not accept a client-provided IP as a security input.
+- Keep session lifecycle/state transitions minimal; authoritative live states and synchronized timing belong to BAREA-007.
+- **Status**: NOT STARTED — specification reconciled with the approved participation/security model; implementation authorization required before code changes.
+- **Deliverable**: Secure Share/Join capability with QR/access-code sharing, server-authoritative admission, correct participation-mode handling, and tests for authorization, collision, replay/resumption, abuse controls, and tenant isolation.
 
 ### BAREA-007: Live Quiz
 - Server-authoritative state machine (LOBBY, PREVIEW, ACTIVE, RESULT, LEADERBOARD, PODIUM).
