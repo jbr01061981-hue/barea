@@ -1,181 +1,212 @@
-# AGY PROMPT — BAREA-006 FINAL PROVENANCE CORRECTION
+# AGY PROMPT — BAREA-006 FINAL RATE-LIMIT IDENTITY CORRECTION
 
 Repository: `jbr01061981-hue/barea`
 Branch: `barea-006-share-join`
-Current commit under review: `17581f793bc2542537e3070aef37749195e182a9`
+Current commit under review: `eb8d4160ec2f0fb99f46ffa5b2153cc477e90976`
 
 ## Authorization
 
-**NO-GO — DO NOT MERGE `17581f7`.**
+**NO-GO — DO NOT MERGE `eb8d416`.**
 
-ChatGPT independently inspected the actual implementation in `src/app/teacher/review/db.ts`.
+ChatGPT independently reviewed the actual implementation and confirmed that the previous forwarding-header provenance blocker has been correctly removed: `CF-Connecting-IP`, `X-Forwarded-For`, and `X-Real-IP` are no longer consumed, and `BAREA_TRUSTED_PROXY` no longer establishes trust.
 
-The default/unconfigured deployment path is acceptable, and the Finding 2 error-disclosure fix remains accepted. The ONLY remaining blocker is that the configured `cloudflare` and `reverse-proxy` modes still treat an environment variable as sufficient provenance and then consume caller-visible forwarding headers.
+There is now **one remaining blocker** introduced by that safe change:
 
-## SINGLE REMAINING BLOCKER — ACTUAL IP PROVENANCE
+> `resolveServerClientIp()` returns the constant `127.0.0.1` for every real request.
 
-The security invariant is:
+This prevents caller-controlled IP spoofing, but it collapses all real clients into the same rate-limit identity. That is not acceptable for BAREA's real-world church/NAT use case and can create a shared/global denial-of-service bucket.
 
-> A syntactically valid forwarding header is not proof that the request traversed a trusted proxy.
+## SINGLE REMAINING BLOCKER — REAL RATE-LIMIT IDENTITY
 
-`BAREA_TRUSTED_PROXY=cloudflare` or `BAREA_TRUSTED_PROXY=reverse-proxy` is configuration, not network provenance.
+The required security invariant is now BOTH:
 
-An attacker who can connect directly to the application may be able to send the same headers as a proxy. Therefore the application MUST NOT convert a caller-controlled header into a rate-limit identity unless the runtime/deployment boundary independently establishes that the request came through the trusted proxy.
+1. A caller cannot choose, forge, or rotate the effective rate-limit identity through HTTP headers or action parameters.
+2. Independent legitimate clients are not incorrectly collapsed into one universal rate-limit bucket when the runtime can provide a trustworthy peer/client identity.
+
+The current hard-coded `127.0.0.1` satisfies #1 but fails #2.
+
+The existing rate limiter has multiple IP-based controls, including:
+
+- 15 failed room lookups/minute per IP;
+- 60 failed room lookups/minute per IPv4 /24 or IPv6 /48 subnet;
+- 30 unauthenticated requests/10 seconds per IP;
+- 1 join mutation / 5 seconds per authenticated `userId`.
+
+Therefore, a universal `127.0.0.1` identity can make unrelated users share the same IP buckets. Do not claim NAT scalability merely because participant seat quotas are zero.
 
 ## Required correction
 
-First inspect the actual application/runtime and determine whether BAREA can reliably obtain an authoritative peer/client IP from the hosting platform or framework.
+### Step 1 — Inspect the ACTUAL runtime path
 
-### Preferred solution
+Do not assume that `src/app/teacher/review/db.ts` can obtain a socket peer address merely because it is server-side code.
 
-If the runtime provides an authoritative server-side request IP that is not selected by request headers, use that value for rate limiting.
+Inspect the actual Next.js/App Router/server-action architecture, deployment assumptions, and all callers of `resolveServerClientIp()`.
 
-### If no trustworthy proxy provenance can be established
+Determine whether BAREA can obtain an authoritative request/peer IP from the runtime/platform **without reading caller-controlled forwarding headers**.
 
-Do NOT implement a fake trusted-proxy mode.
+Consider the actual server entry point available to the relevant requests. If obtaining the peer IP requires moving IP resolution to an appropriate Route Handler/middleware/server boundary, evaluate that architecture rather than inventing an API in `db.ts`.
 
-Do NOT rely on `BAREA_TRUSTED_PROXY` alone.
+### Step 2 — Preferred solution
 
-Do NOT trust `CF-Connecting-IP`, `X-Forwarded-For`, or `X-Real-IP` merely because the deployment operator set an environment variable.
+If the actual runtime/platform exposes a trustworthy immediate peer/client address that is not selected by HTTP request headers, use that value for the IP-based abuse controls.
 
-Instead, ignore forwarding headers and use a server-selected fallback/authoritative peer address, or another abuse-control identity that the caller cannot select.
+The value must come from an authoritative runtime/network boundary, not from:
 
-This is preferable to a configurable feature that falsely claims to provide provenance.
+- an action argument;
+- a query parameter;
+- a cookie;
+- a request body;
+- `CF-Connecting-IP`;
+- `X-Forwarded-For`;
+- `X-Real-IP`;
+- an environment variable declaring that a proxy is trusted.
 
-## Cloudflare
+Document exactly where the authoritative address comes from and why a direct attacker cannot select it.
 
-If Cloudflare support is retained, the implementation must establish the actual Cloudflare boundary rather than merely checking `CF-Connecting-IP`.
+### Step 3 — If the current Next.js deployment cannot expose a trustworthy peer IP
 
-Acceptable only if the runtime/deployment provides a reliable way to establish that the immediate request originated from Cloudflare, such as an authoritative platform signal or an explicitly enforced network boundary that BAREA can rely upon.
+Do NOT silently retain `127.0.0.1` and claim that real-client IP rate limiting remains scalable.
 
-If BAREA cannot establish that boundary in application code/runtime, mark Cloudflare forwarding headers **NOT USED** and fall back to the server-selected IP.
+Instead, determine the safest architecture for the actual abuse-control requirement and document the limitation explicitly.
 
-Do NOT use `X-Forwarded-For` as a secondary fallback in Cloudflare mode merely because it contains an IP.
+Possible safe approaches may include moving the relevant unauthenticated throttling to a runtime boundary that has authoritative peer information, or using another server-authoritative abuse-control identity that does not collapse all legitimate clients into one global bucket.
 
-## Reverse proxy
+Do NOT invent a pseudo-IP or derive an identity from attacker-controlled request data.
 
-If reverse-proxy support is retained, define the exact trusted proxy boundary and prove that the request reached BAREA through that proxy.
+Do NOT weaken or remove rate limiting merely to eliminate the collision.
 
-If the application cannot independently establish the trusted proxy boundary, do not consume `X-Forwarded-For` or `X-Real-IP` for the rate-limit identity.
+If no trustworthy per-client identity is technically available in the current deployment, STOP and report the exact architectural limitation rather than manufacturing a false solution. ChatGPT will review the proposed boundary before merge.
 
-Do not use `parts[0]` simply because it is conventionally the original client address.
+## Forwarding headers remain untrusted
 
-Do not use the rightmost address simply because it is closer to the application.
+The correction from `eb8d416` must remain intact:
 
-The correct address depends on a real, enforced trusted-proxy chain. Without that chain, forwarding headers are attacker-controlled input.
+- `CF-Connecting-IP`: NOT USED unless a genuine enforced provenance boundary is established.
+- `X-Forwarded-For`: NOT USED unless a genuine enforced trusted-proxy chain is established.
+- `X-Real-IP`: NOT USED unless a genuine enforced trusted-proxy boundary is established.
+- `BAREA_TRUSTED_PROXY`: configuration alone is NOT provenance.
 
-## Important implementation requirement
+Do not reintroduce the previous mistake in order to fix the new bucket-collision issue.
 
-Do NOT preserve the current architecture merely to make the tests pass.
+## Critical distinction: NAT vs universal fallback
 
-The implementation and tests must demonstrate the security property in the real deployment model.
+BAREA intentionally allows many legitimate participants behind the same church NAT.
 
-If the correct safe result is:
+That means:
 
-```text
-no trustworthy proxy provenance
-        -> ignore forwarding headers
-        -> use server-selected fallback / authoritative peer IP
-```
+- Do NOT introduce a per-IP participant seat quota.
+- Do NOT reject 50+ legitimate participants merely because they share one public NAT address.
+- IP-based controls are for abuse/room-discovery throttling, not participant capacity.
+- Authenticated join throttling must remain keyed by authenticated stable `userId`.
 
-then implement exactly that.
+However, legitimate NAT sharing does NOT justify treating the entire application as `127.0.0.1` if an authoritative real peer address is available.
 
-A deterministic server fallback such as `127.0.0.1` is acceptable for the current abuse-control requirement if no authoritative peer IP is available, provided it is entirely server-selected and cannot be changed by request headers.
+The design must distinguish:
 
-Preserve NAT scalability: do NOT reintroduce per-IP participant seat quotas.
+`many users behind one real NAT IP`
+
+from:
+
+`every user in the entire application represented as 127.0.0.1`.
 
 ## Mandatory adversarial tests
 
-Add or revise tests so they prove the actual security invariant, not merely configuration behavior.
+Tests must prove both sides of the invariant.
 
-### Direct attacker
+### A. Header spoof resistance
 
-With no trusted proxy boundary, these must NEVER select the effective IP:
+Send arbitrary/conflicting:
 
-```text
-CF-Connecting-IP: 203.0.113.10
-X-Forwarded-For: 203.0.113.11
-X-Real-IP: 203.0.113.12
-```
+- `CF-Connecting-IP`;
+- `X-Forwarded-For`;
+- `X-Real-IP`;
+- multiple XFF values;
+- attacker-controlled first/leftmost values;
+- attacker-controlled last/rightmost values;
+- malformed/whitespace/injection payloads.
 
-Repeat with different attacker-selected values and prove the rate-limit bucket does not change.
+None may select the effective rate-limit identity.
 
-### Configured-but-direct deployment
+### B. Direct-vs-direct client identity
 
-This is mandatory. Set:
+If the runtime provides an authoritative peer IP, simulate two independent direct clients with different authoritative peer addresses and prove that:
 
-```text
-BAREA_TRUSTED_PROXY=cloudflare
-```
+- the effective identities differ;
+- forged forwarding headers cannot alter either identity;
+- rotating forwarding headers cannot hop buckets.
 
-or:
+### C. NAT behavior
 
-```text
-BAREA_TRUSTED_PROXY=reverse-proxy
-```
+Simulate many legitimate participants sharing the same authoritative NAT address and prove that:
 
-while simulating a request that did NOT traverse the trusted proxy.
+- zero participant seat quotas remain;
+- authenticated joins remain keyed by `userId`;
+- legitimate participants are not rejected merely because they share the NAT address.
 
-The attacker must still be unable to select the effective IP.
+### D. Rate-limit isolation
 
-If the application cannot distinguish that request from a genuine proxy request, the implementation MUST NOT trust the forwarding header.
+Prove that abusive traffic from authoritative peer A cannot consume the per-IP bucket for authoritative peer B.
 
-### Genuine trusted deployment
+Also prove subnet containment still works as intended.
 
-Only if the actual runtime supports a verifiable trusted boundary, test the legitimate proxy path and document exactly what establishes provenance.
+### E. Configured-but-direct attack
 
-Otherwise explicitly remove/disable forwarding-header support and test the safe fallback path.
-
-### Header attacks
-
-Test:
-
-- conflicting CF-Connecting-IP / X-Forwarded-For / X-Real-IP;
-- multiple X-Forwarded-For values;
-- attacker-controlled first/leftmost value;
-- attacker-controlled last/rightmost value;
-- malformed values;
-- whitespace/injection payloads;
-- duplicate/conflicting headers where the framework exposes them.
+If any proxy configuration remains anywhere, set it while simulating a direct request. A forged forwarding header must NOT change the authoritative identity.
 
 ## Test-hook security
 
-Keep `setTrustedClientIpForTesting()` and `setMockRequestHeadersForTesting()` strictly isolated from production.
+Keep all test-only IP/header hooks strictly unavailable in production.
 
-Prefer tests that exercise the actual resolution path rather than allowing test-only state to hide a production provenance flaw.
+Do not allow test fixtures to make the implementation appear to have a real peer-IP source when production does not.
+
+Prefer tests that exercise the same production resolution boundary wherever practical.
 
 ## Code audit
 
 Audit every use of:
 
-- `resolveServerClientIp`
-- `CF-Connecting-IP`
-- `X-Forwarded-For`
-- `X-Real-IP`
-- `clientIp`
-- `setTrustedClientIpForTesting`
-- `setMockRequestHeadersForTesting`
+- `resolveServerClientIp`;
+- `clientIp`;
+- `CF-Connecting-IP`;
+- `X-Forwarded-For`;
+- `X-Real-IP`;
+- `BAREA_TRUSTED_PROXY`;
+- `setTrustedClientIpForTesting`;
+- `setMockRequestHeadersForTesting`.
 
-Trace:
+Trace the actual request path:
 
 `lookupRoomAction()` / `joinSessionAction()`
-→ IP resolution
+→ request/runtime boundary
+→ authoritative identity resolution
 → session service
 → rate limiter.
 
-Confirm there is NO alternate public path by which a caller can choose the rate-limit identity.
+Confirm there is no alternate public path through which a caller can choose the identity.
 
-## Preserve existing security
+## Finding 2 remains fixed
+
+Preserve the existing generic unexpected-error response and server-side logging.
+
+Unexpected internal errors must not expose:
+
+- SQL/database errors;
+- filesystem paths;
+- stack traces;
+- provider errors;
+- internal implementation details.
+
+## Preserve existing security/domain protections
 
 Do not regress:
 
-- generic unexpected-error response / internal error sanitization;
 - tenant isolation and authorization;
 - personal workspace Option A isolated tenant mapping;
-- authenticated participant rate limiting;
-- NAT scalability;
+- authenticated participant rate limiting by stable `userId`;
 - room lookup throttling;
-- existing BAREA-006 admission boundaries;
+- NAT scalability / zero participant seat quotas;
+- BAREA-006 admission boundaries;
+- session expiration behavior;
 - BAREA-007 quarantine.
 
 ## Scope restrictions
@@ -183,10 +214,12 @@ Do not regress:
 Do NOT:
 
 - restore a client-supplied `clientIp` action parameter;
-- trust renamed client parameters;
-- trust forwarding headers without actual provenance;
-- solve provenance with regex alone;
+- rename a client-supplied IP parameter;
+- trust forwarding headers based only on an environment variable;
+- use regex/IP syntax validation as provenance proof;
+- use `127.0.0.1` as a universal production identity and claim that it represents real clients;
 - remove rate limiting;
+- introduce per-IP participant seat quotas;
 - reintroduce anonymous nickname admission;
 - introduce client-selected tenant identity;
 - weaken authentication or authorization;
@@ -210,22 +243,23 @@ git status
 git diff
 ```
 
-Report actual results only.
+Report actual results only. Do not claim a command passed unless it was actually executed.
 
 ## Required two-agent fresh review
 
-Run exactly:
+Run exactly two fresh independent agents after the correction.
 
 ### Agent 1 — Security + Architecture Red Team
 
 Must independently verify:
 
-- actual IP provenance;
-- configured-but-direct attacker behavior;
-- Cloudflare handling if retained;
-- reverse-proxy handling if retained;
-- XFF traversal correctness if retained;
-- rate-limit bucket spoof resistance;
+- authoritative peer/client identity source;
+- direct attacker header spoof resistance;
+- configured-but-direct behavior;
+- absence of caller-selected rate-limit identity;
+- per-client bucket isolation;
+- NAT behavior;
+- forwarding-header provenance;
 - test-hook production isolation;
 - Finding 2 sanitization;
 - tenant/authorization boundaries;
@@ -235,16 +269,17 @@ Must independently verify:
 
 Must independently verify:
 
-- real action/service/rate-limiter integration;
-- adversarial test realism;
+- actual action → runtime boundary → IP identity → service → rate limiter integration;
+- test realism;
 - legitimate deployment behavior;
+- independent-client rate-limit isolation;
 - NAT scalability;
 - authenticated rate limiting;
 - session persistence/expiry behavior;
 - error sanitization;
 - complete test/typecheck/build results.
 
-Both agents MUST issue explicit GO/NO-GO verdicts. Do not manufacture unanimous approval.
+Both agents MUST issue explicit GO/NO-GO verdicts and concrete findings. Do not manufacture unanimous approval.
 
 ## Git / merge rules
 
@@ -260,7 +295,7 @@ Commit the correction with a clear security-focused message and push to:
 **DO NOT SELF-MERGE.**
 **DO NOT START BAREA-007.**
 
-After implementation and fresh two-agent review, STOP and wait for ChatGPT's independent review and explicit merge authorization.
+After implementation and fresh two-agent review, STOP and wait for ChatGPT's independent security re-review and explicit merge authorization.
 
 ## Final report
 
@@ -271,22 +306,29 @@ Report:
 - new commit
 - exact files changed
 - actual runtime/deployment trust model
-- why attacker-controlled headers cannot establish effective IP
+- exact authoritative identity source
+- why caller-controlled headers cannot establish or change the identity
 
-### IP provenance
-- direct attacker spoofing: PASS/FAIL
+### Rate-limit identity
+- authoritative peer/client identity: PASS/FAIL
+- direct header spoofing: PASS/FAIL
 - configured-but-direct spoofing: PASS/FAIL
-- CF-Connecting-IP provenance: PASS/FAIL/NOT USED
-- X-Forwarded-For provenance: PASS/FAIL/NOT USED
-- X-Real-IP provenance: PASS/FAIL/NOT USED
-- rate-limit bucket spoofing: PASS/FAIL
+- independent-client bucket isolation: PASS/FAIL
+- NAT behavior: PASS/FAIL
+- participant seat quota regression: PASS/FAIL
+
+### Forwarding headers
+- CF-Connecting-IP: PASS/FAIL/NOT USED
+- X-Forwarded-For: PASS/FAIL/NOT USED
+- X-Real-IP: PASS/FAIL/NOT USED
+- BAREA_TRUSTED_PROXY provenance: PASS/FAIL/NOT USED
 
 ### Existing protections
-- NAT/subnet anti-abuse: PASS/FAIL
 - authenticated participant rate limiting: PASS/FAIL
 - room lookup throttling: PASS/FAIL
 - Finding 2 error disclosure: PASS/FAIL
 - tenant/authorization regression: PASS/FAIL
+- session expiration behavior: PASS/FAIL
 - BAREA-007 quarantine: PASS/FAIL
 
 ### Verification
