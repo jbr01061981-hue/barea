@@ -7,7 +7,7 @@
 | Stage | Frontend scope | Status | GitHub reference |
 |---|---|---|---|
 | BAREA-008 | Public homepage / landing foundation | **MERGED** | `9b76e9f` / PR #12 |
-| BAREA-008A | Public teacher entry / sign-in UX | **IN PROGRESS** | `barea-008a-public-entry` |
+| BAREA-008A | Public teacher entry / sign-in UX | **IN PROGRESS** | `barea-008a-public-entry` / PR #13 |
 | BAREA-009 | Teacher Workspace / Quiz Library redesign | **NEXT** | Not started |
 | BAREA-010 | Quiz Builder / Question UX | Planned | Not started |
 | BAREA-011 | Teacher Review / Question Bank UX | Planned | Not started |
@@ -22,25 +22,27 @@
 
 **Status: IN PROGRESS**
 
-Purpose: provide the homepage with a truthful teacher entry point without inventing or simulating production authentication.
+Purpose: keep the teacher entry point directly on the public homepage without inventing or simulating production authentication.
 
-Implemented on branch `barea-008a-public-entry`:
-- Added `/login` as a public frontend entry screen.
-- Added `Teacher sign in` CTA to the homepage hero.
-- Added `Teacher sign in` CTA to the homepage closing section.
-- Login screen explicitly states that production authentication is not yet connected and requests no credentials.
+Current implementation on branch `barea-008a-public-entry`:
+- Teacher sign-in CTA is available from the homepage hero.
+- Header `Sign in` navigates to the homepage teacher-entry section.
+- Homepage contains the teacher-entry panel and clearly states that production authentication is not connected.
+- No credentials are requested or simulated.
+- The separate `/login` route was removed; teacher entry is intentionally part of the homepage experience.
 
 Boundary:
 - Frontend-only change.
 - No authentication API, OAuth provider, security boundary, or backend behavior was added or changed.
 - The existing backend authentication contract remains authoritative.
 
-Verification required before merge:
-- `npm run typecheck`
-- `npm test`
-- `npm run build`
-- `npm run build:next`
-- Rendered desktop/mobile review of `/` and `/login`
+Verification completed before this UI adjustment:
+- `npm run typecheck` — PASS
+- `npm test` — 149/149 PASS
+- `npm run build` — PASS
+- `npm run build:next` — PASS
+- `/login` was verified before being intentionally removed in favor of the homepage-only entry.
+- Desktop visual review of homepage and teacher entry — PASS before this final placement adjustment; final homepage placement requires one local visual check.
 
 ## BAREA-008 — Homepage
 
