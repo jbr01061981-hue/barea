@@ -7,6 +7,7 @@
 | Stage | Frontend scope | Status | GitHub reference |
 |---|---|---|---|
 | BAREA-008 | Public homepage / landing foundation | **MERGED** | `9b76e9f` / PR #12 |
+| BAREA-008A | Public homepage visual redesign + public entry UX | **IN PROGRESS** | `barea-008a-public-entry` / PR #13 |
 | BAREA-009 | Teacher Workspace / Quiz Library redesign | **NEXT** | Not started |
 | BAREA-010 | Quiz Builder / Question UX | Planned | Not started |
 | BAREA-011 | Teacher Review / Question Bank UX | Planned | Not started |
@@ -16,6 +17,78 @@
 | BAREA-015 | Live Host Console | Planned | Not started |
 | BAREA-016 | Results / Leaderboard | Planned | Not started |
 | BAREA-017 | Presentation / Projector experience | Planned | Not started |
+
+## BAREA-008A — Public homepage visual redesign + public entry UX
+
+**Status: IN PROGRESS**
+
+Purpose: implement the approved Stitch visual direction while keeping the homepage simple, responsive, Scripture-centered, and honest about authentication state.
+
+### Design reference
+
+The implementation is based on the user-provided Google Stitch export for the BAREA homepage (`Scriptural Editorial` direction).
+
+Key visual decisions carried into the frontend:
+- Deep midnight / indigo background for the public homepage.
+- Warm ivory Scripture typography.
+- Restrained liturgical gold accent.
+- Editorial serif treatment for Scripture and major headings.
+- Fine borders and tonal layering instead of heavy shadows or decorative SaaS effects.
+- One responsive homepage system across mobile, tablet, laptop, and desktop; not separate site designs.
+- Projector/presentation remains a separate future experience.
+
+### Homepage implementation
+
+- Hero uses a dedicated client-side Scripture typewriter component with additional breathing room and larger Scripture treatment.
+- Scripture cycles through:
+  - `Let the Word dwell richly.` — Colossians 3:16
+  - `Your word is a lamp to my feet.` — Psalm 119:105
+  - `Is not my word like fire?` — Jeremiah 23:29
+- Each verse types character-by-character, pauses, deletes, and transitions to the next verse.
+- The cycle is continuous as requested.
+- A restrained gold cursor and Scripture reference reinforce the animation without adding visual clutter.
+- Hero message is intentionally short: `Prepare. Learn. Share.`
+- Primary homepage action is `Explore BAREA`.
+- General `Log in` entry is used instead of teacher-only login wording.
+- No fake OAuth/provider flow or credentials are requested/simulated.
+- `The BAREA rhythm` is concise: Prepare → Verify → Play, with one short sentence per step.
+- The rhythm entry area keeps `Explore BAREA` and general `Log in` together before the three steps.
+- Human-review messaging is simplified to `Human review. Thoughtful preparation.`
+- Whole-room experiences are framed as `Host`, `Participant`, and `Sanctuary Display`.
+- Closing CTA is intentionally single-action: `Bring your church together around the Word.` / `Explore BAREA`.
+- Existing truthful teacher-review/product positioning is retained without inventing new backend capability.
+
+### Public entry boundary
+
+- The separate `/login` route remains removed.
+- `Log in` points to the homepage entry area rather than inventing a new authentication route.
+- Authentication remains a backend/application dependency; this frontend stage does not implement or alter authentication.
+
+### Files changed on the frontend branch
+
+- `src/app/page.tsx`
+- `src/app/layout.tsx`
+- `src/app/globals.css`
+- `src/app/components/scripture-typewriter.tsx`
+
+### Latest implementation commits
+
+- `6e70480a` — refined homepage Scripture presentation.
+- `194c8fd3` — refined homepage copy and whole-room experience language.
+
+### Verification
+
+Repository changes are committed on `barea-008a-public-entry`.
+
+A final local verification is still required after pulling the latest branch:
+- `npm run typecheck`
+- `npm test`
+- `npm run build`
+- `npm run build:next`
+- visual review at mobile and laptop/desktop widths
+- reduced-motion/accessibility review
+
+Do not mark BAREA-008A complete until that final local verification is reported.
 
 ## BAREA-008 — Homepage
 
@@ -42,104 +115,22 @@ Verification completed before merge:
 - `npm run build:next` — PASS
 - Rendered homepage visual review — PASS
 
-Important implementation corrections before merge:
-- Removed stale negative layout offsets after the root layout changed.
-- Replaced public homepage/header links that incorrectly entered protected `/teacher/quizzes` with public workflow anchors.
-
-## Repository capability audit after BAREA-008
-
-The merged repository already contains substantial backend/domain capability from BAREA-001 through BAREA-007.
-
-### Existing teacher capabilities
-
-The repository currently contains:
-- `/teacher/quizzes` teacher quiz management page.
-- Quiz creation and archive actions.
-- Quiz filtering by All / Draft / Published / Archived.
-- Quiz search.
-- Quiz configuration for title, description, timer, scoring style, and option shuffle.
-- Per-quiz editor at `/teacher/quizzes/[id]`.
-- Separate quiz editor and inspector client experiences.
-- Teacher review experience at `/teacher/review`.
-
-The existing quiz-management UI is functional but currently reads as a basic management/catalog interface rather than the intended purpose-built BAREA teacher workspace.
-
-### Existing session/live capabilities
-
-The domain already defines:
-- `ParticipationMode.TEACHER_GROUP`
-- `ParticipationMode.INDIVIDUAL_AUTHENTICATED`
-- `AdmissionPolicy.TEACHER_ASSIGNED`
-- `AdmissionPolicy.OPEN`
-- `AdmissionPolicy.RESTRICTED`
-- `SessionStatus.LOBBY`
-- `SessionStatus.ACTIVE`
-- `SessionStatus.COMPLETED`
-- `SessionStatus.CLOSED`
-
-The repository also contains session actions and live-session actions/SSE transport.
-
-These are **backend/domain foundations**. They must not be represented in the UI as completed user experiences until the corresponding frontend is implemented and verified.
-
-## Next frontend stage — BAREA-009
-
-### Teacher Workspace / Quiz Library redesign
-
-Goal: turn the existing teacher quiz-management entry point into the primary BAREA teacher workspace without duplicating backend functionality.
-
-The intended experience should make the teacher's preparation journey obvious:
-
-```text
-Teacher Workspace
-    ├── Create quiz
-    ├── Continue draft
-    ├── Question Bank
-    ├── Review AI questions
-    ├── Published quizzes
-    └── Run / share a quiz
-```
-
-This is a **frontend redesign/experience layer** over capabilities that already exist. It must not invent backend APIs or alter security boundaries.
-
-### Sequencing rule
+## Sequencing rule
 
 Do not jump directly from the homepage to the live quiz console. Progressively expose the already-completed BAREA capabilities through purpose-built experiences:
 
-`Homepage → Teacher Workspace → Quiz Builder/Question UX → Review/Question Bank → Share/Join → Host Lobby → Participant → Live Host → Results → Projector`
+`Homepage → Public Entry/Auth UX → Teacher Workspace → Quiz Builder/Question UX → Review/Question Bank → Share/Join → Host Lobby → Participant → Live Host → Results → Projector`
 
 ## Product architecture principles
 
+- This chat/workspace is for **frontend development and frontend testing only**.
+- No Phase 8/backend development takes place here.
 - BAREA is not a generic CRUD/admin dashboard.
 - Teacher/Host experience is desktop/tablet oriented.
 - Participant experience is mobile-first.
 - Presentation experience is projector/large-screen oriented.
 - Frontend is not a security boundary.
 - Backend/session state remains authoritative.
-- `ParticipationMode` and `AdmissionPolicy` remain separate concepts.
-- Never add anonymous nickname-only individual participation.
-- Do not claim frontend support for backend capabilities that have not been wired into a verified UI.
-- Preserve the existing BAREA-001→007 backend/security contracts.
-
-## Development workflow
-
-For each frontend stage:
-
-1. Inspect the current merged `main` implementation and domain contracts.
-2. Define the narrow frontend slice before coding.
-3. Create a dedicated frontend branch from `main`.
-4. Implement directly in the repository.
-5. Run typecheck, tests, production build, and Next build.
-6. Perform rendered visual review at desktop and mobile sizes.
-7. Review accessibility/responsive behavior and primary user journeys.
-8. Fix issues found during review before requesting merge.
-9. Merge only the verified stage into `main`.
-10. Update this file with the resulting status, commit/PR, verification evidence, and decisions affecting subsequent stages.
-
-## Source-of-truth rule
-
-This document is the **frontend progress/sequence record**. It complements, but does not replace:
-- the Git repository as implementation source of truth;
-- the main project roadmap as product/backend roadmap;
-- domain models and ADRs as architectural/security contracts.
-
-When this file conflicts with actual code, inspect the code and authoritative project roadmap and correct the discrepancy rather than guessing.
+- Never invent backend APIs or silently alter backend/security/domain contracts to support a frontend feature.
+- If a frontend experience depends on backend capability that does not yet exist, record it as a frontend dependency/backend gap.
+- GitHub `main` and the implementation in the repository are the source of truth; this progress document records frontend sequence and evidence.
