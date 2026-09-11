@@ -1,236 +1,241 @@
-# AGY PROMPT — BAREA-006 FINAL RATE-LIMIT IDENTITY CORRECTION
+# AGY PROMPT — BAREA-006 FINAL RATE-LIMIT IDENTITY ARCHITECTURE
 
 Repository: `jbr01061981-hue/barea`
 Branch: `barea-006-share-join`
-Current commit under review: `eb8d4160ec2f0fb99f46ffa5b2153cc477e90976`
+Current head under review: `eb8d4160ec2f0fb99f46ffa5b2153cc477e90976`
 
-## Authorization
+## Current authorization
 
 **NO-GO — DO NOT MERGE `eb8d416`.**
 
-ChatGPT independently reviewed the actual implementation and confirmed that the previous forwarding-header provenance blocker has been correctly removed: `CF-Connecting-IP`, `X-Forwarded-For`, and `X-Real-IP` are no longer consumed, and `BAREA_TRUSTED_PROXY` no longer establishes trust.
+The previous IP-provenance blocker was correctly fixed by completely ignoring caller-controlled forwarding headers. However, the resulting hard-coded `127.0.0.1` identity collapses all unauthenticated clients into one global rate-limit bucket.
 
-There is now **one remaining blocker** introduced by that safe change:
+This is now the SINGLE remaining architectural blocker.
 
-> `resolveServerClientIp()` returns the constant `127.0.0.1` for every real request.
+## Architectural finding
 
-This prevents caller-controlled IP spoofing, but it collapses all real clients into the same rate-limit identity. That is not acceptable for BAREA's real-world church/NAT use case and can create a shared/global denial-of-service bucket.
+`resolveServerClientIp()` currently returns `127.0.0.1` for production requests and therefore all unauthenticated clients share the same IP bucket.
 
-## SINGLE REMAINING BLOCKER — REAL RATE-LIMIT IDENTITY
+That defeats BAREA's church-scale requirement. One attacker can exhaust the IP-based room-lookup/unauthenticated request limits for the entire congregation.
 
-The required security invariant is now BOTH:
+Do NOT solve this by restoring blind trust in:
 
-1. A caller cannot choose, forge, or rotate the effective rate-limit identity through HTTP headers or action parameters.
-2. Independent legitimate clients are not incorrectly collapsed into one universal rate-limit bucket when the runtime can provide a trustworthy peer/client identity.
+- `CF-Connecting-IP`
+- `X-Forwarded-For`
+- `X-Real-IP`
+- `BAREA_TRUSTED_PROXY` alone
+- any client-supplied `clientIp` parameter
 
-The current hard-coded `127.0.0.1` satisfies #1 but fails #2.
+## Architectural decision
 
-The existing rate limiter has multiple IP-based controls, including:
+**PREFERRED PRODUCTION ARCHITECTURE: OPTION 1 — ENFORCED EDGE/REVERSE-PROXY TRUST BOUNDARY.**
 
-- 15 failed room lookups/minute per IP;
-- 60 failed room lookups/minute per IPv4 /24 or IPv6 /48 subnet;
-- 30 unauthenticated requests/10 seconds per IP;
-- 1 join mutation / 5 seconds per authenticated `userId`.
+BAREA should establish a real deployment boundary in which the public application is reachable only through a trusted edge/reverse proxy and the origin is not directly reachable by untrusted clients.
 
-Therefore, a universal `127.0.0.1` identity can make unrelated users share the same IP buckets. Do not claim NAT scalability merely because participant seat quotas are zero.
+The preferred design is:
 
-## Required correction
+```text
+Internet client
+      |
+      v
+Trusted edge / reverse proxy
+      |
+      |  strips/replaces client-IP headers
+      |  adds authenticated proxy attestation
+      v
+BAREA origin / Next.js
+```
 
-### Step 1 — Inspect the ACTUAL runtime path
+The proxy-to-origin connection must be protected by an independently managed secret or mTLS/network isolation. The application must accept forwarded client identity ONLY after authenticating the proxy boundary.
 
-Do not assume that `src/app/teacher/review/db.ts` can obtain a socket peer address merely because it is server-side code.
+### IMPORTANT
 
-Inspect the actual Next.js/App Router/server-action architecture, deployment assumptions, and all callers of `resolveServerClientIp()`.
+A shared secret header is useful only if the deployment actually prevents an attacker from reaching the origin and supplying that header themselves.
 
-Determine whether BAREA can obtain an authoritative request/peer IP from the runtime/platform **without reading caller-controlled forwarding headers**.
+Therefore:
 
-Consider the actual server entry point available to the relevant requests. If obtaining the peer IP requires moving IP resolution to an appropriate Route Handler/middleware/server boundary, evaluate that architecture rather than inventing an API in `db.ts`.
+**Proxy secret alone is NOT sufficient if the Next.js origin remains publicly reachable.**
 
-### Step 2 — Preferred solution
+The implementation must document and test the actual deployment invariant:
 
-If the actual runtime/platform exposes a trustworthy immediate peer/client address that is not selected by HTTP request headers, use that value for the IP-based abuse controls.
+> An untrusted Internet client cannot reach the BAREA origin directly; only the trusted proxy can reach it.
 
-The value must come from an authoritative runtime/network boundary, not from:
+If this invariant cannot be guaranteed by the current deployment, do NOT pretend Option 1 is implemented in application code.
 
-- an action argument;
-- a query parameter;
-- a cookie;
-- a request body;
-- `CF-Connecting-IP`;
-- `X-Forwarded-For`;
-- `X-Real-IP`;
-- an environment variable declaring that a proxy is trusted.
+## Option 2 assessment
 
-Document exactly where the authoritative address comes from and why a direct attacker cannot select it.
+Do NOT replace the IP identity with only a signed client cookie as the primary abuse-control solution.
 
-### Step 3 — If the current Next.js deployment cannot expose a trustworthy peer IP
+A cryptographically signed cookie is server-authoritative, but an attacker can clear/reject/reset cookies and obtain another identity. It is useful as an additional abuse-control signal, but it does not by itself provide the same network-level boundary as a protected origin.
 
-Do NOT silently retain `127.0.0.1` and claim that real-client IP rate limiting remains scalable.
+It may be considered as a SECONDARY layer later, but it is not the required fix for this milestone unless a complete abuse-control design is explicitly justified and reviewed.
 
-Instead, determine the safest architecture for the actual abuse-control requirement and document the limitation explicitly.
+## Option 3 assessment
 
-Possible safe approaches may include moving the relevant unauthenticated throttling to a runtime boundary that has authoritative peer information, or using another server-authoritative abuse-control identity that does not collapse all legitimate clients into one global bucket.
+Do not simply declare the IP-based lookup protection out of scope.
 
-Do NOT invent a pseudo-IP or derive an identity from attacker-controlled request data.
+The room lookup endpoint is the unauthenticated attack surface that needs abuse control. The six-character room code space does not eliminate the need for throttling.
 
-Do NOT weaken or remove rate limiting merely to eliminate the collision.
+Keep the existing lookup throttling, but give it a trustworthy per-client identity.
 
-If no trustworthy per-client identity is technically available in the current deployment, STOP and report the exact architectural limitation rather than manufacturing a false solution. ChatGPT will review the proposed boundary before merge.
+## Required implementation path
 
-## Forwarding headers remain untrusted
+### Step 1 — Inspect deployment/runtime configuration
 
-The correction from `eb8d416` must remain intact:
+Inspect the repository for:
 
-- `CF-Connecting-IP`: NOT USED unless a genuine enforced provenance boundary is established.
-- `X-Forwarded-For`: NOT USED unless a genuine enforced trusted-proxy chain is established.
-- `X-Real-IP`: NOT USED unless a genuine enforced trusted-proxy boundary is established.
-- `BAREA_TRUSTED_PROXY`: configuration alone is NOT provenance.
+- deployment configuration
+- Docker/container configuration
+- hosting configuration
+- reverse proxy configuration
+- nginx/Caddy/Traefik configuration if present
+- Vercel/Cloudflare/AWS/GCP configuration if present
+- environment variable documentation
+- Next.js runtime configuration
+- CI/CD deployment configuration
 
-Do not reintroduce the previous mistake in order to fix the new bucket-collision issue.
+Determine whether BAREA currently has an enforceable trusted edge/origin boundary.
 
-## Critical distinction: NAT vs universal fallback
+### Step 2 — If a real boundary already exists
 
-BAREA intentionally allows many legitimate participants behind the same church NAT.
+Use the authoritative platform/runtime identity exposed by that boundary.
 
-That means:
+The application may consume a proxy-provided client IP only after the proxy boundary has been authenticated and direct origin access is prevented.
 
-- Do NOT introduce a per-IP participant seat quota.
-- Do NOT reject 50+ legitimate participants merely because they share one public NAT address.
-- IP-based controls are for abuse/room-discovery throttling, not participant capacity.
-- Authenticated join throttling must remain keyed by authenticated stable `userId`.
+Prefer a framework/platform-provided authoritative request identity when available.
 
-However, legitimate NAT sharing does NOT justify treating the entire application as `127.0.0.1` if an authoritative real peer address is available.
+Do not infer provenance from a header merely because its syntax is valid.
 
-The design must distinguish:
+### Step 3 — If no real boundary exists
 
-`many users behind one real NAT IP`
+STOP before implementing a fake one.
 
-from:
+Report exactly what deployment infrastructure is missing.
 
-`every user in the entire application represented as 127.0.0.1`.
+Do NOT restore forwarding-header trust.
+
+Do NOT use `127.0.0.1` as though it were a real per-client identity and claim that church-scale IP throttling is preserved.
+
+Do NOT invent socket APIs that Next.js Server Actions do not expose.
+
+In this case, propose the smallest deployment-level change required to create the trusted boundary and STOP for ChatGPT review before changing application behavior.
+
+## Option 1 concrete security requirements
+
+If implementation is authorized after inspecting the repository:
+
+1. Public traffic reaches the trusted edge.
+2. Edge strips any incoming client-IP/proxy-attestation headers from the Internet client.
+3. Edge derives the real client address from its own connection context.
+4. Edge writes the canonical client-IP header.
+5. Edge authenticates itself to the origin using mTLS, a secret unavailable to Internet clients, or equivalent enforced network identity.
+6. Origin accepts the canonical client-IP header only after authenticating the proxy boundary.
+7. Direct Internet access to the origin is blocked by firewall/security-group/network policy or equivalent platform enforcement.
+8. Requests failing the proxy boundary are rejected or assigned a quarantined identity that cannot collide with authenticated proxy traffic.
+9. The application never accepts a caller-selected IP parameter.
+
+If a proxy secret is used, compare it using a constant-time mechanism where practical and keep it server-side only.
+
+## Do not over-engineer
+
+Do not introduce cryptographic protocol machinery inside BAREA if the hosting platform already provides a secure trusted proxy boundary.
+
+Do not build a custom proxy server inside the application.
+
+Do not modify unrelated BAREA features.
+
+## Rate-limit requirements
+
+After the correction:
+
+- independent legitimate clients must receive independent rate-limit identities;
+- rotating spoofed forwarding headers must not create new identities;
+- direct origin attackers must not impersonate proxied clients;
+- church NAT must NOT create a participant seat quota;
+- authenticated participant join throttling remains keyed by authenticated `userId`;
+- room lookup throttling remains enabled;
+- subnet containment remains enabled where applicable;
+- one attacker must not be able to exhaust the global lookup bucket for the congregation merely because the fallback is `127.0.0.1`.
 
 ## Mandatory adversarial tests
 
-Tests must prove both sides of the invariant.
+If Option 1 is implemented, tests must demonstrate:
 
-### A. Header spoof resistance
+### Direct attacker
 
-Send arbitrary/conflicting:
+A direct origin request containing arbitrary:
 
-- `CF-Connecting-IP`;
-- `X-Forwarded-For`;
-- `X-Real-IP`;
-- multiple XFF values;
-- attacker-controlled first/leftmost values;
-- attacker-controlled last/rightmost values;
-- malformed/whitespace/injection payloads.
+- `CF-Connecting-IP`
+- `X-Forwarded-For`
+- `X-Real-IP`
+- proxy secret/attestation
 
-None may select the effective rate-limit identity.
+cannot select an arbitrary client identity.
 
-### B. Direct-vs-direct client identity
+### Spoofed proxy secret
 
-If the runtime provides an authoritative peer IP, simulate two independent direct clients with different authoritative peer addresses and prove that:
+A caller who does not possess the real proxy credential cannot enter the trusted-proxy path.
 
-- the effective identities differ;
-- forged forwarding headers cannot alter either identity;
-- rotating forwarding headers cannot hop buckets.
+### Trusted proxy
 
-### C. NAT behavior
+A request arriving through the authenticated proxy boundary resolves to the client identity supplied by the trusted proxy.
 
-Simulate many legitimate participants sharing the same authoritative NAT address and prove that:
+### Header replacement
 
-- zero participant seat quotas remain;
-- authenticated joins remain keyed by `userId`;
-- legitimate participants are not rejected merely because they share the NAT address.
+A client-supplied forwarding header reaching the edge is stripped/replaced rather than preserved.
 
-### D. Rate-limit isolation
+### Bucket isolation
 
-Prove that abusive traffic from authoritative peer A cannot consume the per-IP bucket for authoritative peer B.
+Two legitimate proxied client identities produce separate rate-limit buckets.
 
-Also prove subnet containment still works as intended.
+### Bucket hopping
 
-### E. Configured-but-direct attack
+One attacker changing forwarding headers cannot hop buckets.
 
-If any proxy configuration remains anywhere, set it while simulating a direct request. A forged forwarding header must NOT change the authoritative identity.
+### Origin bypass
 
-## Test-hook security
+A direct request to the origin is blocked/rejected by the documented deployment boundary. This test must be deployment/integration-level where practical; a unit test that merely sets an environment variable is insufficient.
 
-Keep all test-only IP/header hooks strictly unavailable in production.
+### NAT scalability
 
-Do not allow test fixtures to make the implementation appear to have a real peer-IP source when production does not.
+At least 50 legitimate participants behind one church NAT can participate without per-IP participant seat quotas or accidental participant-wide throttling.
 
-Prefer tests that exercise the same production resolution boundary wherever practical.
+## If deployment boundary cannot be implemented now
 
-## Code audit
+The correct result is **STOP / NO-GO**, with an explicit infrastructure requirement for the production deployment.
 
-Audit every use of:
+Do not manufacture an application-only solution and do not weaken the security invariant merely to obtain a passing test suite.
 
-- `resolveServerClientIp`;
-- `clientIp`;
-- `CF-Connecting-IP`;
-- `X-Forwarded-For`;
-- `X-Real-IP`;
-- `BAREA_TRUSTED_PROXY`;
-- `setTrustedClientIpForTesting`;
-- `setMockRequestHeadersForTesting`.
-
-Trace the actual request path:
-
-`lookupRoomAction()` / `joinSessionAction()`
-→ request/runtime boundary
-→ authoritative identity resolution
-→ session service
-→ rate limiter.
-
-Confirm there is no alternate public path through which a caller can choose the identity.
-
-## Finding 2 remains fixed
-
-Preserve the existing generic unexpected-error response and server-side logging.
-
-Unexpected internal errors must not expose:
-
-- SQL/database errors;
-- filesystem paths;
-- stack traces;
-- provider errors;
-- internal implementation details.
-
-## Preserve existing security/domain protections
+## Preserve existing protections
 
 Do not regress:
 
+- generic unexpected-error response and server-side error logging;
 - tenant isolation and authorization;
 - personal workspace Option A isolated tenant mapping;
-- authenticated participant rate limiting by stable `userId`;
+- authenticated participant rate limiting;
 - room lookup throttling;
-- NAT scalability / zero participant seat quotas;
 - BAREA-006 admission boundaries;
-- session expiration behavior;
+- lazy session expiry protections;
+- SQLite transaction/tenant protections;
 - BAREA-007 quarantine.
-
-## Scope restrictions
 
 Do NOT:
 
-- restore a client-supplied `clientIp` action parameter;
-- rename a client-supplied IP parameter;
-- trust forwarding headers based only on an environment variable;
-- use regex/IP syntax validation as provenance proof;
-- use `127.0.0.1` as a universal production identity and claim that it represents real clients;
+- restore client-supplied `clientIp`;
+- trust forwarding headers without an authenticated deployment boundary;
+- trust `BAREA_TRUSTED_PROXY` merely because it is configured;
 - remove rate limiting;
-- introduce per-IP participant seat quotas;
 - reintroduce anonymous nickname admission;
 - introduce client-selected tenant identity;
 - weaken authentication or authorization;
-- modify/start BAREA-007;
-- make unrelated architectural changes;
-- delete or weaken security tests;
+- start BAREA-007;
+- make unrelated changes;
 - self-merge.
 
 ## Verification
 
-After implementation execute the actual commands:
+After any authorized implementation run:
 
 ```text
 npm test
@@ -243,43 +248,43 @@ git status
 git diff
 ```
 
-Report actual results only. Do not claim a command passed unless it was actually executed.
+Report actual results only.
 
-## Required two-agent fresh review
+## Two-agent review
 
-Run exactly two fresh independent agents after the correction.
+Only after implementation, run exactly two fresh independent reviewers:
 
 ### Agent 1 — Security + Architecture Red Team
 
-Must independently verify:
+Verify:
 
-- authoritative peer/client identity source;
-- direct attacker header spoof resistance;
-- configured-but-direct behavior;
-- absence of caller-selected rate-limit identity;
-- per-client bucket isolation;
-- NAT behavior;
-- forwarding-header provenance;
-- test-hook production isolation;
-- Finding 2 sanitization;
+- actual proxy/origin trust boundary;
+- direct-origin bypass resistance;
+- proxy authentication;
+- forwarding-header replacement;
+- client identity provenance;
+- bucket hopping resistance;
+- NAT scalability;
+- test-hook isolation;
+- error sanitization;
 - tenant/authorization boundaries;
 - BAREA-007 quarantine.
 
 ### Agent 2 — Persistence + QA / Implementability Reviewer
 
-Must independently verify:
+Verify:
 
-- actual action → runtime boundary → IP identity → service → rate limiter integration;
-- test realism;
-- legitimate deployment behavior;
-- independent-client rate-limit isolation;
+- action → identity resolution → service → rate limiter integration;
+- realistic deployment behavior;
+- legitimate proxied clients receive distinct identities;
+- direct attackers cannot choose identities;
 - NAT scalability;
 - authenticated rate limiting;
-- session persistence/expiry behavior;
+- session persistence/expiry;
 - error sanitization;
-- complete test/typecheck/build results.
+- complete tests/typecheck/builds.
 
-Both agents MUST issue explicit GO/NO-GO verdicts and concrete findings. Do not manufacture unanimous approval.
+Both must issue explicit GO/NO-GO verdicts. Never manufacture unanimous approval.
 
 ## Git / merge rules
 
@@ -287,7 +292,7 @@ Remain on:
 
 `barea-006-share-join`
 
-Commit the correction with a clear security-focused message and push to:
+Commit only the required correction with a clear security-focused message and push to:
 
 `origin/barea-006-share-join`
 
@@ -301,34 +306,34 @@ After implementation and fresh two-agent review, STOP and wait for ChatGPT's ind
 
 Report:
 
+### Architecture decision
+- current deployment model
+- whether an actual trusted edge/origin boundary exists
+- chosen architecture
+- why it establishes provenance
+- exact infrastructure assumptions
+
 ### Remediation
 - previous commit
 - new commit
 - exact files changed
-- actual runtime/deployment trust model
-- exact authoritative identity source
-- why caller-controlled headers cannot establish or change the identity
+- actual client-identity resolution path
 
-### Rate-limit identity
-- authoritative peer/client identity: PASS/FAIL
-- direct header spoofing: PASS/FAIL
-- configured-but-direct spoofing: PASS/FAIL
-- independent-client bucket isolation: PASS/FAIL
-- NAT behavior: PASS/FAIL
-- participant seat quota regression: PASS/FAIL
-
-### Forwarding headers
-- CF-Connecting-IP: PASS/FAIL/NOT USED
-- X-Forwarded-For: PASS/FAIL/NOT USED
-- X-Real-IP: PASS/FAIL/NOT USED
-- BAREA_TRUSTED_PROXY provenance: PASS/FAIL/NOT USED
+### Security
+- direct origin spoofing: PASS/FAIL
+- proxy authentication: PASS/FAIL
+- header replacement: PASS/FAIL
+- trusted proxy identity: PASS/FAIL
+- bucket hopping: PASS/FAIL
+- independent client bucket isolation: PASS/FAIL
+- origin bypass: PASS/FAIL
+- NAT scalability: PASS/FAIL
 
 ### Existing protections
 - authenticated participant rate limiting: PASS/FAIL
 - room lookup throttling: PASS/FAIL
 - Finding 2 error disclosure: PASS/FAIL
 - tenant/authorization regression: PASS/FAIL
-- session expiration behavior: PASS/FAIL
 - BAREA-007 quarantine: PASS/FAIL
 
 ### Verification
