@@ -795,9 +795,9 @@ npm notice run tsc (0 errors)
 
 ### B. Deployment Contract Specification
 The practical deployment contract designed to satisfy ADR-012 establishes:
-1. **Production Hosting Target & Edge Technology**: **NOT YET SELECTED** (technology-neutral specification supporting Cloudflare Tunnel to loopback, AWS/GCP Private VPC ALB with private subnet origin, or Linux VM with Nginx/Caddy and OS packet filter firewall).
-2. **Origin Exposure**: Next.js origin port 3000 has zero public routing and is never reachable by arbitrary public internet clients.
-3. **Firewall Requirement**: Drops all inbound TCP traffic to port 3000 from `0.0.0.0/0` and `::/0`. Permits ingress strictly from the reverse proxy security group or internal daemon bridge.
+1. **Production Hosting Target & Edge Technology**: **SELECTED — CLOUDFLARE EDGE + CLOUDFLARE TUNNEL (`cloudflared`)**. Formally selected by user decision (commit `a6a8f3b`).
+2. **Origin Exposure**: Next.js origin port 3000 has zero public routing, binds to loopback/private interface, and is never reachable by arbitrary public internet clients.
+3. **Firewall Requirement**: Drops all inbound TCP traffic to port 3000 from `0.0.0.0/0` and `::/0`. Permits ingress strictly via `cloudflared` outbound daemon tunnel.
 4. **Header Normalization**: The edge reverse proxy unconditionally strips all public client-supplied headers (`X-Forwarded-For`, `CF-Connecting-IP`, `X-Real-IP`, `X-Barea-*`), extracts client IP strictly from its connection socket, and injects internal `X-Barea-Client-IP`.
 5. **Proxy Attestation**: The proxy presents a high-entropy secret (`X-Barea-Edge-Attestation`) matching `BAREA_EDGE_SECRET` (or mTLS client certificate).
 6. **Application Enforcement**: The application verifies edge attestation in constant time before accepting `X-Barea-Client-IP`. Unauthenticated or direct requests fail closed to isolated fallback `127.0.0.1`.
@@ -809,12 +809,12 @@ The practical deployment contract designed to satisfy ADR-012 establishes:
   - *Candidate B (Private Cloud VPC - AWS ALB / GCP Cloud Armor)*: ~$35–$60+/mo baseline, high configuration complexity (VPC, subnets, route tables, NAT gateways, security groups), enterprise-grade controls.
   - *Candidate C (Linux VM + Nginx / Caddy)*: ~$5–$20/mo baseline, host-level packet filter firewall (`nftables`), manual OS maintenance and certificate renewal.
 - **Architectural Recommendation**: **Candidate A (Cloudflare Tunnel + Cloudflare Edge)** due to zero inbound attack surface, zero recurring cloud load balancer costs, low church-scale operational burden, and turnkey WebSocket/SSE capability for BAREA-007.
-- **Selection Decision Gate**: **HOSTING TARGET NOT YET SELECTED — NO INFRASTRUCTURE PROVISIONING AUTHORIZED.** Awaiting user selection before provisioning any infrastructure or writing proxy-attestation application code.
+- **Selection Decision Gate**: **HOSTING TARGET SELECTED: CLOUDFLARE EDGE + CLOUDFLARE TUNNEL.** Physical provisioning and verified deployment tests are required before merge authorization.
 
 ### D. Infrastructure State & Release Rule
-- **Infrastructure Status**: NOT YET PROVISIONED.
-- **Production Hosting Target**: NOT YET SELECTED.
-- **Edge Technology**: NOT YET SELECTED.
+- **Infrastructure Status**: **NOT YET PROVISIONED**.
+- **Production Hosting Target**: **SELECTED — CLOUDFLARE EDGE + CLOUDFLARE TUNNEL (`cloudflared`)**.
+- **Edge Technology**: **CLOUDFLARE TUNNEL / EDGE**.
 - **Application Code Status**: ZERO application code changed in `src/`. Checkpoint remains at `eb8d4160ec2f0fb99f46ffa5b2153cc477e90976`.
 - **Merge Status**: Branch `barea-006-share-join` remains unmerged. No self-merge to `main`. Zero scope creep into BAREA-007.
 - **Production Prerequisite**: Live production release requires physical provisioning of the edge proxy, origin firewall rules, and deployment secrets before IP-based rate-limit differentiation can be activated.

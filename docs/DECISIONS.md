@@ -301,11 +301,15 @@ Conversely, falling back to a universal constant (`127.0.0.1`) collapses all una
 To satisfy ADR-012 without coupling BAREA to a single cloud vendor, the deployment contract specifies the required behaviors across 14 operational facets:
 
 1. **Production Hosting Target & Edge Technology**:
-   - Status: **NOT YET SELECTED** (Deferred to user selection; technology-neutral contract).
-   - Candidate Architectures:
-     - *Cloudflare Tunnel + Container/VM Origin*: `cloudflared` daemon runs in the private network/container and forwards traffic directly to Next.js port 3000 over loopback/internal bridge. Public port 3000 has no public listening binding or public IP.
-     - *AWS / GCP Private VPC*: Managed Application Load Balancer (ALB) in public subnet terminates TLS; Next.js origin task runs in private subnet with security group ingress restricted strictly to the ALB security group.
-     - *Bare Metal / Dedicated Linux VM with Reverse Proxy (Nginx / Caddy)*: Edge reverse proxy listens on public ports 80/443; Next.js listens strictly on `127.0.0.1:3000`. OS packet filter (`iptables` / `nftables`) drops all external packets targeting port 3000.
+   - Status: **SELECTED — CLOUDFLARE EDGE + CLOUDFLARE TUNNEL (`cloudflared`)**.
+   - Topology:
+     - Cloudflare Edge terminates public TLS and routes DNS.
+     - `cloudflared` connector runs on the private origin host/network and forwards traffic privately to Next.js on `localhost:3000`.
+     - Zero public listening ports, zero public IPv4/IPv6 exposure on port 3000.
+   - Reference Architectures Evaluated:
+     - *Cloudflare Tunnel + Container/VM Origin* (Selected).
+     - *AWS / GCP Private VPC* (Evaluated / Deferred).
+     - *Bare Metal / Dedicated Linux VM with Reverse Proxy (Nginx / Caddy)* (Evaluated / Deferred).
 2. **Origin Exposure Model**:
    - The Next.js Node process binds to private interface or loopback only (or private container network).
    - Zero public IPv4/IPv6 routing to origin port 3000.
@@ -374,7 +378,8 @@ In accordance with BAREA architectural constraints (church-scale usage, cost, op
   2. *Unmatched Cost-to-Security Ratio*: Eliminates AWS ALB / NAT Gateway recurring fixed costs while providing enterprise-grade DDoS mitigation, automated TLS, and global CDN caching.
   3. *BAREA-007 Ready*: Native zero-configuration WebSocket and SSE support.
   4. *Low Operational Burden*: Ideal for church and non-profit administration without dedicated 24/7 DevOps teams.
-- **Selection Status**: **NOT YET SELECTED (AWAITING USER SELECTION)**. In accordance with BAREA governance, Candidate A is the engineering recommendation, but final selection remains deferred until explicit user authorization is provided.
+- **Selection Status**: **SELECTED — CANDIDATE A (CLOUDFLARE EDGE + CLOUDFLARE TUNNEL)**. Formally selected by user decision (commit `a6a8f3b`).
+- **Provisioning Status**: **NOT YET PROVISIONED**. Physical infrastructure provisioning and verified Cloudflare deployment integration tests are required before merge authorization.
 
 ### Consequences
 - **Positive**: Eliminates IP header spoofing; provides true network provenance; maintains church-scale client isolation and NAT scalability (zero per-IP seat quotas); prevents global rate-limit bucket exhaustion.
@@ -390,4 +395,4 @@ The following technical selections remain intentionally deferred:
 2. **Database & Data Layer for Distributed Environments**: Relational database engine, schema management, and live session state storage for multi-server deployment.
 3. **HTTP/API Contract**: Specific API style and validation/transport implementation.
 4. **Authentication/Authorization**: Teacher/host authentication implementation and authorization model.
-5. **Deployment/Hosting Target**: Selection of specific cloud vendor/host (AWS, Cloudflare, Bare Metal) implementing the ADR-012 edge boundary.
+5. **Deployment/Hosting Target**: **RESOLVED — CLOUDFLARE EDGE + CLOUDFLARE TUNNEL (`cloudflared`)** (ADR-012). Physical provisioning in progress.

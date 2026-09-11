@@ -106,7 +106,7 @@ AI Generation
 - Session creation with room access codes.
 - Dynamic QR code generation for projector and mobile devices.
 - Low-friction mobile landing flow: nickname entry, duplicate name handling, session resumption.
-- **Status**: **BLOCKED (INFRASTRUCTURE REQUIRED)**. Architecture and contracts established under ADR-012 (Edge Reverse Proxy and Origin Ingress Trust Boundary). Application code is complete at checkpoint `eb8d416` with fail-closed security. Live production release is blocked pending deployment infrastructure provisioning.
+- **Status**: **BLOCKED (INFRASTRUCTURE PROVISIONING REQUIRED)**. Cloudflare (Cloudflare Edge + Cloudflare Tunnel `cloudflared`) formally selected as production deployment target under ADR-012. Application code safely anchored at fail-closed checkpoint `eb8d416`. Live production release and merge are blocked pending physical Cloudflare Tunnel provisioning and verified deployment integration tests.
 
 ### BAREA-007: Live Quiz
 - Server-authoritative state machine (LOBBY, PREVIEW, ACTIVE, RESULT, LEADERBOARD, PODIUM).
