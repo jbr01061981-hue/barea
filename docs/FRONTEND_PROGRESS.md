@@ -7,7 +7,7 @@
 | Stage | Frontend scope | Status | GitHub reference |
 |---|---|---|---|
 | BAREA-008 | Public homepage / landing foundation | **MERGED** | `9b76e9f` / PR #12 |
-| BAREA-008A | Public teacher entry / sign-in UX | **IN PROGRESS** | `barea-008a-public-entry` / PR #13 |
+| BAREA-008A | Public homepage visual redesign + public entry UX | **IN PROGRESS** | `barea-008a-public-entry` / PR #13 |
 | BAREA-009 | Teacher Workspace / Quiz Library redesign | **NEXT** | Not started |
 | BAREA-010 | Quiz Builder / Question UX | Planned | Not started |
 | BAREA-011 | Teacher Review / Question Bank UX | Planned | Not started |
@@ -18,33 +18,69 @@
 | BAREA-016 | Results / Leaderboard | Planned | Not started |
 | BAREA-017 | Presentation / Projector experience | Planned | Not started |
 
-## BAREA-008A — Public teacher entry / sign-in UX
+## BAREA-008A — Public homepage visual redesign + public entry UX
 
 **Status: IN PROGRESS**
 
-Purpose: keep the teacher entry point directly on the public homepage, visible early in the primary hero-side information area, without inventing or simulating production authentication.
+Purpose: implement the approved Stitch visual direction while keeping the homepage simple, responsive, Scripture-centered, and honest about authentication state.
 
-Current implementation on branch `barea-008a-public-entry`:
-- Teacher sign-in CTA is available from the homepage hero.
-- Header `Sign in` navigates to the homepage teacher-entry section.
-- Homepage contains the teacher-entry panel at the top of the `The BAREA rhythm` section, before Prepare / Verify / Play.
-- The teacher-entry panel uses mobile-first stacking and a compact horizontal layout on wider screens.
-- Homepage closing CTA anchors to the same teacher-entry section.
-- The separate `/login` route was removed; teacher entry is intentionally part of the homepage experience.
-- Authentication status clearly states that production authentication is not connected; no credentials are requested or simulated.
+### Design reference
 
-Boundary:
-- Frontend-only change.
-- No authentication API, OAuth provider, security boundary, or backend behavior was added or changed.
-- The existing backend authentication contract remains authoritative.
+The implementation is based on the user-provided Google Stitch export for the BAREA homepage (`Scriptural Editorial` direction).
 
-Verification completed before this final placement adjustment:
-- `npm run typecheck` — PASS
-- `npm test` — 149/149 PASS
-- `npm run build` — PASS
-- `npm run build:next` — PASS
-- `/login` was verified before being intentionally removed in favor of the homepage-only entry.
-- Desktop visual review of the homepage and teacher entry — PASS before this final placement adjustment; one final local visual/build check is required for the latest placement change.
+Key visual decisions carried into the frontend:
+- Deep midnight / indigo background for the public homepage.
+- Warm ivory Scripture typography.
+- Restrained liturgical gold accent.
+- Editorial serif treatment for Scripture and major headings.
+- Fine borders and tonal layering instead of heavy shadows or decorative SaaS effects.
+- One responsive homepage system across mobile, tablet, laptop, and desktop; not separate site designs.
+- Projector/presentation remains a separate future experience.
+
+### Homepage implementation
+
+- Hero now uses a dedicated client-side Scripture typewriter component.
+- Scripture cycles through:
+  - `Let the Word dwell richly.` — Colossians 3:16
+  - `Your word is a lamp to my feet.` — Psalm 119:105
+  - `Is not my word like fire?` — Jeremiah 23:29
+- Each verse types character-by-character, pauses, deletes, and transitions to the next verse.
+- The cycle is continuous as requested.
+- A restrained gold cursor and Scripture reference reinforce the animation without adding visual clutter.
+- Hero message is intentionally short: `Prepare. Learn. Share.`
+- Primary homepage action is `Explore BAREA`.
+- General `Log in` entry is used instead of teacher-only login wording.
+- No fake OAuth/provider flow or credentials are requested/simulated.
+- `The BAREA rhythm` remains a focused Prepare → Verify → Play explanation.
+- Host, Participant, and Projector are represented as distinct experiences.
+- Existing truthful teacher-review/product positioning is retained without inventing new backend capability.
+
+### Public entry boundary
+
+- The separate `/login` route remains removed.
+- `Log in` points to the homepage entry area rather than inventing a new authentication route.
+- Authentication remains a backend/application dependency; this frontend stage does not implement or alter authentication.
+
+### Files changed on the frontend branch
+
+- `src/app/page.tsx`
+- `src/app/layout.tsx`
+- `src/app/globals.css`
+- `src/app/components/scripture-typewriter.tsx`
+
+### Verification
+
+Repository changes are committed on `barea-008a-public-entry`.
+
+A final local verification is still required after pulling the latest branch:
+- `npm run typecheck`
+- `npm test`
+- `npm run build`
+- `npm run build:next`
+- visual review at mobile and laptop/desktop widths
+- reduced-motion/accessibility review
+
+Do not mark BAREA-008A complete until that final local verification is reported.
 
 ## BAREA-008 — Homepage
 
