@@ -97,3 +97,21 @@ This document records decisions that should remain stable unless a deliberate pr
 **Reason:** These features depend on server state transitions and authorization that cannot safely be inferred by the frontend.
 
 **Consequence:** Until those contracts exist, mark work as **FRONTEND DEPENDENCY / BACKEND GAP** and build only contract-independent UI foundations.
+
+## DD-013 — Cloudflare Workers is the frontend deployment target
+
+**Decision:** Deploy BAREA's Next.js frontend to **Cloudflare Workers**, using vinext as the Cloudflare deployment path. Do not use Cloudflare Pages for the application runtime.
+
+**Reason:** BAREA is a full-stack Next.js App Router application using server-side behavior and Server Actions, with future requirements for live/realtime capabilities and Cloudflare platform bindings. Cloudflare's current recommendation for Next.js on Workers is vinext.
+
+**Consequence:** Keep Cloudflare deployment configuration in GitHub (`vite.config.ts` and `wrangler.jsonc`). Use `main` for production and non-production branch builds for preview validation. Do not add Cloudflare bindings until a BAREA contract requires them.
+
+**Risk/mitigation:** vinext is currently beta and actively developed. Every deployment stage must run compatibility/build validation before production use. A material compatibility gap requires a documented architecture review rather than an ad-hoc workaround.
+
+## DD-014 — Preview deployment before merge
+
+**Decision:** Every substantial frontend stage should be visually reviewed through a Cloudflare Workers preview before merge when the Cloudflare integration is available.
+
+**Reason:** BAREA has three materially different surfaces (teacher, participant, presentation), and code review alone cannot validate real responsive layout, typography, interaction, and projector readability.
+
+**Consequence:** Frontend stage acceptance includes preview verification for relevant routes, including desktop, mobile, and presentation contexts. Preview credentials and secrets must remain outside Git.
