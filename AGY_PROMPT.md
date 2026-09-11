@@ -1,281 +1,150 @@
-# AGY PROMPT — BAREA-006 CLOUDFLARE PROVISIONING GATE — FINAL PRE-INTEGRATION
+# AGY PROMPT — BAREA-006 FINAL APPLICATION CORRECTION BEFORE MERGE
 
 Repository: `jbr01061981-hue/barea`
 Branch: `barea-006-share-join`
-Application checkpoint: `eb8d4160ec2f0fb99f46ffa5b2153cc477e90976`
-Current documentation checkpoint: `c7a7af0`
-Architecture decision: ADR-012
+Current application checkpoint: `eb8d4160ec2f0fb99f46ffa5b2153cc477e90976`
+Current branch HEAD before this prompt: `45766c1fc7c686c4952e2ef7e97e8715066fbeeb`
+PR: #8
 
-## CURRENT SECURITY DECISION
+## CURRENT DECISION
 
-ChatGPT independent security re-review of the latest AGY deployment report:
+ChatGPT independently reviewed PR #8 and the actual changed application code.
 
-- Cloudflare architecture: **GO**
-- Documentation / gate discipline: **GO**
-- Current application safety: **GO**
-- Cloudflare infrastructure: **NOT PROVISIONED**
-- Live client-IP provenance: **NOT PROVEN**
-- Production integration: **NOT PROVEN**
-- Merge: **NO-GO**
-- BAREA-007: **BLOCKED**
+**Merge: NO-GO for now.**
 
-The latest report correctly confirms that no Cloudflare credentials are available, no live deployment tests were performed, and `src/` remains unchanged at `eb8d416`. Do not represent this state as production-secure or merge-ready.
+The BAREA-006 application implementation is substantial and the reported automated verification is strong, but one architectural/security issue remains unresolved:
 
-Cloudflare is the final production target. Do not ask the user to choose another hosting platform.
+`resolveServerClientIp()` currently returns the deterministic fallback `127.0.0.1` because real network provenance has intentionally not yet been established. The rate limiter then treats that value as the real client IP. Consequently, all unauthenticated clients can share the same IP bucket. This can create a congregation-wide denial of service against IP-based lookup/flood controls.
 
-## PRIMARY OBJECTIVE NOW
+This is not acceptable as the final BAREA-006 application behavior.
 
-Complete the **actual Cloudflare provisioning and live trust-boundary verification** if and only if AGY has genuine access to the required Cloudflare account/zone and a reachable private origin host.
+At the same time, the earlier Cloudflare provisioning requirement is now explicitly DEFERRED. We are finishing the MVP application first and will perform the real Cloudflare deployment/provenance integration later in a fresh environment.
 
-If AGY does not have that access, STOP after documenting the exact human/operator actions required. Do not simulate, fabricate, or infer live provisioning.
+Therefore, **do not provision Cloudflare now** and **do not pretend `127.0.0.1` is a real client IP**.
 
-Do not change `src/` until the real Cloudflare request path has been experimentally established.
+## PRIMARY OBJECTIVE
 
-## SIX STATES — NEVER CONFLATE THEM
+Make the smallest secure application-level correction that allows BAREA-006 to be merged without falsely claiming client-IP provenance that has not yet been established.
 
-Reports MUST distinguish:
+The implementation must remain compatible with the later Cloudflare integration.
 
-1. Architecture specified.
-2. Infrastructure provisioned.
-3. Infrastructure operational.
-4. End-to-end client-IP provenance experimentally verified.
-5. Application integration verified.
-6. Merge authorized.
+Do not redesign unrelated BAREA-006 functionality.
 
-Only ChatGPT can authorize state 6.
+## NON-NEGOTIABLE RULES
 
-## REQUIRED TOPOLOGY
+1. Do NOT provision Cloudflare, Cloudflare Tunnel, Workers, DNS, or production infrastructure now.
+2. Do NOT restore a caller-supplied `clientIp` parameter.
+3. Do NOT trust `CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`, `X-Barea-*`, or any other incoming forwarding header in the current application deployment.
+4. Do NOT treat `127.0.0.1` as the actual identity of every remote client.
+5. Do NOT claim that environment variables establish network provenance.
+6. Do NOT weaken authenticated participant throttling: authenticated join throttling must remain keyed by server-authoritative authenticated `userId`.
+7. Do NOT introduce a successful-participant-per-IP quota.
+8. Church NAT scalability must remain intact.
+9. Do NOT introduce a new global unauthenticated rate-limit bucket that can be exhausted by one attacker and thereby block the entire congregation.
+10. Do NOT add HMAC, static secret headers, custom edge attestation, Workers, or other cryptographic infrastructure merely to work around the deferred deployment boundary.
+11. Do NOT implement BAREA-007.
+12. Preserve tenant isolation, authorization, admission policy enforcement, session expiry, error sanitization, persistence integrity, and all existing BAREA-006 behavior unrelated to this correction.
+
+## REQUIRED DESIGN CORRECTION
+
+Redesign the pre-deployment unauthenticated rate-limit identity so that the application does NOT manufacture a false client IP.
+
+The correct behavior before trusted edge provenance exists is:
+
+- A missing/untrusted client-IP signal must be represented explicitly as unavailable/unknown, not as `127.0.0.1`.
+- IP-specific rate limits must NOT be applied to an invented shared identity.
+- Authenticated user-based limits must continue to operate normally because authenticated `userId` is server-authoritative.
+- Room-code validation and collision resistance remain mandatory.
+- The public room lookup path must retain a meaningful abuse-control mechanism that does not depend on pretending every caller has the same IP and does not create a congregation-wide kill switch.
+
+### IMPORTANT: choose the simplest defensible mechanism
+
+Inspect the existing BAREA-006 code and tests and select the smallest safe mechanism for pre-deployment MVP operation.
+
+Possible mechanisms may include, if technically appropriate after inspection:
+
+- rate limiting by validated room-code/keyed request characteristics rather than a fabricated IP;
+- a narrowly scoped server-side limiter that cannot be exhausted by one caller to block unrelated sessions;
+- separating public lookup throttling from authenticated join throttling so authenticated participants do not consume an unsafe shared bucket;
+- another simple server-authoritative mechanism that demonstrably avoids the current `127.0.0.1` global-bucket flaw.
+
+Do NOT blindly implement one of these suggestions. Analyze the actual code and choose the minimal mechanism that preserves legitimate church use and materially limits abuse.
+
+If you determine that a safe unauthenticated abuse-control mechanism cannot be implemented without a trusted network identity, **STOP and report that conclusion instead of inventing one**. In that case, document the exact deployment dependency and do not claim merge readiness.
+
+## SERVER CLIENT-IP API
+
+Correct the semantics of `resolveServerClientIp()`.
+
+It must no longer return `127.0.0.1` as if it were a remote caller identity.
+
+Use an explicit representation such as `string | null` (or an equivalent type-safe design) where:
+
+- `string` means an actually trusted server-derived client identity;
+- `null` means client IP provenance is not available/trusted in the current deployment.
+
+The current MVP deployment intentionally has no trusted proxy boundary, so normal application requests should resolve to **unknown**, not to a shared fake IP.
+
+Test/development fixtures may continue to provide explicit test values, but they must remain strictly guarded from production and must never be sourced from incoming request headers.
+
+## RATE LIMITER REQUIREMENTS
+
+Preserve the authenticated user limit:
+
+- authenticated join mutation: `1 / 5s / authenticated userId`.
+
+Do NOT preserve the old IP-specific limits merely by feeding them `127.0.0.1`.
+
+For the unauthenticated room lookup/flood path, implement the selected safe pre-deployment mechanism and document precisely:
+
+- what key is used;
+- why the key is server-authoritative or otherwise cannot be rotated by a caller to evade the control;
+- how legitimate 50+ participant church NAT usage remains possible;
+- how one attacker cannot exhaust the mechanism for unrelated legitimate sessions;
+- what protection remains deferred until trusted edge provenance exists.
+
+The future Cloudflare deployment will restore true client-IP partitioning once the real trusted edge-to-origin path has been experimentally proven.
+
+## CLOUDflare FUTURE INTEGRATION BOUNDARY
+
+Document this clearly:
 
 ```text
-PUBLIC INTERNET
-      |
-      v
-CLOUDFLARE EDGE / DNS / TLS
-      |
-      | Cloudflare Tunnel
-      | outbound connector connection
-      v
-cloudflared ON PRIVATE ORIGIN HOST
-      |
-      | local/private connection
-      v
-NEXT.JS / NODE :3000
-      |
-      v
-SQLITE
-```
+CURRENT MVP
+public request
+    -> Next.js application
+    -> no trusted proxy provenance
+    -> client IP = unavailable/unknown
 
-The origin must not have a public application ingress path.
-
-## NON-NEGOTIABLE INVARIANTS
-
-1. Public Internet MUST NOT reach origin port `3000`.
-2. Tunnel is the intended public application path.
-3. Never restore a client-controlled `clientIp` parameter.
-4. Never trust caller-supplied `X-Forwarded-For`, `X-Real-IP`, `X-Barea-*`, or `CF-Connecting-IP` merely because the header exists.
-5. Never use `BAREA_TRUSTED_PROXY` alone as provenance proof.
-6. IP is anti-abuse identity only; never authentication/authorization identity.
-7. Authenticated join throttling remains keyed by authenticated `userId`.
-8. No successful-participant-per-IP seat quota; church NAT scalability must remain intact.
-9. No secrets in browser code, tests, reports, screenshots, or Git.
-10. BAREA-007 remains out of scope.
-11. Preserve tenant isolation, authorization, error sanitization, session expiry, and previously reviewed security behavior.
-
-## PHASE 1 — REAL CLOUDFLARE PROVISIONING
-
-If authenticated Cloudflare access and a real origin host are available, provision the selected production topology.
-
-Required controls:
-
-- Cloudflare DNS hostname.
-- Cloudflare Tunnel.
-- `cloudflared` on the private origin host.
-- Tunnel ingress to the actual private/local Next.js service.
-- HTTPS/TLS at the public edge.
-- Next.js bound to `127.0.0.1:3000` or another explicitly isolated private interface.
-- Host/network controls preventing public access to `3000`.
-- Process supervision and connector restart behavior.
-- Tunnel credentials stored outside Git.
-
-If credentials/access are unavailable:
-
-- mark provisioning **NOT PROVISIONED**;
-- list the exact commands/configuration/operator steps still required;
-- list exactly which credential/access values are missing;
-- do not create fake IDs, records, credentials, IPs, or test results;
-- do not modify `src/`.
-
-## PHASE 2 — VERIFY ACTUAL CLOUDFLARE PROVENANCE
-
-Use current official Cloudflare documentation AND the actual deployed configuration.
-
-Determine exactly:
-
-1. Public hostname and DNS routing.
-2. Tunnel identity/authentication.
-3. Actual origin service target.
-4. Actual origin exposure/binding.
-5. Which request metadata reaches Next.js as the candidate authoritative client IP.
-6. Exact behavior of `CF-Connecting-IP` on this deployed path.
-7. Exact behavior of caller-supplied `CF-Connecting-IP`.
-8. Exact behavior of XFF and X-Real-IP.
-9. Whether any `X-Barea-*` headers are accepted or ignored.
-10. Whether Transform Rules or Workers are configured.
-11. Whether any custom attestation is necessary.
-
-### IMPORTANT
-
-Do not state that Cloudflare behavior is proven merely because documentation says it should work.
-
-Do not state that a healthy Tunnel proves local origin health or application provenance.
-
-Do not introduce HMAC, Worker, custom signatures, `X-Barea-Edge-Attestation`, or other cryptographic machinery unless a concrete tested requirement demonstrates native Cloudflare provenance is insufficient.
-
-A static secret header is not an HMAC.
-
-## PHASE 3 — LIVE ORIGIN ISOLATION TEST
-
-From a genuinely external network, test the real deployed origin.
-
-Required evidence:
-
-- public DNS does not reveal a usable application origin address;
-- external access to origin `:3000` fails;
-- bypassing Cloudflare cannot reach Next.js;
-- stopping `cloudflared` does not create an alternate public route;
-- Next.js remains bound only to the intended local/private interface.
-
-Record actual target, command, timestamp/result, and PASS/FAIL/NOT RUN.
-
-Architecture documentation is not live evidence.
-
-## PHASE 4 — LIVE CLIENT-IP PROVENANCE TESTS
-
-This is the central BAREA-006 acceptance gate.
-
-Use the real public Cloudflare hostname and, where possible, at least two genuinely separate external networks.
-
-### Test A — Legitimate clients
-
-Two legitimate clients from distinct external networks must produce the expected distinct authoritative client identities for IP-based abuse controls.
-
-### Test B — Spoof `CF-Connecting-IP`
-
-Send a caller-selected value. Prove it cannot replace the authoritative client IP used by BAREA.
-
-### Test C — Spoof XFF
-
-Send arbitrary XFF chains. Prove they cannot select the BAREA rate-limit identity.
-
-### Test D — Spoof X-Real-IP
-
-Prove it cannot select the BAREA rate-limit identity.
-
-### Test E — Spoof X-Barea-Client-IP
-
-Prove it cannot select the BAREA rate-limit identity.
-
-### Test F — Spoof X-Barea-Edge-Attestation
-
-If unused, prove it has no privileged effect. If used, prove caller-supplied values cannot satisfy the trust check.
-
-### Test G — Bucket hopping
-
-Rotate all public forwarding/identity headers repeatedly. Prove the attacker cannot move between rate-limit buckets.
-
-### Test H — Failure path
-
-A missing/invalid trusted signal must not grant arbitrary client identity. It must fail safely according to the established design.
-
-## PHASE 5 — ONLY AFTER LIVE PROVENANCE IS PROVEN, MODIFY APPLICATION
-
-Do not modify `src/` before Phases 1–4 establish the real trusted request path.
-
-Once proven, make the **smallest possible** application change to consume the verified Cloudflare client-IP signal.
-
-Expected scope:
-
-- `resolveServerClientIp()` and direct supporting code;
-- trusted Cloudflare request metadata handling;
-- required environment/configuration;
-- focused security/integration tests.
-
-Do not modify unrelated session, tenant, authorization, admission, persistence, quiz, or UI behavior.
-
-The intended chain is:
-
-```text
+FUTURE DEPLOYMENT
 real client
-  -> Cloudflare Edge
-  -> Cloudflare Tunnel
-  -> private origin
-  -> verified trusted client-IP metadata
-  -> resolveServerClientIp()
-  -> rate limiter
+    -> Cloudflare Edge
+    -> trusted/private origin boundary
+    -> experimentally verified client-IP metadata
+    -> resolveServerClientIp()
+    -> IP-based rate limiter
 ```
 
-Untrusted/direct requests must not be able to choose that identity.
+Do not implement the future path now.
 
-## RATE-LIMIT ACCEPTANCE
+## TESTS REQUIRED
 
-Preserve:
+Add or update focused tests for the correction.
 
-- failed room lookup: 15/min per IP;
-- existing /24 or /48 subnet containment;
-- unauthenticated flood protection: 30/10s per IP;
-- authenticated join mutation: 1/5s per authenticated `userId`;
-- zero successful-participant-per-IP seat quota.
+At minimum verify:
 
-Prove:
+1. Normal application request without trusted provenance does NOT resolve to `127.0.0.1` as a remote caller identity.
+2. Caller-supplied forwarding headers cannot establish client identity.
+3. Test-only client-IP overrides remain unavailable in production.
+4. Authenticated join throttling remains isolated by authenticated `userId`.
+5. The new unauthenticated abuse-control mechanism cannot be exhausted by one caller to block unrelated legitimate sessions.
+6. 50+ legitimate participants behind one church NAT can still participate as designed.
+7. Room-code validation/collision resistance remains intact.
+8. Existing tenant isolation and authorization tests continue to pass.
+9. Existing error sanitization and expiry protections continue to pass.
+10. No BAREA-007 live state, answer submission, scoring, WebSocket, or SSE behavior is introduced.
 
-- 50+ legitimate participants behind one church NAT remain supported;
-- independent legitimate clients receive independent IP buckets where applicable;
-- attacker header rotation cannot hop buckets;
-- authenticated userId throttling remains isolated.
-
-## SECRETS
-
-Never commit or expose:
-
-- Cloudflare API tokens;
-- Tunnel tokens/credentials;
-- private keys;
-- origin secrets;
-- `BAREA_EDGE_SECRET` unless separately proven necessary.
-
-Document generation, storage, least privilege, rotation, revocation, and browser exclusion without exposing real values.
-
-## DNS / TLS / TUNNEL / OPERATIONS
-
-Verify actual configuration, not intended configuration:
-
-- hostname;
-- DNS route;
-- HTTPS/TLS;
-- Tunnel ingress;
-- origin service health;
-- connector health;
-- restart/recovery;
-- process supervision;
-- host binding/firewall.
-
-Do not mark anything active/verified without actual evidence.
-
-## HEALTH / OBSERVABILITY
-
-Health endpoints must not expose secrets, tenant data, quiz content, authentication data, or provider credentials.
-
-Record useful Cloudflare, `cloudflared`, host, and application evidence without leaking secrets.
-
-## BAREA-007
-
-Do not implement BAREA-007.
-
-Do not add WebSocket/SSE/live quiz state or answer-submission transport.
-
-Only record deployment compatibility if it is incidental to this work.
-
-## AUTOMATED VERIFICATION AFTER ANY APPLICATION CHANGE
+## REQUIRED VERIFICATION
 
 Run all of:
 
@@ -292,149 +161,91 @@ git diff
 
 All must pass.
 
-Remember: these tests validate application behavior; they do NOT prove the network trust boundary.
+Do not report only aggregate test counts. Identify the new/changed security tests explicitly.
 
-## TWO FRESH INDEPENDENT REVIEWERS
+## CODE SCOPE
 
-Only after actual provisioning, live integration testing, and any authorized application change:
+Keep the change narrowly focused.
 
-### Agent 1 — Security + Cloudflare Red Team
+Expected files are likely limited to:
 
-Attack:
+- `src/app/teacher/review/db.ts`
+- `src/service/rate-limiter.ts`
+- `src/service/session-service.ts`
+- `src/app/session/actions.ts`
+- focused BAREA-006 tests
+- relevant security documentation/report if needed
 
-- direct-origin bypass;
-- Tunnel provenance;
-- CF-Connecting-IP spoofing;
-- XFF/X-Real-IP spoofing;
-- X-Barea spoofing;
-- bucket hopping;
-- secret exposure;
-- tunnel credential misuse;
+Do not modify unrelated quiz/question/teacher-authoring code.
+
+## DOCUMENTATION
+
+Update the BAREA-006 security report so it no longer claims that `127.0.0.1` is a safe substitute for a real remote client IP.
+
+State explicitly:
+
+- Cloudflare is deferred until MVP completion.
+- Real client-IP provenance is not yet available in the current deployment.
+- The application does not trust forwarding headers.
+- The pre-deployment abuse-control mechanism is intentionally different from the future IP-partitioned mechanism.
+- True per-client IP throttling is a deployment integration concern to be verified later.
+
+Do not mark Cloudflare as provisioned, operational, or experimentally verified.
+
+## TWO FRESH REVIEWERS
+
+After implementing the correction and passing all automated checks, ask two fresh independent reviewers to inspect the actual changed code:
+
+### Agent 1 — Security Red Team
+
+Specifically attack:
+
+- fake `127.0.0.1` identity;
+- caller-controlled IP/forwarding headers;
+- rate-limit bucket hopping;
+- one-attacker congregation-wide denial of service;
 - church NAT scalability;
-- tenant/authentication/authorization regressions;
+- authenticated userId throttling;
+- tenant/authorization regressions;
 - BAREA-007 boundary.
 
-### Agent 2 — Deployment QA + Operations
+### Agent 2 — QA / Architecture Reviewer
 
 Verify:
 
-- DNS/TLS;
-- Tunnel configuration;
-- connector startup/restart;
-- origin isolation;
-- service binding;
-- firewall/network behavior;
-- health checks;
-- observability;
-- secret lifecycle;
-- failure/recovery;
-- reproducibility;
-- actual end-to-end integration.
+- the new rate-limit semantics;
+- 50+ participant behavior;
+- test coverage;
+- type safety;
+- compatibility with later Cloudflare integration;
+- absence of unrelated changes.
 
-Both must issue explicit GO/NO-GO verdicts with concrete evidence.
-
-Their verdicts do not authorize merge.
-
-## DOCUMENTATION RULE
-
-Update only relevant documentation/configuration.
-
-Every report must distinguish:
-
-- specified;
-- provisioned;
-- operational;
-- experimentally verified;
-- application verified;
-- merge authorized.
-
-Never label architecture-only evidence as a live deployment PASS.
+Both reviewers must provide explicit GO/NO-GO findings with concrete evidence.
 
 ## GIT RULES
 
 Remain on `barea-006-share-join`.
 
-Do not merge to `main`.
-Do not self-merge.
+Do not merge PR #8 yourself.
 Do not start BAREA-007.
+Do not provision Cloudflare.
 Do not commit secrets.
 Do not make unrelated changes.
-Do not modify `src/` until the live Cloudflare provenance gate is satisfied.
 
-## FINAL REPORT REQUIRED
+Commit the correction, push it, and report:
 
-Report:
+- new commit SHA;
+- changed files;
+- test results;
+- reviewer verdicts;
+- PR #8 updated HEAD.
 
-### Infrastructure
-- Cloudflare hostname/DNS;
-- Tunnel configuration;
-- connector status;
-- origin host/service;
-- port/interface binding;
-- public exposure result;
-- TLS result.
+## STOP CONDITION
 
-### Provenance
-- exact authoritative client-IP mechanism;
-- exact reason it is trusted;
-- actual header behavior;
-- direct-origin behavior;
-- spoofing evidence;
-- bucket-hopping evidence.
+After completing the correction:
 
-### Application
-- exact files changed;
-- exact client-IP resolution path;
-- security rationale;
-- confirmation unrelated behavior is unchanged.
+**DO NOT MERGE. DO NOT START BAREA-007.**
 
-### Deployment tests
-For every item report **PASS / FAIL / NOT RUN** and evidence:
+Stop and wait for ChatGPT's independent review of the updated PR.
 
-- direct-origin bypass;
-- spoofed CF-Connecting-IP;
-- spoofed XFF;
-- spoofed X-Real-IP;
-- spoofed X-Barea-Client-IP;
-- spoofed X-Barea-Edge-Attestation;
-- legitimate Cloudflare identity;
-- bucket hopping;
-- 50+ church NAT participants;
-- authenticated userId throttling;
-- missing/invalid trusted metadata;
-- Tunnel/origin isolation;
-- connector restart/recovery.
-
-### Existing protections
-- tenant isolation;
-- authorization;
-- error sanitization;
-- session expiry;
-- BAREA-007 quarantine.
-
-### Automated verification
-- npm test;
-- typecheck;
-- build;
-- build:next;
-- no `any`;
-- diff check.
-
-### Reviewers
-- Agent 1: GO/NO-GO + evidence;
-- Agent 2: GO/NO-GO + evidence.
-
-### Git
-- branch;
-- previous commit;
-- new commit;
-- push result;
-- remote verification.
-
-## ABSOLUTE STOP CONDITION
-
-Even if all automated tests and both independent reviewers return GO:
-
-**DO NOT MERGE. DO NOT START BAREA-007. DO NOT CLAIM PRODUCTION SECURITY COMPLETE.**
-
-Stop after the actual Cloudflare deployment/integration state is complete and wait for **ChatGPT's independent security re-review and explicit merge authorization**.
+ChatGPT will decide whether BAREA-006 is safe to merge and, if approved, will authorize the merge.
