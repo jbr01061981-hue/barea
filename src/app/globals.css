@@ -1,42 +1,52 @@
 @import "tailwindcss";
 
+@theme inline {
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
 @layer base {
   :root {
-    --barea-bg: #f8fafc;
-    --barea-card-bg: #ffffff;
-    --barea-text-primary: #0f172a;
-    --barea-text-muted: #475569;
-    --barea-border: #cbd5e1;
-    
-    --barea-primary: #1e293b;
-    --barea-primary-hover: #0f172a;
-    --barea-primary-fg: #f8fafc;
-    
+    --barea-bg: #f7f8fa;
+    --barea-surface: #ffffff;
+    --barea-surface-raised: #ffffff;
+    --barea-surface-muted: #f1f3f5;
+    --barea-text-primary: #101828;
+    --barea-text-secondary: #344054;
+    --barea-text-muted: #667085;
+    --barea-text-inverse: #ffffff;
+    --barea-border: #e4e7ec;
+    --barea-border-strong: #d0d5dd;
+    --barea-border-focus: #344054;
+    --barea-primary: #1d2939;
+    --barea-primary-hover: #101828;
+    --barea-primary-fg: #ffffff;
     --barea-accent: #2563eb;
     --barea-accent-hover: #1d4ed8;
-    
-    --barea-pending-bg: #fef3c7;
-    --barea-pending-border: #f59e0b;
-    --barea-pending-text: #92400e;
-    
-    --barea-approved-bg: #dcfce7;
-    --barea-approved-border: #10b981;
-    --barea-approved-text: #065f46;
-    
-    --barea-danger-bg: #fee2e2;
-    --barea-danger-border: #ef4444;
-    --barea-danger-text: #991b1b;
+    --barea-success-bg: #ecfdf3;
+    --barea-success-border: #abefc6;
+    --barea-success-text: #067647;
+    --barea-warning-bg: #fffaeb;
+    --barea-warning-border: #fedf89;
+    --barea-warning-text: #b54708;
+    --barea-danger-bg: #fef3f2;
+    --barea-danger-border: #fecdca;
+    --barea-danger-text: #b42318;
+    --barea-info-bg: #eff8ff;
+    --barea-info-border: #b2ddff;
+    --barea-info-text: #175cd3;
+    --barea-live-bg: #fef3f2;
+    --barea-live-text: #b42318;
+    --barea-waiting-bg: #fffaeb;
+    --barea-waiting-text: #b54708;
+    --barea-locked-bg: #f2f4f7;
+    --barea-locked-text: #475467;
+    --barea-completed-bg: #ecfdf3;
+    --barea-completed-text: #067647;
   }
-
-  body {
-    background-color: var(--barea-bg);
-    color: var(--barea-text-primary);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
-    min-height: 100vh;
-    margin: 0;
-  }
+  html { min-height: 100%; }
+  body { min-height: 100vh; margin: 0; background: var(--barea-bg); color: var(--barea-text-primary); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-rendering: optimizeLegibility; }
+  * { box-sizing: border-box; }
+  :focus-visible { outline: 2px solid var(--barea-border-focus); outline-offset: 2px; }
 }
 
-.scripture-font {
-  font-family: Georgia, Cambria, "Times New Roman", Times, serif;
-}
+.scripture-font { font-family: Georgia, Cambria, "Times New Roman", Times, serif; }

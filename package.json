@@ -8,7 +8,11 @@
   "scripts": {
     "build": "tsc",
     "build:next": "next build",
+    "build:vinext": "vinext build",
     "dev": "next dev",
+    "dev:vinext": "vinext dev",
+    "start:vinext": "vinext start",
+    "deploy:cloudflare": "@vinext/cloudflare deploy",
     "typecheck": "tsc --noEmit",
     "test": "tsc -p tsconfig.test.json && node --test \"dist/test/**/*.test.js\""
   },
@@ -20,13 +24,19 @@
   "author": "",
   "license": "UNLICENSED",
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.54.6",
     "@types/node": "^26.4.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
-    "typescript": "^7.0.2"
+    "react-server-dom-webpack": "^19.2.8",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
+    "vinext": "^1.0.0-beta.9",
+    "wrangler": "^4.131.0"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.3",
+    "@vinext/cloudflare": "^1.0.0-beta.9",
     "next": "^16.3.4",
     "postcss": "^8.5.28",
     "react": "^19.2.8",
