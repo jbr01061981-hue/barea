@@ -1,6 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRealtimeTransport } from '../../../../teacher/review/db';
+import {
+  getRealtimeTransport,
+  getSessionRepository,
+  getAuthorizedTeacherContext
+} from '../../../../teacher/review/db';
 import { LiveQuizEvent } from '../../../../../domain/live-quiz';
+import {
+  validateParticipantToken,
+  ParticipantToken
+} from '../../../../../domain/value-objects';
+import {
+  SessionClosedError,
+  SessionLockedError,
+  SessionNotFoundError
+} from '../../../../../domain/domain-errors';
 
 export async function GET(
   request: NextRequest,
@@ -9,24 +22,132 @@ export async function GET(
   const { id: sessionId } = await context.params;
 
   if (!sessionId || typeof sessionId !== 'string') {
-    return new NextResponse('Invalid session ID', { status: 400 });
+    return NextResponse.json({ error: 'INVALID_SESSION_ID', message: 'Invalid session ID' }, { status: 400 });
   }
 
-  const role = request.nextUrl.searchParams.get('role') === 'host' ? 'host' : 'participant';
+  const repo = getSessionRepository();
+  const session = repo.findSessionById(sessionId);
+  if (!session) {
+    return NextResponse.json({ error: 'SESSION_NOT_FOUND', message: 'Session not found or unavailable' }, { status: 404 });
+  }
+
+  const requestedRole = request.nextUrl.searchParams.get('role');
+  let effectiveRole: 'host' | 'participant';
+  let authenticatedUserId: string | undefined;
+
+  if (requestedRole === 'host') {
+    // 1. Host authorization: must be an authenticated teacher context and match session hostUserId
+    try {
+      const teacher = await getAuthorizedTeacherContext();
+      if (!teacher || !teacher.userId) {
+        return NextResponse.json(
+          { error: 'UNAUTHORIZED', message: 'Teacher authentication required to subscribe to host live stream.' },
+          { status: 401 }
+        );
+      }
+      if (teacher.userId !== session.hostUserId) {
+        return NextResponse.json(
+          { error: 'NOT_SESSION_HOST', message: 'Forbidden: only the session host can obtain the host live stream projection.' },
+          { status: 403 }
+        );
+      }
+      effectiveRole = 'host';
+      authenticatedUserId = teacher.userId;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Authentication required';
+      return NextResponse.json(
+        { error: 'UNAUTHORIZED', message: `Teacher authentication failed: ${message}` },
+        { status: 401 }
+      );
+    }
+  } else {
+    // 2. Participant authorization: must provide a valid participant token belonging to this session
+    const authHeader = request.headers.get('authorization');
+    const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7).trim() : null;
+    const rawToken = request.nextUrl.searchParams.get('token')?.trim() ||
+      request.headers.get('x-participant-token')?.trim() ||
+      bearerToken;
+
+    if (!rawToken) {
+      return NextResponse.json(
+        { error: 'UNAUTHORIZED', message: 'Participant token is required to subscribe to participant live stream.' },
+        { status: 401 }
+      );
+    }
+
+    let validatedToken: ParticipantToken;
+    try {
+      validatedToken = validateParticipantToken(rawToken);
+    } catch {
+      return NextResponse.json(
+        { error: 'INVALID_PARTICIPANT_TOKEN', message: 'Invalid participant token format.' },
+        { status: 400 }
+      );
+    }
+
+    try {
+      const { participant } = repo.resumeSession(sessionId, validatedToken);
+      effectiveRole = 'participant';
+      authenticatedUserId = participant.userId;
+    } catch (err) {
+      if (err instanceof SessionClosedError || err instanceof SessionLockedError || err instanceof SessionNotFoundError) {
+        return NextResponse.json({ error: err.code, message: err.message }, { status: err.httpStatus });
+      }
+      return NextResponse.json(
+        { error: 'FORBIDDEN', message: 'Participant token is not valid for this active session.' },
+        { status: 403 }
+      );
+    }
+  }
+
   const subscriberId = 'sub_' + Math.random().toString(36).substring(2, 10);
   const transport = getRealtimeTransport();
+  const sinceParam = request.nextUrl.searchParams.get('since');
+  const sinceSequence = sinceParam ? parseInt(sinceParam, 10) : 0;
 
   const stream = new ReadableStream({
     start(controller) {
       const encoder = new TextEncoder();
 
-      // Send initial heartbeat
+      // Send initial connection heartbeat
       controller.enqueue(encoder.encode(': connected\n\n'));
+
+      // If reconnecting with a valid since sequence number, replay missed events
+      if (Number.isInteger(sinceSequence) && sinceSequence > 0) {
+        const missedEvents = transport.getHistory(sessionId, sinceSequence);
+        for (const evt of missedEvents) {
+          try {
+            // Apply subscriber projection for participant
+            const payloadToSend = (effectiveRole === 'participant' && evt.payload)
+              ? (() => {
+                  const p = { ...evt.payload };
+                  delete (p as Record<string, unknown>).correctOptionIndices;
+                  delete (p as Record<string, unknown>).explanation;
+                  if (p.question && typeof p.question === 'object') {
+                    const q = { ...(p.question as Record<string, unknown>) };
+                    delete q.correctOptionIndices;
+                    delete q.explanation;
+                    p.question = q;
+                  }
+                  return p;
+                })()
+              : evt.payload;
+
+            const projectedEvt = { ...evt, payload: payloadToSend };
+            const data = `event: ${projectedEvt.eventType}\ndata: ${JSON.stringify(projectedEvt)}\n\n`;
+            controller.enqueue(encoder.encode(data));
+          } catch {
+            // Channel closed
+            break;
+          }
+        }
+      }
 
       const unsubscribe = transport.subscribe({
         subscriberId,
         sessionId,
-        role,
+        role: effectiveRole,
+        userId: authenticatedUserId,
         onEvent(event: LiveQuizEvent) {
           try {
             const data = `event: ${event.eventType}\ndata: ${JSON.stringify(event)}\n\n`;

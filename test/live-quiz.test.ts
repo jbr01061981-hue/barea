@@ -36,9 +36,13 @@ import {
   RateLimitExceededError
 } from '../src/index';
 
+import { NextRequest } from 'next/server';
+import { GET as liveSseRoute } from '../src/app/api/session/[id]/live/route';
+
 import {
   setAuthorizedTeacherContext,
   setAuthenticatedUserContext,
+  setSessionRepository,
   setSessionService,
   setRateLimiter,
   setQuizService,
@@ -73,6 +77,7 @@ function setupTestEnvironment(rateLimiterOptions?: { maxLiveMutationsPer5Seconds
   const realtimeTransport = new InMemoryRealtimeTransport();
   const liveQuizService = new LiveQuizService(sessionRepo, rateLimiter, realtimeTransport);
 
+  setSessionRepository(sessionRepo);
   setQuestionBankService(bankService);
   setQuizService(quizService);
   setSessionService(sessionService);
@@ -771,6 +776,226 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       assert.equal(partViewRes.data.hasAnswered, true);
       assert.equal((partViewRes.data.question as any)?.correctOptionIndices, undefined); // Hidden
     }
+  });
+
+  await t.test('11. Adversarial SSE Authorization & Projection Isolation (PR #11 Blocker Remediation)', async () => {
+    const env = setupTestEnvironment();
+    const hostId = 'teacher_sse_host';
+    const orgId = derivePersonalTenantId(hostId);
+    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
+
+    const session = env.sessionService.createSession({
+      workspaceType: WorkspaceType.PERSONAL,
+      organizationId: orgId,
+      publishedQuizSnapshotId: snapshotId,
+      hostUserId: hostId,
+      participationMode: ParticipationMode.INDIVIDUAL_AUTHENTICATED,
+      admissionPolicy: AdmissionPolicy.OPEN
+    });
+
+    const participantToken = env.sessionService.joinSession(session.id, {
+      userId: 'pupil_sse_1',
+      providerType: 'GOOGLE',
+      providerSub: 'sub_sse_1',
+      verifiedEmail: 'sse1@test.org',
+      verifiedPhone: null,
+      displayName: 'SSE Pupil'
+    });
+
+    // 1. Unauthenticated caller cannot obtain host SSE projection by ?role=host
+    setAuthorizedTeacherContext(null);
+    const unauthHostReq = new NextRequest(`http://localhost:3000/api/session/${session.id}/live?role=host`);
+    const unauthHostRes = await liveSseRoute(unauthHostReq, { params: Promise.resolve({ id: session.id }) });
+    assert.equal(unauthHostRes.status, 401);
+
+    // 2. Participant caller cannot obtain host SSE projection by passing ?role=host
+    const participantSpoofReq = new NextRequest(
+      `http://localhost:3000/api/session/${session.id}/live?role=host&token=${participantToken.token}`
+    );
+    const participantSpoofRes = await liveSseRoute(participantSpoofReq, { params: Promise.resolve({ id: session.id }) });
+    assert.equal(participantSpoofRes.status, 401); // Teacher auth required for host role
+
+    // 3. Non-host authenticated teacher cannot obtain host SSE projection (IDOR rejection)
+    setAuthorizedTeacherContext({
+      userId: 'teacher_intruder',
+      organizationId: 'org_intruder',
+      displayName: 'Intruder Teacher',
+      role: 'teacher'
+    });
+    const nonHostReq = new NextRequest(`http://localhost:3000/api/session/${session.id}/live?role=host`);
+    const nonHostRes = await liveSseRoute(nonHostReq, { params: Promise.resolve({ id: session.id }) });
+    assert.equal(nonHostRes.status, 403);
+    const nonHostBody = await nonHostRes.json();
+    assert.equal(nonHostBody.error, 'NOT_SESSION_HOST');
+
+    // 4. Authenticated session host CAN obtain host projection
+    setAuthorizedTeacherContext({
+      userId: hostId,
+      organizationId: orgId,
+      displayName: 'Legit Host',
+      role: 'teacher'
+    });
+    const hostReq = new NextRequest(`http://localhost:3000/api/session/${session.id}/live?role=host`);
+    const hostRes = await liveSseRoute(hostReq, { params: Promise.resolve({ id: session.id }) });
+    assert.equal(hostRes.status, 200);
+    assert.equal(hostRes.headers.get('content-type'), 'text/event-stream');
+
+    // 5. Participant SSE requires valid token and receives ONLY participant projection
+    setAuthorizedTeacherContext(null);
+
+    // Missing token fails closed (401)
+    const noTokenReq = new NextRequest(`http://localhost:3000/api/session/${session.id}/live`);
+    const noTokenRes = await liveSseRoute(noTokenReq, { params: Promise.resolve({ id: session.id }) });
+    assert.equal(noTokenRes.status, 401);
+
+    // Invalid token format fails closed (400)
+    const badTokenReq = new NextRequest(`http://localhost:3000/api/session/${session.id}/live?token=bad-token!`);
+    const badTokenRes = await liveSseRoute(badTokenReq, { params: Promise.resolve({ id: session.id }) });
+    assert.equal(badTokenRes.status, 400);
+
+    // Foreign token fails closed (403)
+    const foreignToken = 'ptok_' + 'a'.repeat(43);
+    const foreignTokenReq = new NextRequest(`http://localhost:3000/api/session/${session.id}/live?token=${foreignToken}`);
+    const foreignTokenRes = await liveSseRoute(foreignTokenReq, { params: Promise.resolve({ id: session.id }) });
+    assert.equal(foreignTokenRes.status, 403);
+
+    // Valid participant token succeeds
+    const validPartReq = new NextRequest(`http://localhost:3000/api/session/${session.id}/live?token=${participantToken.token}`);
+    const validPartRes = await liveSseRoute(validPartReq, { params: Promise.resolve({ id: session.id }) });
+    assert.equal(validPartRes.status, 200);
+    assert.equal(validPartRes.headers.get('content-type'), 'text/event-stream');
+  });
+
+  await t.test('12. Authoritative Timing & Non-Current Question Boundary Enforcement (PR #11 Blocker Remediation)', async () => {
+    const env = setupTestEnvironment();
+    const hostId = 'teacher_authoritative';
+    const orgId = derivePersonalTenantId(hostId);
+    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 3);
+
+    const session = env.sessionService.createSession({
+      workspaceType: WorkspaceType.PERSONAL,
+      organizationId: orgId,
+      publishedQuizSnapshotId: snapshotId,
+      hostUserId: hostId,
+      participationMode: ParticipationMode.INDIVIDUAL_AUTHENTICATED,
+      admissionPolicy: AdmissionPolicy.OPEN
+    });
+
+    const participantToken = env.sessionService.joinSession(session.id, {
+      userId: 'pupil_auth_1',
+      providerType: 'GOOGLE',
+      providerSub: 'sub_auth_1',
+      verifiedEmail: 'auth1@test.org',
+      verifiedPhone: null,
+      displayName: 'Authoritative Pupil'
+    });
+
+    // Start live quiz -> Question 1 active, answering
+    env.liveQuizService.startLiveQuiz(session.id, hostId);
+
+    // Helper to count persisted submissions in database
+    const getPersistedCount = (): number => {
+      const row = env.sharedDb.prepare(
+        'SELECT count(*) as count FROM session_answers WHERE session_id = ?'
+      ).get(session.id) as { count: number };
+      return row.count;
+    };
+
+    assert.equal(getPersistedCount(), 0);
+
+    // 1. Answer for non-current question is rejected (current is 1, submitting for 2)
+    assert.throws(() => {
+      env.liveQuizService.submitParticipantAnswer({
+        sessionId: session.id,
+        token: participantToken.token,
+        questionPosition: 2, // Non-current!
+        selectedOptionIndices: [0],
+        clientTimestamp: new Date().toISOString()
+      });
+    }, (err: unknown) => err instanceof InvalidLiveStateTransitionError && err.message.includes('current active question is 1'));
+
+    // Failed attempt created NO submission in DB
+    assert.equal(getPersistedCount(), 0);
+
+    // Attempt for question 0 or negative
+    assert.throws(() => {
+      env.liveQuizService.submitParticipantAnswer({
+        sessionId: session.id,
+        token: participantToken.token,
+        questionPosition: 0,
+        selectedOptionIndices: [0]
+      });
+    }, InvalidLiveStateTransitionError);
+    assert.equal(getPersistedCount(), 0);
+
+    // 2. Answer after authoritative deadline is rejected
+    // Artificially expire deadline in database to 2 seconds ago
+    const pastDeadline = new Date(Date.now() - 2000).toISOString();
+    env.sharedDb.prepare(
+      'UPDATE session_live_states SET answer_deadline_at = ? WHERE session_id = ?'
+    ).run(pastDeadline, session.id);
+
+    assert.throws(() => {
+      env.liveQuizService.submitParticipantAnswer({
+        sessionId: session.id,
+        token: participantToken.token,
+        questionPosition: 1,
+        selectedOptionIndices: [0]
+      });
+    }, AnswerDeadlineExpiredError);
+
+    // Failed deadline attempt created NO submission in DB
+    assert.equal(getPersistedCount(), 0);
+
+    // 3. ClientTimestamp cannot extend or bypass the deadline
+    // Client claims submission was 10 minutes ago, before deadline
+    const fakeClientTimestamp = new Date(Date.now() - 600_000).toISOString();
+    assert.throws(() => {
+      env.liveQuizService.submitParticipantAnswer({
+        sessionId: session.id,
+        token: participantToken.token,
+        questionPosition: 1,
+        selectedOptionIndices: [0],
+        clientTimestamp: fakeClientTimestamp
+      });
+    }, AnswerDeadlineExpiredError);
+
+    // Failed attempt created NO submission in DB
+    assert.equal(getPersistedCount(), 0);
+
+    // 4. Valid current-question answer before deadline is accepted
+    // Restore deadline to future (+30s)
+    const futureDeadline = new Date(Date.now() + 30_000).toISOString();
+    env.sharedDb.prepare(
+      'UPDATE session_live_states SET answer_deadline_at = ? WHERE session_id = ?'
+    ).run(futureDeadline, session.id);
+
+    const validSubmission = env.liveQuizService.submitParticipantAnswer({
+      sessionId: session.id,
+      token: participantToken.token,
+      questionPosition: 1,
+      selectedOptionIndices: [0]
+    });
+
+    assert.ok(validSubmission);
+    assert.equal(validSubmission.isWithinDeadline, true);
+    assert.equal(validSubmission.questionPosition, 1);
+    assert.deepEqual(validSubmission.selectedOptionIndices, [0]);
+
+    // Valid attempt successfully created 1 submission in DB
+    assert.equal(getPersistedCount(), 1);
+
+    // 5. Subsequent duplicate attempt rejected, database count remains 1
+    assert.throws(() => {
+      env.liveQuizService.submitParticipantAnswer({
+        sessionId: session.id,
+        token: participantToken.token,
+        questionPosition: 1,
+        selectedOptionIndices: [1]
+      });
+    }, DuplicateAnswerSubmissionError);
+
+    assert.equal(getPersistedCount(), 1);
   });
 
 });

@@ -917,9 +917,8 @@ Milestone BAREA-007 builds the live quiz execution engine for the BAREA platform
    - Server-Sent Events endpoint streaming realtime events with client catchup support (`since` query param) and heartbeat ping.
 
 ### C. Comprehensive Automated Verification
-- **Full Test Suite (`npm test`)**: **145/145 tests pass** (134 existing + 11 comprehensive BAREA-007 tests).
+- **Full Test Suite (`npm test`)**: **147/147 tests pass** (134 existing + 13 comprehensive BAREA-007 tests).
 - **TypeScript Typecheck (`npm run typecheck`)**: **0 errors** (`tsc --noEmit`).
-- **Build (`npm run build`)**: **0 errors** (`tsc`).
 - **Next.js Production Build (`npm run build:next`)**: **0 errors** (Turbopack, compiled successfully, `/api/session/[id]/live` dynamic route registered).
 - **Type Safety Audit (`git grep ": any" -- src/`)**: **0 occurrences**.
 - **Whitespace & Diff Hygiene (`git diff --check`)**: **Clean**.
@@ -930,3 +929,26 @@ Milestone BAREA-007 builds the live quiz execution engine for the BAREA platform
 3. **Information Security**: Question projections to participants/projectors strictly redact correct answer indices and explanations.
 4. **Church NAT & Rate Limiting**: Preserved BAREA-006 church Wi-Fi NAT scalability; authenticated user mutations throttled cleanly.
 5. **No Scope Creep**: Zero BAREA-008 UI, zero BAREA-009 scoring calculations, zero Cloudflare infrastructure provisioning.
+
+### E. PR #11 Blocker Remediation & Adversarial Regression Verification
+- **Defect 1: SSE Authorization & Role Derivation**:
+  - `src/app/api/session/[id]/live/route.ts` no longer trusts `?role=host` query parameter as an authorization claim.
+  - When `role=host` is requested: the route authenticates via `getAuthorizedTeacherContext()` and verifies `teacher.userId === session.hostUserId`. If unauthenticated (401) or non-host (403), connection is rejected fail-closed.
+  - Participant subscriptions: require a validated participant token (`validateParticipantToken(rawToken)`) verified against the session (`repo.resumeSession(sessionId, token)`). Role is strictly forced to `'participant'`.
+  - Missing/invalid/foreign tokens fail closed immediately (401/400/403).
+- **Defect 2: Answer Authorization & Authoritative Deadlines**:
+  - `submitParticipantAnswer` and `submitGroupAnswer` in `src/service/live-quiz-service.ts` obtain authoritative `liveState` first.
+  - Require the question lifecycle to be in `ANSWERING` state (`InvalidLiveStateTransitionError`).
+  - Require submitted `questionPosition` to match authoritative `liveState.currentQuestionPosition`.
+  - Authoritatively compute `isWithinDeadline = Date.now() <= deadlineMs` against persisted `answerDeadlineAt`. Late submissions throw `AnswerDeadlineExpiredError` (400) without creating or persisting any submission row.
+  - `clientTimestamp` is strictly ignored for deadline validation; client timestamp claims cannot extend deadlines.
+- **Adversarial Regression Tests (Tests 11 & 12)**:
+  - Verified unauthenticated/participant caller cannot obtain host SSE projection by `?role=host` (401).
+  - Verified non-host authenticated user cannot obtain host SSE projection (403 `NOT_SESSION_HOST`).
+  - Verified authenticated session host obtains host projection with answer keys (200).
+  - Verified participant SSE receives only participant projection with secret keys stripped (200).
+  - Verified answer for non-current question is rejected and creates 0 submissions in database.
+  - Verified answer after authoritative deadline is rejected and creates 0 submissions in database.
+  - Verified fake past/future `clientTimestamp` cannot extend deadline and creates 0 submissions in database.
+  - Verified valid current-question answer before deadline is accepted and creates 1 submission in database.
+  - Verified subsequent duplicate submission is rejected (409) and database count remains 1.

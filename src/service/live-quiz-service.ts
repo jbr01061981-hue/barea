@@ -17,6 +17,7 @@ import {
   LiveQuizEventType,
   type LiveQuizEvent,
   InvalidLiveStateTransitionError,
+  AnswerDeadlineExpiredError,
   NotSessionHostError,
   SessionNotActiveError,
   InvalidQuestionChoiceError
@@ -272,12 +273,41 @@ export class LiveQuizService {
       this.rateLimiter.checkLiveMutation(participant.userId);
     }
 
+    // 1. Authoritative Live State check
+    const liveState = this.repo.getLiveSessionState(input.sessionId);
+    if (!liveState) throw new SessionNotFoundError(input.sessionId);
+
+    // 2. Authoritative Question Lifecycle State check
+    if (liveState.questionLifecycleState !== QuestionLifecycleState.ANSWERING) {
+      throw new InvalidLiveStateTransitionError(
+        `Cannot submit answer: question is in '${liveState.questionLifecycleState}' state, expected '${QuestionLifecycleState.ANSWERING}'.`
+      );
+    }
+
+    // 3. Authoritative Question Position check
+    if (input.questionPosition !== liveState.currentQuestionPosition) {
+      throw new InvalidLiveStateTransitionError(
+        `Cannot submit answer for question position ${input.questionPosition}: current active question is ${liveState.currentQuestionPosition}.`
+      );
+    }
+
+    // 4. Server-Authoritative Deadline check
+    if (!liveState.answerDeadlineAt) {
+      throw new InvalidLiveStateTransitionError('No active answer deadline configured for current question.');
+    }
+    const nowServerMs = Date.now();
+    const deadlineMs = new Date(liveState.answerDeadlineAt).getTime();
+    if (nowServerMs > deadlineMs) {
+      throw new AnswerDeadlineExpiredError();
+    }
+    const isWithinDeadline = nowServerMs <= deadlineMs;
+
     const snapshot = this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
     if (!snapshot) throw new CrossTenantSnapshotError('Quiz snapshot not found.');
 
-    const question = snapshot.questions.find(q => q.position === input.questionPosition);
+    const question = snapshot.questions.find(q => q.position === liveState.currentQuestionPosition);
     if (!question) {
-      throw new InvalidLiveStateTransitionError(`Question position ${input.questionPosition} does not exist in quiz.`);
+      throw new InvalidLiveStateTransitionError(`Question position ${liveState.currentQuestionPosition} does not exist in quiz.`);
     }
 
     // Validate choices
@@ -290,22 +320,22 @@ export class LiveQuizService {
       }
     }
 
-    const nowIso = new Date().toISOString();
+    const nowIso = new Date(nowServerMs).toISOString();
 
     const submission = this.repo.recordAnswerSubmission({
       sessionId: input.sessionId,
-      questionPosition: input.questionPosition,
+      questionPosition: liveState.currentQuestionPosition,
       questionId: question.id,
       participantId: participant.id,
       userId: participant.userId,
       selectedOptionIndices: input.selectedOptionIndices,
       submittedAt: nowIso,
       clientTimestamp: input.clientTimestamp,
-      isWithinDeadline: true
+      isWithinDeadline
     });
 
     if (this.transport) {
-      const submissionCount = this.repo.getSubmissionCountForQuestion(input.sessionId, input.questionPosition);
+      const submissionCount = this.repo.getSubmissionCountForQuestion(input.sessionId, liveState.currentQuestionPosition);
       this.transport.publish({
         eventId: 'evt_' + crypto.randomUUID(),
         eventType: LiveQuizEventType.ANSWER_SUBMITTED,
@@ -313,7 +343,7 @@ export class LiveQuizService {
         stateVersion: session.stateVersion,
         timestamp: nowIso,
         payload: {
-          questionPosition: input.questionPosition,
+          questionPosition: liveState.currentQuestionPosition,
           participantId: participant.id,
           submissionCount
         }
@@ -333,6 +363,35 @@ export class LiveQuizService {
     if (session.hostUserId !== input.hostUserId) throw new NotSessionHostError();
     if (session.status !== SessionStatus.ACTIVE) throw new SessionNotActiveError();
 
+    // 1. Authoritative Live State check
+    const liveState = this.repo.getLiveSessionState(input.sessionId);
+    if (!liveState) throw new SessionNotFoundError(input.sessionId);
+
+    // 2. Authoritative Question Lifecycle State check
+    if (liveState.questionLifecycleState !== QuestionLifecycleState.ANSWERING) {
+      throw new InvalidLiveStateTransitionError(
+        `Cannot submit answer: question is in '${liveState.questionLifecycleState}' state, expected '${QuestionLifecycleState.ANSWERING}'.`
+      );
+    }
+
+    // 3. Authoritative Question Position check
+    if (input.questionPosition !== liveState.currentQuestionPosition) {
+      throw new InvalidLiveStateTransitionError(
+        `Cannot submit answer for question position ${input.questionPosition}: current active question is ${liveState.currentQuestionPosition}.`
+      );
+    }
+
+    // 4. Server-Authoritative Deadline check
+    if (!liveState.answerDeadlineAt) {
+      throw new InvalidLiveStateTransitionError('No active answer deadline configured for current question.');
+    }
+    const nowServerMs = Date.now();
+    const deadlineMs = new Date(liveState.answerDeadlineAt).getTime();
+    if (nowServerMs > deadlineMs) {
+      throw new AnswerDeadlineExpiredError();
+    }
+    const isWithinDeadline = nowServerMs <= deadlineMs;
+
     // Verify group belongs to session
     const groups = this.repo.listGroups(input.sessionId);
     const targetGroup = groups.find(g => g.id === input.groupId);
@@ -343,9 +402,9 @@ export class LiveQuizService {
     const snapshot = this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
     if (!snapshot) throw new CrossTenantSnapshotError('Quiz snapshot not found.');
 
-    const question = snapshot.questions.find(q => q.position === input.questionPosition);
+    const question = snapshot.questions.find(q => q.position === liveState.currentQuestionPosition);
     if (!question) {
-      throw new InvalidLiveStateTransitionError(`Question position ${input.questionPosition} does not exist in quiz.`);
+      throw new InvalidLiveStateTransitionError(`Question position ${liveState.currentQuestionPosition} does not exist in quiz.`);
     }
 
     // Validate choices
@@ -358,20 +417,20 @@ export class LiveQuizService {
       }
     }
 
-    const nowIso = new Date().toISOString();
+    const nowIso = new Date(nowServerMs).toISOString();
 
     const submission = this.repo.recordAnswerSubmission({
       sessionId: input.sessionId,
-      questionPosition: input.questionPosition,
+      questionPosition: liveState.currentQuestionPosition,
       questionId: question.id,
       sessionGroupId: input.groupId,
       selectedOptionIndices: input.selectedOptionIndices,
       submittedAt: nowIso,
-      isWithinDeadline: true
+      isWithinDeadline
     });
 
     if (this.transport) {
-      const submissionCount = this.repo.getSubmissionCountForQuestion(input.sessionId, input.questionPosition);
+      const submissionCount = this.repo.getSubmissionCountForQuestion(input.sessionId, liveState.currentQuestionPosition);
       this.transport.publish({
         eventId: 'evt_' + crypto.randomUUID(),
         eventType: LiveQuizEventType.ANSWER_SUBMITTED,
@@ -379,7 +438,7 @@ export class LiveQuizService {
         stateVersion: session.stateVersion,
         timestamp: nowIso,
         payload: {
-          questionPosition: input.questionPosition,
+          questionPosition: liveState.currentQuestionPosition,
           sessionGroupId: input.groupId,
           submissionCount
         }
