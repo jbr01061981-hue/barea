@@ -4,27 +4,28 @@ Repository: `jbr01061981-hue/barea`
 
 ## EXECUTION AUTHORITY
 
-Execute this task directly. Inspect the repository, modify deployment/configuration documentation as necessary, run the available verification commands, and commit the focused deployment changes to `main` when appropriate.
+Execute this task directly. Inspect the repository, modify deployment/configuration documentation as necessary, run the available verification commands, and commit focused deployment changes to `main` when appropriate.
 
-Do not merely produce a recommendation or another audit report. The purpose of this prompt is to IMPLEMENT the current approved deployment architecture as far as the available environment and credentials permit.
+Do not merely produce another audit report. Implement the current approved deployment architecture as far as the available environment and credentials permit.
 
+Phase 7 is COMPLETED and MERGED.
 GitHub/repository state is the source of truth.
 
-Phase 7 is already COMPLETED and MERGED.
+This is a deployment/infrastructure task only.
 
-Do NOT start the next BAREA product phase.
+Do NOT start a new BAREA product phase.
+Do NOT redesign the application.
+Do NOT modify backend/security behavior unless a genuine deployment compatibility issue is proven and explicitly documented.
 
 ---
 
-# 1. APPROVED ARCHITECTURAL DECISION
+# 1. APPROVED DEPLOYMENT ARCHITECTURE — ADR-012
 
-The previous Cloudflare Worker audit established a genuine:
+The current BAREA application MUST remain on a native Node.js runtime because it depends on Node.js-native persistence/runtime facilities including `node:sqlite` / `DatabaseSync` and local filesystem/path behavior.
 
-**CLOUDFLARE RUNTIME / DEPLOYMENT ARCHITECTURE GAP**
+The Cloudflare Workers runtime is NOT the application runtime for the current BAREA MVP.
 
-The current BAREA application depends on Node.js-native `node:sqlite` / `DatabaseSync` and local filesystem behavior. The current application is therefore NOT to be deployed directly into the Cloudflare Workers runtime.
-
-The approved deployment topology is ADR-012:
+The governing deployment topology is:
 
 ```text
 PUBLIC INTERNET
@@ -48,7 +49,7 @@ LOCAL SQLITE
 node:sqlite / DatabaseSync
 ```
 
-Cloudflare is the public edge/ingress layer.
+Cloudflare provides the public edge and authenticated ingress path.
 
 Node.js remains the BAREA application runtime.
 
@@ -56,26 +57,26 @@ SQLite remains the current persistence implementation.
 
 ## NON-NEGOTIABLE
 
-DO NOT:
+Do NOT:
 
-- deploy the current BAREA application directly to Workers;
-- migrate SQLite to D1;
-- migrate SQLite to PostgreSQL/external SQL;
-- introduce Durable Objects, KV, R2, Queues, or another storage system merely for deployment;
+- deploy the current BAREA application directly to a Cloudflare Worker;
+- migrate SQLite to Cloudflare D1;
+- migrate SQLite to PostgreSQL/external SQL as part of this task;
+- add Durable Objects, KV, R2, Queues, or other Cloudflare storage merely to enable Workers;
 - migrate the root repository to ESM;
 - use vinext/OpenNext to force the current application onto Workers;
-- create a Worker wrapper around the Node application;
-- redesign authentication, authorization, sessions, database security, or backend behavior;
-- start BAREA-007 or another product phase;
+- create a Worker wrapper around the Node.js application;
+- redesign authentication, authorization, tenant isolation, session security, rate limiting, or backend behavior;
+- start BAREA-007 or any later product phase;
 - fabricate Cloudflare credentials, tunnel IDs, DNS records, hostnames, URLs, deployment IDs, or verification results.
 
-A future persistence-port or Worker architecture may be proposed as a separate milestone only. It is OUT OF SCOPE for this task.
+A future Worker/D1 or other persistence-port milestone is separate and OUT OF SCOPE.
 
 ---
 
-# 2. VERIFY BEFORE CHANGING ANYTHING
+# 2. VERIFY THE CURRENT BASELINE
 
-Run:
+Before changes, run and record:
 
 ```text
 git status
@@ -84,7 +85,13 @@ git log -10 --oneline
 git remote -v
 ```
 
-Confirm the actual current HEAD and working-tree state.
+Confirm:
+
+- branch is `main`;
+- Phase 7 is merged;
+- working tree state;
+- current HEAD;
+- current application structure.
 
 Read:
 
@@ -98,33 +105,30 @@ package-lock.json
 
 Locate and read ADR-012.
 
-Inspect the current Next.js application and deployment-related files.
-
-Do not rely on historical reports when current repository evidence can answer the question.
+Do not rely on historical ChatGPT conversation state when current repository evidence is available.
 
 ---
 
-# 3. PRESERVE APPLICATION CONTRACTS
-
-The current repository's CommonJS contract MUST remain intact.
+# 3. PRESERVE EXISTING APPLICATION CONTRACTS
 
 Preserve:
 
+- root CommonJS package contract;
 - no root `"type": "module"`;
 - TypeScript Node16 module/moduleResolution behavior;
 - CommonJS test execution;
 - `dist/index.js` public CommonJS contract;
-- current domain, persistence, service, transport, authentication, authorization, session, and security behavior.
+- current domain/service/persistence/transport behavior;
+- current authentication/authorization/session/security behavior.
 
-Do not rewrite application imports solely for deployment.
-
-Do not perform a broad refactor.
+Do NOT rewrite imports merely for deployment.
+Do NOT perform a broad refactor.
 
 ---
 
-# 4. CLEAN UP FAILED WORKER EXPERIMENTS ONLY WHEN PROVEN OBSOLETE
+# 4. INSPECT AND CLEAN FAILED WORKER EXPERIMENTS
 
-Inspect for:
+Inspect:
 
 ```text
 wrangler.jsonc
@@ -133,52 +137,52 @@ vite.config.*
 open-next.config.*
 vinext configuration
 Worker-specific scripts
-automatic OpenNext configuration/dependencies
+@opennextjs/* dependencies
 ```
 
-Determine whether these are still required by the current application.
+Determine whether each item is still legitimate for the CURRENT repository.
 
-If an artifact exists solely because of the failed Worker experiment and is no longer required, remove it safely and document why.
+If an artifact exists solely because of the earlier failed Worker/OpenNext experiment and is obsolete, remove it safely and document the reason.
 
-Do not remove anything merely because it mentions Cloudflare.
+Do not remove legitimate Cloudflare/Tunnel documentation or application configuration.
 
-Preserve historical documentation of the failed Worker/OpenNext attempt.
+Preserve the historical failure record.
 
 ---
 
-# 5. IMPLEMENT THE NODE ORIGIN
+# 5. VERIFY THE NATIVE NODE ORIGIN
 
-Use the repository's actual supported Node.js version. Verify it; do not invent one.
+Determine the supported Node.js version from the current repository/docs. Do not invent a requirement.
 
-The BAREA origin must listen on loopback only:
+The production-style BAREA origin MUST bind only to loopback:
 
 ```text
 127.0.0.1:3000
 ```
 
-Use the repository's verified production command or an equivalent explicit command such as:
+Use the repository's verified Next.js production command or an equivalent explicit command such as:
 
 ```text
 next start -H 127.0.0.1 -p 3000
 ```
 
-Do not expose port 3000 directly to the Internet.
+Do not expose port 3000 directly to the public Internet.
 
-Do not alter application runtime code unless required to make the verified origin listen safely on loopback.
+If `package.json` needs a deployment convenience script to enforce loopback binding, that is in scope provided it does not alter application semantics.
 
 ---
 
-# 6. IMPLEMENT / DOCUMENT CLOUDFLARE TUNNEL
+# 6. IMPLEMENT THE CLOUDFLARE TUNNEL RUNBOOK
 
-Use current authoritative Cloudflare documentation to implement the ADR-012 Tunnel topology.
+Use current authoritative Cloudflare documentation to verify the exact `cloudflared` setup.
 
-The intended mapping is:
+The intended ingress mapping is:
 
 ```text
 <BAREA hostname> -> http://127.0.0.1:3000
 ```
 
-A typical configuration shape is:
+Document a configuration shape such as:
 
 ```yaml
 tunnel: <REAL_TUNNEL_UUID>
@@ -189,53 +193,92 @@ ingress:
   - service: http_status:404
 ```
 
-Use placeholders in repository documentation when real infrastructure has not yet been provisioned.
+Use placeholders in committed documentation until real infrastructure is provisioned.
 
-NEVER invent values.
-
-If Cloudflare authentication/access is available, provision the NON-PRODUCTION environment first using real values.
-
-If access is unavailable, complete all safe repository-side preparation and clearly mark physical provisioning as pending.
+NEVER invent tunnel UUIDs, hostnames, credential contents, DNS records, or successful live results.
 
 ---
 
-# 7. TUNNEL SECURITY / NETWORK BOUNDARY
+# 7. PHYSICAL CLOUDFLARE PROVISIONING
 
-Preserve ADR-012's trust boundary:
+Determine whether `cloudflared` is installed and whether authenticated Cloudflare access is available.
+
+If authorized access is available, provision NON-PRODUCTION/staging first.
+
+Required operational sequence:
+
+1. Verify Node.js origin.
+2. Ensure origin binds to `127.0.0.1:3000`.
+3. Install/configure `cloudflared` according to current Cloudflare documentation.
+4. Create/configure a non-production Tunnel using real authorized credentials.
+5. Configure ingress from the staging hostname to `http://127.0.0.1:3000`.
+6. Configure DNS through the Tunnel using the current supported Cloudflare mechanism.
+7. Start `cloudflared` as a supervised service appropriate to the target host.
+8. Verify the public HTTPS path reaches the Node origin.
+9. Verify direct public access to port 3000 is unavailable.
+
+Do NOT modify production unless explicitly authorized and independently verified.
+
+If credentials or a physical host are unavailable, complete all safe repository-side preparation and report physical provisioning as NOT PROVISIONED.
+
+---
+
+# 8. NETWORK / SECURITY BOUNDARY
+
+Preserve:
 
 ```text
-Client
+PUBLIC CLIENT
   -> Cloudflare Edge
   -> authenticated outbound-only cloudflared Tunnel
   -> 127.0.0.1:3000
   -> BAREA Node.js
 ```
 
-Verify/document that:
+Verify/document:
 
-- Node binds to loopback;
+- origin binds only to loopback;
 - port 3000 is not intentionally publicly exposed;
-- cloudflared establishes outbound connectivity;
-- the Tunnel is the ingress path.
+- `cloudflared` is the ingress path;
+- origin is not expected to accept arbitrary Internet traffic.
 
-Do NOT invent a Cloudflare source-IP allowlist as a substitute for the Tunnel.
-
-Do NOT claim that a Transform Rule provides cryptographic request authentication.
-
-Do not modify existing security behavior merely for deployment.
+Do NOT invent a Cloudflare source-CIDR allowlist for port 3000.
+Do NOT claim a Transform Rule provides cryptographic request authentication.
+Do NOT change security logic merely for deployment.
 
 ---
 
-# 8. SECRETS AND CREDENTIALS
+# 9. CLIENT-IP PROVENANCE
 
-Never print or commit secret values.
+Do not modify the BAREA security implementation merely for deployment.
+
+If the current application relies on edge-attested client-IP provenance, test the actual Cloudflare Tunnel path and report what is truly observed by the application.
+
+Never claim cryptographic trust unless the current implementation actually establishes it.
+
+Keep these operational states distinct:
+
+1. Architecture Specified
+2. Infrastructure Provisioned
+3. Infrastructure Operational
+4. Client-IP Provenance Experimentally Verified
+5. Application Integration Verified
+6. Merge Authorized
+
+Do not collapse these into one “deployed” status.
+
+---
+
+# 10. SECRETS
+
+Never print, commit, or expose secret values.
 
 Never commit:
 
 ```text
 CLOUDFLARE_TUNNEL_TOKEN
 Cloudflare API tokens
-Tunnel credentials JSON
+Tunnel credential JSON
 DATABASE_URL
 SESSION_SECRET
 COMPETITION_HMAC_SECRET
@@ -244,29 +287,35 @@ BAREA_EDGE_SECRET values
 private keys
 ```
 
+Use Cloudflare/environment secret mechanisms appropriate to the current environment.
+
 If a required secret is missing, report its NAME only.
 
-If credentials are available through an authorized local environment, use them without exposing their values.
+---
+
+# 11. DATABASE SAFETY
+
+Do NOT:
+
+- migrate SQLite to D1;
+- migrate SQLite to another database;
+- run production migrations;
+- change production schemas;
+- add distributed storage solely for deployment.
+
+The local SQLite architecture remains authoritative for this task.
 
 ---
 
-# 9. DO NOT CHANGE THE NORMAL BUILD CONTRACT
+# 12. BUILD / QUALITY CONTRACT
 
-Inspect `package.json`.
+Preserve the existing normal build semantics.
 
-If `npm run build` is the TypeScript distribution build, preserve that meaning.
+If `npm run build` is the TypeScript distribution build, do not change its meaning merely for deployment.
 
-For the Node.js origin, use the actual Next.js production build/start process already supported by the repository.
+For the Node.js origin, use the current verified Next.js production build/start process.
 
-Do not create a fake Worker build command.
-
-Do not configure Wrangler to auto-detect and transform this Next.js application into OpenNext.
-
----
-
-# 10. QUALITY GATES
-
-Run the actual available quality gates, including where applicable:
+Run the actual repository quality gates available in `package.json`, including where applicable:
 
 ```text
 npm test
@@ -275,31 +324,23 @@ npm run build
 npm run build:next
 ```
 
-Use the current package scripts; do not assume every command exists.
+Do not claim a check passed unless it actually ran.
 
-Report each command as:
-
-```text
-PASS
-FAIL
-NOT RUN — reason
-```
-
-Do not claim a command passed unless it actually ran.
+Report each check as PASS / FAIL / NOT RUN with reason.
 
 ---
 
-# 11. LOCAL NODE PRODUCTION TEST
+# 13. LOCAL NODE ORIGIN VALIDATION
 
-Build the Next.js application and run the production Node origin locally where practical.
+Build the current Next.js application and run the production Node.js origin locally where practical.
 
-Verify:
+Verify at minimum:
 
 ```text
 GET /
 ```
 
-and the route reached after the root redirect.
+and the actual route reached after the root behavior.
 
 Check:
 
@@ -307,36 +348,32 @@ Check:
 - HTML;
 - CSS/assets;
 - JavaScript;
-- hydration/runtime errors;
+- runtime errors;
 - server errors;
-- Node.js SQLite initialization;
-- relevant API/server-action behavior.
+- SQLite initialization;
+- API/Route Handler behavior;
+- relevant Server Actions where practical.
 
-This is a Node origin test, NOT a Worker test.
-
----
-
-# 12. CLOUDFLARED TEST / PROVISIONING
-
-Determine whether `cloudflared` is installed and whether authenticated Cloudflare access is available.
-
-If both are available, implement and test the non-production Tunnel using the real infrastructure.
-
-If not available:
-
-- prepare the repository-side runbook/configuration;
-- do not fabricate a Tunnel;
-- do not fabricate a public hostname;
-- do not claim public HTTPS works;
-- mark physical provisioning and public verification as NOT RUN / PENDING.
-
-If Cloudflare credentials are available, do NOT modify production. Provision staging/non-production first.
+This is a Node.js origin test, NOT a Worker test.
 
 ---
 
-# 13. END-TO-END VERIFICATION
+# 14. CLOUDFLARED LOCAL / REMOTE TEST
 
-When a real Tunnel exists, verify the complete path:
+If `cloudflared` is installed and authenticated access is available, test the Tunnel according to current Cloudflare documentation.
+
+If credentials or a physical origin host are unavailable:
+
+- prepare configuration/runbook;
+- do not invent a live Tunnel;
+- do not invent a public hostname;
+- mark Tunnel provisioning as NOT RUN / PENDING.
+
+---
+
+# 15. END-TO-END VERIFICATION
+
+When a real staging Tunnel exists, verify:
 
 ```text
 Cloudflare Edge
@@ -353,37 +390,16 @@ Verify:
 - assets load;
 - application routes work;
 - relevant API/server actions work;
-- direct access to port 3000 from the public Internet is unavailable;
+- direct public access to 127.0.0.1:3000 is not possible from the Internet;
 - no unexpected runtime errors occur.
 
 Use real observations only.
 
 ---
 
-# 14. CLIENT-IP / PROVENANCE
+# 16. VISUAL INSPECTION
 
-Do not modify BAREA security code merely to make deployment work.
-
-If ADR-012 requires client-IP provenance verification, test and report what the deployed path actually supplies to the application.
-
-Do not claim provenance is cryptographically trusted unless the current implementation actually establishes that property.
-
-Keep these states separate:
-
-1. Architecture Specified
-2. Infrastructure Provisioned
-3. Infrastructure Operational
-4. Client-IP Provenance Experimentally Verified
-5. Application Integration Verified
-6. Merge Authorized
-
-Never collapse these states into one “deployed” claim.
-
----
-
-# 15. VISUAL INSPECTION
-
-If and only if a real public/staging HTTPS deployment exists, inspect the actual BAREA application on:
+Only when a real public/staging HTTPS deployment exists, inspect the actual BAREA homepage on:
 
 - desktop;
 - mobile.
@@ -400,43 +416,44 @@ Check:
 - overflow;
 - missing assets;
 - hydration/runtime errors;
-- accidental debug UI.
+- debug UI.
 
-Do NOT redesign the UI in this task.
+Do NOT redesign the UI during deployment work.
 
-If there is no real public deployment, report visual inspection as NOT RUN.
+Without a real public deployment, report visual inspection as NOT RUN.
 
 ---
 
-# 16. DOCUMENTATION
+# 17. DOCUMENTATION
 
-Update the appropriate deployment documentation to describe the implemented/current state:
+Update deployment documentation so it accurately records:
 
-- ADR-012 Cloudflare Edge + Tunnel + private Node origin;
-- Node.js runtime requirement;
-- loopback origin `127.0.0.1:3000`;
-- cloudflared configuration/runbook;
-- required environment variables by NAME only;
-- staging/non-production procedure;
-- production procedure without performing production changes;
+- ADR-012 topology;
+- Cloudflare Edge/Tunnel role;
+- private Node.js origin;
+- loopback binding `127.0.0.1:3000`;
+- cloudflared setup;
+- required variables by NAME only;
+- non-production/staging procedure;
+- production procedure without executing production changes;
 - verification gates;
-- current Worker incompatibility;
-- previous failed OpenNext/Worker experiment as historical record.
+- current Worker runtime incompatibility;
+- historical OpenNext/Worker failure.
 
-Do not rewrite history.
+Do not rewrite history to hide failed experiments.
 
 ---
 
-# 17. GIT DISCIPLINE
+# 18. GIT DISCIPLINE
 
-Before modifications:
+Before changes:
 
 ```text
 git status
 git diff
 ```
 
-After modifications:
+After changes:
 
 ```text
 git diff
@@ -447,7 +464,7 @@ Review every changed file.
 
 If repository changes are required, create ONE focused deployment commit.
 
-Suggested commit message:
+Suggested message:
 
 ```text
 chore(deploy): implement ADR-012 Cloudflare Tunnel topology
@@ -455,35 +472,34 @@ chore(deploy): implement ADR-012 Cloudflare Tunnel topology
 
 Do not force-push.
 Do not rewrite history.
+Do not create unrelated branches or PRs.
 Do not merge unrelated work.
-Do not resurrect obsolete frontend branches.
 
 ---
 
-# 18. HARD STOP CONDITIONS
+# 19. HARD STOP CONDITIONS
 
-STOP only when the requested implementation genuinely cannot proceed because of a concrete blocker, such as:
+Stop and report a concrete blocker only when:
 
-1. ADR-012 cannot be verified;
-2. the Node origin cannot be established;
-3. required Cloudflare credentials/access are unavailable for a requested live provisioning step;
-4. `cloudflared` cannot be installed/used in the available environment;
-5. deployment would require production changes without authorization;
-6. deployment would require SQLite-to-D1/external-SQL migration;
-7. deployment would require root ESM migration;
-8. deployment would require backend/security/authentication redesign.
+1. ADR-012 cannot be verified.
+2. The current Node.js origin cannot be established.
+3. The origin cannot safely bind to loopback.
+4. Required Cloudflare credentials/access are unavailable for a requested physical provisioning step.
+5. `cloudflared` cannot be used on the target host/environment.
+6. Deployment would require unauthorized production changes.
+7. Deployment would require SQLite/D1/external-SQL migration.
+8. Deployment would require root ESM migration.
+9. Deployment would require backend/security/authentication redesign.
 
-When blocked, do NOT stop at the old “Worker runtime gap” report. That gap is already accepted and resolved architecturally by selecting ADR-012.
+When blocked by infrastructure access:
 
-Instead:
-
-1. complete every safe repository-side implementation step;
-2. identify the exact remaining blocker;
-3. report what is complete and what remains pending.
+- complete every safe repository-side step first;
+- state exactly what remains pending;
+- do not stop at the already-established Worker runtime gap because ADR-012 is the approved resolution for this MVP.
 
 ---
 
-# 19. FINAL REPORT
+# 20. FINAL REPORT
 
 Return exactly:
 
@@ -523,8 +539,8 @@ Hostname:
 
 ```text
 Current application on Workers: NOT VIABLE
+Decision: ADR-012 Node.js origin + Cloudflare Tunnel
 Reason:
-Decision: Use ADR-012 Node origin + Cloudflare Tunnel
 ```
 
 ## MODULE CONTRACT
@@ -536,7 +552,7 @@ Test contract:
 Public CommonJS contract:
 ```
 
-Confirm these were preserved.
+Confirm these remained intact.
 
 ## FILES CHANGED
 
@@ -603,7 +619,7 @@ List observations only. Do not redesign the UI.
 
 ## NEXT STEP
 
-STOP after ADR-012 deployment implementation, verification, and visual inspection.
+STOP after ADR-012 deployment implementation, actual verification, and visual inspection where available.
 
 Do NOT start the next BAREA product phase.
 
@@ -611,7 +627,7 @@ Do NOT start the next BAREA product phase.
 
 # SUCCESS CRITERIA
 
-The task is successful when as many of the following as the available environment permits are genuinely completed:
+The task is successful when the available environment permits genuine completion of these items:
 
 1. Current Phase-7 `main` baseline verified.
 2. ADR-012 verified as the governing deployment architecture.
@@ -619,14 +635,14 @@ The task is successful when as many of the following as the available environmen
 4. Node.js origin verified.
 5. Origin binds to `127.0.0.1:3000`.
 6. Cloudflare Tunnel configuration/runbook implemented.
-7. Required staging infrastructure provisioned when credentials/access permit.
+7. Non-production infrastructure provisioned when real credentials/access permit.
 8. Public HTTPS verified when real infrastructure exists.
-9. End-to-end Edge → Tunnel → Node → SQLite path verified when infrastructure exists.
+9. Edge -> Tunnel -> Node -> SQLite path verified when infrastructure exists.
 10. Desktop/mobile visual inspection performed when a real deployment exists.
 11. CommonJS/test/public-export contracts preserved.
 12. No production infrastructure modified without explicit authorization.
 13. No backend/security/domain redesign performed.
 14. Deployment documentation updated.
-15. Changes committed cleanly.
+15. Changes committed cleanly if changes were required.
 
-If live Cloudflare provisioning cannot be completed because the environment lacks authorized credentials or infrastructure access, do NOT fabricate success. Complete the repository-side work and report the exact pending provisioning step.
+If live provisioning cannot be completed because authorized Cloudflare access or a physical origin host is unavailable, complete all safe repository-side work and report the exact pending provisioning action instead of fabricating success.
