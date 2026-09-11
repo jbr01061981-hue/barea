@@ -1,257 +1,626 @@
-# AGY PROMPT — BAREA-007 FINAL DEADLINE ATOMICITY REMEDIATION
+# AGY PROMPT — BAREA FRESH CLOUDFLARE WORKER DEPLOYMENT AFTER PHASE 7
 
 Repository: `jbr01061981-hue/barea`
-Target PR: #11
-Branch: `barea-007-live-quiz`
 
 ## OBJECTIVE
 
-Apply the remaining security/correctness remediation identified by the independent review of BAREA-007 PR #11.
+Phase 7 is now COMPLETED, MERGED, and the repository is clean.
 
-Current SSE authorization, server-derived realtime role, canonical projection/replay filtering, current-question enforcement, and client-timestamp rejection are substantially implemented. **Do not undo or weaken those controls.**
+Set up a clean, safe Cloudflare deployment for the CURRENT BAREA application after Phase 7.
 
-The remaining blocker is **authoritative deadline atomicity at persistence**.
+This is a deployment/infrastructure task only.
 
-The service currently validates the persisted `answerDeadlineAt` before calling the repository, but the final persistence decision must itself be authoritative with respect to server time. A request can otherwise pass the service-level check immediately before the deadline and reach persistence after the deadline while still being accepted using an older captured `submittedAt`.
+Do NOT start a new product phase.
+Do NOT redesign the application.
+Do NOT modify backend functionality unless a genuine deployment compatibility issue requires it and is explicitly documented.
+Do NOT merge unrelated work.
 
-## REQUIRED REMEDIATION
+The immediate goal is to establish a non-production Cloudflare deployment and verify the real BAREA web application can be reached and visually inspected.
 
-### 1. Make deadline acceptance authoritative at the persistence boundary
+---
+
+## 1. VERIFY CURRENT SOURCE OF TRUTH FIRST
+
+Before making any changes, inspect the actual current repository state:
+
+```text
+git status
+git branch
+git log -5 --oneline
+git remote -v
+```
+
+Confirm:
+
+- current branch;
+- current HEAD;
+- clean working tree;
+- current post-Phase-7 merged state.
+
+Do NOT rely on old ChatGPT conversation state or an older frontend branch.
+
+---
+
+## 2. READ CURRENT ARCHITECTURE
+
+Read the current:
+
+- `README.md`
+- `docs/`
+- `package.json`
+- `pnpm-workspace.yaml` if present
+- `turbo.json` if present
+- current web application source
+- current deployment documentation
+
+Search the repository for:
+
+```text
+Cloudflare
+Workers
+Next.js
+vinext
+OpenNext
+Vite
+deployment
+staging
+production
+web
+API
+```
+
+Determine the CURRENT web architecture after Phase 7.
+
+Do not assume the old frontend architecture is still correct.
+
+---
+
+## 3. IMPORTANT HISTORY — PREVIOUS CLOUDFLARE FAILURE
+
+A previous deployment attempt used:
+
+```text
+npm run build
+```
+
+which ran:
+
+```text
+tsc
+```
+
+Then:
+
+```text
+npx wrangler deploy
+```
+
+caused Wrangler to auto-detect Next.js and configure OpenNext.
+
+The deployment subsequently failed because:
+
+```text
+.next/server/middleware-manifest.json
+```
+
+was unavailable.
+
+The previous Cloudflare automatic migration also attempted to create/configure OpenNext-related files and dependencies.
+
+Treat this as a failed historical deployment configuration.
+
+Do NOT blindly reuse it.
+
+---
+
+## 4. DO NOT ASSUME VINEXT OR OPENNEXT
+
+Earlier frontend work proposed a vinext architecture, but Phase 7 has since been merged.
+
+Therefore first determine which deployment adapter is CURRENTLY correct.
+
+Possible choices may include:
+
+- native Next.js + current supported Cloudflare adapter;
+- vinext;
+- OpenNext;
+- another officially supported Cloudflare architecture.
+
+Choose only after inspecting:
+
+1. current repository;
+2. current dependencies;
+3. current application structure;
+4. current Cloudflare documentation;
+5. current framework/adapter documentation.
+
+Use authoritative current documentation wherever possible.
+
+Document:
+
+```text
+Chosen deployment architecture:
+Reason:
+Relevant versions:
+Alternatives considered:
+Why alternatives were rejected:
+```
+
+Do not force vinext merely because it was previously discussed.
+Do not force OpenNext merely because Wrangler auto-detected Next.js previously.
+
+---
+
+## 5. CHECK MONOREPO / APPLICATION BOUNDARIES
+
+Determine whether the current repository contains separate applications such as:
+
+```text
+apps/web
+apps/api
+packages/*
+```
+
+or another structure.
+
+Identify exactly:
+
+```text
+Web application:
+Web build command:
+Web Worker:
+API application:
+API Worker:
+Database:
+```
+
+Do NOT accidentally deploy the API when the objective is the web application.
+
+Do NOT combine web and API deployment unless the current architecture explicitly requires it.
+
+---
+
+## 6. PACKAGE MANAGER
 
 Inspect:
 
-- `src/service/live-quiz-service.ts`
-- `src/persistence/sqlite-session-repository.ts`
-- relevant live-quiz domain types/errors
-
-The final answer acceptance decision MUST be made atomically with the database insertion.
-
-Required invariant:
-
-> An answer is persisted only if the authoritative server time used by the persistence transaction is at or before the persisted `answerDeadlineAt` for the authoritative current question.
-
-Do not rely solely on an earlier service-level `Date.now()` check.
-
-The persistence operation should, within the same transaction/atomic operation that establishes first-write-wins:
-
-1. Read the authoritative live state/current question and persisted `answerDeadlineAt`.
-2. Obtain fresh server time at the persistence decision point.
-3. Verify the question is still the authoritative current answerable question.
-4. Verify the deadline has not expired.
-5. Verify the participant/group has not already submitted.
-6. Insert the submission only when all required conditions pass.
-7. Commit the transaction.
-
-If the deadline has expired, fail with the existing `AnswerDeadlineExpiredError` (or the established equivalent) and create **zero persisted answer records**.
-
-### 2. Do not use a caller-controlled or stale timestamp as the acceptance authority
-
-The following MUST NOT determine deadline validity:
-
-- `clientTimestamp`;
-- a client-supplied `submittedAt`;
-- a timestamp captured before the persistence transaction and then treated as the final authority;
-- client clock time;
-- question position supplied by the client without authoritative comparison.
-
-The repository/persistence boundary must derive the authoritative acceptance timestamp itself.
-
-If the existing API currently passes `submittedAt`, refactor it so that this value cannot override the fresh persistence-time decision. Prefer deriving `submittedAt` inside the repository transaction and returning that authoritative value to the service.
-
-Likewise, `isWithinDeadline` should be derived from the authoritative persistence-time check rather than trusted as a caller/service assertion.
-
-### 3. Preserve first-accepted-submission semantics under concurrency
-
-The existing unique constraints and duplicate-submission protections must remain intact.
-
-The implementation must handle concurrent submissions correctly:
-
-- At most one valid submission for a participant/question.
-- At most one valid submission for a group/question.
-- A submission cannot win merely because its service-level pre-check happened before the deadline.
-- A late transaction must fail even if an earlier pre-check succeeded.
-- Do not replace database uniqueness with an in-memory lock.
-- Do not weaken transactional guarantees.
-
-Use SQLite's existing transactional/constraint mechanisms appropriately.
-
-### 4. Apply the same rule to teacher-group submissions
-
-`submitGroupAnswer` must receive the same persistence-level authoritative deadline treatment as `submitParticipantAnswer`.
-
-A group answer must not be persisted after the authoritative deadline merely because the service checked the deadline earlier.
-
-Preserve existing teacher-host authorization and group/session ownership checks.
-
-### 5. Preserve the existing service-level checks
-
-Do not remove useful early validation in `LiveQuizService`.
-
-The service should continue to reject:
-
-- inactive sessions;
-- non-current question positions;
-- non-ANSWERING lifecycle states;
-- invalid choices;
-- unauthorized participant tokens;
-- unauthorized hosts/groups;
-- already-submitted answers;
-- expired deadlines.
-
-However, these are defense-in-depth checks. The **database persistence boundary remains the final authoritative acceptance gate** for deadline-sensitive insertion.
-
-### 6. Mandatory regression tests
-
-Add/update deterministic tests proving:
-
-#### Deadline correctness
-
-1. Current-question answer before deadline is accepted.
-2. Answer after authoritative deadline is rejected.
-3. `clientTimestamp` cannot extend or bypass the deadline.
-4. Non-current question is rejected.
-5. Failed timing attempts create zero persisted submissions.
-6. Group answer after deadline is rejected with zero persisted submissions.
-7. Group answer before deadline is accepted.
-
-#### Persistence-boundary/race regression — mandatory
-
-Add a test that specifically proves the final persistence decision uses authoritative time rather than a stale service timestamp.
-
-The test must model this boundary:
-
 ```text
-service/pre-check: deadline still open
-        ↓
-logical delay / simulated passage of time
-        ↓
-persistence decision: deadline expired
-        ↓
-submission MUST NOT be inserted
+packageManager
+pnpm-workspace.yaml
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
 ```
 
-Do not merely repeat the existing test that directly changes the database deadline before invoking the service. The new regression must exercise the distinction between an earlier service check and the later persistence decision.
+Use the package manager declared by the current repository.
 
-A deterministic test hook/clock abstraction is acceptable if it is strictly test-only and cannot influence production authorization or timing. Do not use process arguments, client input, or environment tricks as production timing authority.
+Do not introduce a second package manager.
 
-#### Concurrency/first-write-wins
+---
 
-8. Concurrent or simulated competing submissions still result in exactly one persisted answer.
-9. Duplicate submission remains rejected.
-10. No late submission can be persisted after the authoritative deadline.
+## 7. INSPECT OLD CLOUDFLARE/OPENNEXT ARTIFACTS
 
-### 7. Be careful with SQLite transaction design
-
-Inspect the existing SQLite repository transaction implementation before changing it.
-
-The desired behavior is conceptually:
+Inspect current:
 
 ```text
-BEGIN IMMEDIATE / equivalent safe transaction
-  read authoritative live state
-  obtain authoritative current server time
-  compare now <= answerDeadlineAt
-  verify current question/lifecycle
-  enforce uniqueness / duplicate protection
-  insert submission with server-derived submittedAt
-COMMIT
+wrangler.jsonc
+wrangler.toml
+open-next.config.*
+vite.config.*
+next.config.*
+.dev.vars
+public/_headers
+.gitignore
 ```
 
-Use the repository's existing transaction conventions and SQLite APIs rather than introducing an unrelated persistence architecture.
+Determine which files are legitimate current project configuration and which were generated by the previous failed automatic OpenNext migration.
 
-Do not claim a transaction is atomic unless the actual SQLite implementation guarantees the required ordering.
+Use git history/diffs where necessary.
 
-### 8. Preserve all previously fixed security boundaries
+Do NOT delete files blindly.
 
-Do NOT regress any of the following:
+If stale OpenNext artifacts were introduced by the failed migration, clean them up only when verified safe.
 
-- server-derived SSE role;
-- host authorization by authenticated `hostUserId`;
-- participant session-token authorization;
-- cross-session isolation;
-- canonical `projectEventForRole()` filtering;
-- role-aware replay/history filtering;
-- removal of sensitive answer keys from participant/projector projections;
-- authoritative current-question enforcement;
-- clientTimestamp being non-authoritative;
-- BAREA-006 tenant/admission boundaries;
-- BAREA-006 trusted-IP/rate-limiting boundaries.
+---
 
-A participant must never receive:
+## 8. CREATE A CLEAN CLOUDFLARE CONFIGURATION
 
-- `correctOptionIndices`;
-- `explanation`;
-- `correctOptionIndex`;
-- `correctAnswer`;
-- equivalent answer-key information.
+Once the CURRENT architecture is verified, establish an explicit Cloudflare Worker configuration.
 
-### 9. Scope restrictions
+The configuration must explicitly identify, as applicable:
 
-This is **BAREA-007 only**.
+- Worker name;
+- Worker entry point;
+- compatibility date;
+- compatibility flags;
+- assets configuration;
+- required bindings.
+
+Do not invent bindings, secrets, APIs, or database configuration.
+
+Do not allow Wrangler to fall into an unwanted interactive framework migration during deployment.
+
+---
+
+## 9. BUILD COMMAND
+
+The Cloudflare build command must correspond directly to the selected deployment adapter.
+
+Do NOT blindly configure:
+
+```text
+npm run build
+```
+
+if that only performs TypeScript compilation.
+
+Do NOT use `next build` or another command simply because it existed previously.
+
+Determine the actual deployment build command from the CURRENT architecture.
+
+For example, if and only if vinext is verified as the current architecture:
+
+```text
+npm run build:vinext
+```
+
+If OpenNext is verified as the correct architecture, use its CURRENT supported build flow.
+
+The key invariant is:
+
+> The Cloudflare build command must produce the deployment artifact expected by the chosen Worker adapter.
+
+---
+
+## 10. ENVIRONMENT VARIABLES / SECRETS
+
+Never commit or expose secrets.
+
+Do NOT print values of:
+
+- DATABASE_URL
+- SESSION_SECRET
+- COMPETITION_HMAC_SECRET
+- OAuth secrets
+- API tokens
+- Cloudflare tokens
+- private keys
+
+Determine which environment variables the CURRENT web application actually requires.
+
+Use Cloudflare environment/secrets configuration appropriately.
+
+If a required variable is missing, report only its NAME.
+
+---
+
+## 11. DATABASE SAFETY
 
 Do NOT:
 
-- implement BAREA-008 UI;
-- implement BAREA-009 scoring/leaderboards;
-- implement BAREA-010/011/012/013;
-- provision Cloudflare or deployment infrastructure;
-- redesign BAREA-006 authentication/admission/tenant boundaries;
-- introduce a new external authentication system;
-- weaken or remove existing security checks.
+- modify production Neon;
+- run production migrations;
+- change database schemas;
+- invent migration steps.
 
-### 10. Documentation
+Treat the database as an existing application dependency.
 
-Update `AGY-REPORT.md` with a new section documenting:
+---
 
-- the deadline race/atomicity issue;
-- why service-level validation alone was insufficient;
-- the exact persistence/transaction remediation;
-- participant and group behavior;
-- race-boundary regression testing;
-- verification results.
+## 12. ENVIRONMENT SEPARATION
 
-Do not rewrite, truncate, or remove historical report sections.
+The first deployment must be a safe NON-PRODUCTION preview/staging deployment.
 
-Update `docs/DECISIONS.md` only as necessary so the documented BAREA-007 timing invariant accurately states that final answer acceptance is authoritative at the persistence boundary.
+Do NOT modify the production Worker.
+Do NOT deploy experimental configuration to production.
 
-Do not mark BAREA-007 fully completed merely because tests pass. It remains pending independent review until this remediation is reviewed and accepted.
+Preserve existing local/staging/production separation.
 
-## REQUIRED VERIFICATION
+---
 
-Run all applicable repository checks:
+## 13. VALIDATION
+
+First determine the current repository quality gates from `package.json`, README, and docs.
+
+Run the applicable checks, such as:
 
 ```text
-npm test
-npm run typecheck
-npm run build
-npm run build:next
-git grep ": any" -- src/
-git diff --check
+lint
+typecheck
+test
+build
 ```
 
-Also run the focused BAREA-007 live-quiz suite, including the new persistence-boundary/race regression.
+and the specific Cloudflare deployment build.
 
-Report:
+Do not claim success unless commands actually pass.
 
-- exact commit SHA;
-- files changed;
-- test counts and results;
-- authoritative deadline behavior;
-- participant behavior;
-- group behavior;
-- persistence transaction behavior;
-- concurrency/first-write-wins behavior;
-- confirmation that no previous BAREA-007 security remediation was regressed;
-- confirmation that no out-of-scope milestone was implemented.
+If a command cannot run, report:
 
-## GIT RULES
+```text
+NOT RUN
+Reason:
+```
 
-- Work only on `barea-007-live-quiz`.
-- Do not force-push.
-- Do not rewrite history.
-- Do not use `git reset --hard` while work exists.
-- Commit with a descriptive message.
-- Push to `origin/barea-007-live-quiz`.
-- Keep PR #11 open.
-- Stop after implementation and verification.
-- Wait for independent review.
+---
+
+## 14. CLOUDflare PREVIEW DEPLOYMENT
+
+If authorized Cloudflare access is available, deploy a NON-PRODUCTION preview/version.
+
+Do not deploy to production merely to test the Worker.
+
+Capture the real:
+
+- Worker name;
+- deployment/version ID;
+- preview URL;
+- build result;
+- runtime result.
+
+Never invent a URL.
+
+If Cloudflare Dashboard configuration must be changed manually and you cannot do so, STOP and clearly identify that blocker.
+
+---
+
+## 15. VERIFY THE ACTUAL DEPLOYED APPLICATION
+
+After successful deployment, test the real URL.
+
+At minimum verify the current public homepage route `/`.
+
+Also inspect current public routes discovered from the repository.
+
+Check:
+
+- HTTP status;
+- HTML response;
+- JavaScript;
+- CSS/assets;
+- runtime errors;
+- server errors;
+- API connectivity where applicable.
+
+If browser tooling is available, use it.
+
+---
+
+## 16. VISUAL INSPECTION
+
+The deployment is not complete merely because the Worker returns HTTP 200.
+
+Open the actual deployed BAREA homepage and visually inspect it.
+
+Desktop checks:
+
+- layout;
+- typography;
+- spacing;
+- navigation;
+- primary CTA;
+- secondary CTA;
+- responsive width;
+- visual hierarchy.
+
+Mobile checks:
+
+- viewport layout;
+- touch target size;
+- text wrapping;
+- CTA visibility;
+- overflow;
+- navigation.
+
+General checks:
+
+- broken assets;
+- console/runtime errors;
+- hydration errors;
+- missing fonts/assets;
+- debug UI.
+
+Capture screenshots if the environment supports it.
+
+Do NOT redesign the UI during this task.
+
+If visual problems are found, report them separately as:
+
+`POST-DEPLOYMENT UI OBSERVATIONS`
+
+---
+
+## 17. DO NOT MODIFY PRODUCT SCOPE
+
+This task is deployment infrastructure only.
+
+Do NOT:
+
+- start the next BAREA product phase;
+- redesign UI;
+- implement new participant/teacher features;
+- modify authentication behavior;
+- modify backend/security logic;
+- modify database schema;
+- invent APIs;
+- alter domain rules.
+
+---
+
+## 18. GIT DISCIPLINE
+
+Work only against the CURRENT clean post-Phase-7 branch.
+
+Do NOT:
+
+- resurrect old frontend branches;
+- create unnecessary branches;
+- create unrelated PRs;
+- modify historical PRs;
+- merge unrelated work.
+
+Before changes:
+
+```text
+git status
+```
+
+After changes:
+
+```text
+git diff
+git status
+```
+
+Review every changed file.
+
+If deployment configuration changes are required, create a focused deployment commit.
+
+Suggested commit style:
+
+```text
+chore(deploy): configure BAREA Cloudflare Worker
+```
+
+Do not mix UI/backend/security/database feature work into the deployment commit.
+
+---
+
+## 19. DOCUMENTATION
+
+Update the current deployment documentation so it accurately describes the final architecture and commands.
+
+Preserve the historical explanation of the previous failed deployment.
+
+Do not rewrite history to make the previous failure disappear.
+
+Only update architectural decision documentation when the actual deployment architecture requires it.
+
+---
+
+## 20. FINAL REPORT
+
+Return exactly these sections:
+
+### CURRENT BASELINE
+
+```text
+Branch:
+HEAD:
+Git status:
+Phase 7 status:
+```
+
+### APPLICATION ARCHITECTURE
+
+```text
+Web application:
+Framework:
+Version:
+Package manager:
+Monorepo structure:
+API:
+Database:
+```
+
+### CLOUDFLARE ARCHITECTURE
+
+```text
+Deployment target:
+Adapter:
+Worker:
+Build command:
+Deploy command:
+Preview mechanism:
+```
+
+### WHY THIS ARCHITECTURE
+
+Briefly explain why the selected architecture is correct for the CURRENT repository and why alternatives were rejected.
+
+### FILES CHANGED
+
+List every changed file and its purpose.
+
+### QUALITY GATES
+
+```text
+Lint: PASS / FAIL / NOT RUN
+Typecheck: PASS / FAIL / NOT RUN
+Tests: PASS / FAIL / NOT RUN
+Normal build: PASS / FAIL / NOT RUN
+Cloudflare build: PASS / FAIL / NOT RUN
+```
+
+### DEPLOYMENT
+
+```text
+Preview deployment:
+Worker:
+Version:
+URL:
+HTTP status:
+```
+
+Use real values only.
+
+### RUNTIME CHECK
+
+```text
+Homepage:
+Assets:
+Console:
+Runtime:
+API connectivity:
+```
+
+### VISUAL INSPECTION
+
+```text
+Desktop:
+Mobile:
+Major issues:
+Minor issues:
+```
+
+### SECURITY / ENVIRONMENT
+
+Confirm:
+
+- no production secrets committed;
+- no production database modified;
+- no production Worker modified;
+- no credentials exposed.
+
+### NEXT STEP
+
+STOP after deployment and visual inspection.
+
+Do NOT start the next product phase.
+Do NOT make unrelated changes.
+
+---
+
+## SUCCESS CRITERIA
+
+This task is successful only when:
+
+1. Current Phase-7 merged repository is verified.
+2. Current web architecture is verified.
+3. Current Cloudflare deployment method is verified against current official documentation.
+4. Previous failed OpenNext configuration is not blindly reused.
+5. The Cloudflare build command produces the correct Worker deployment artifact.
+6. Applicable repository quality gates pass.
+7. A safe non-production Cloudflare deployment succeeds.
+8. The real BAREA homepage is reachable.
+9. The deployed homepage is visually inspected.
+10. No production environment is modified.
+11. All required changes are documented and committed cleanly.
+
+If any prerequisite cannot be verified:
+
+**STOP AND REPORT THE BLOCKER.**
+
+Do not guess.
+Do not substitute another branch.
+Do not silently change architecture.
