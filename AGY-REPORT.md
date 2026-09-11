@@ -832,7 +832,8 @@ The practical deployment contract designed to satisfy ADR-012 establishes:
 ## 11. Milestone BAREA-006: Pre-Deployment Client-IP Semantics & Safe Abuse-Control Correction
 
 ### A. Context & Architectural Defect Remediation
-- **Identified Defect**: Returning the deterministic fallback `'127.0.0.1'` in `resolveServerClientIp()` during pre-deployment caused `InMemoryRateLimiter` to collapse all unauthenticated clients into a single shared IP bucket. A single attacker probing invalid room codes could trip the bucket and DoS legitimate session lookups for the entire congregation.
+- **Identified Defect 1 (Shared 127.0.0.1 Fallback)**: Returning the deterministic fallback `'127.0.0.1'` in `resolveServerClientIp()` during pre-deployment caused `InMemoryRateLimiter` to collapse all unauthenticated clients into a single shared IP bucket, creating a congregation-wide DoS vulnerability.
+- **Identified Defect 2 (Per-Room Failure Bucket DoS Boundary)**: Keying unauthenticated failed lookups by the target `roomCode` created a secondary vulnerability: an attacker knowing the legitimate room code of an active session could generate failed lookups for that exact code, exhausting the per-room bucket and blocking legitimate participants from accessing the session.
 - **Architectural Correction**:
   1. **Explicit Client IP Semantics (`string | null`)**:
      - In `src/app/teacher/review/db.ts`, `resolveServerClientIp()` returns `Promise<string | null>`.
@@ -840,16 +841,20 @@ The practical deployment contract designed to satisfy ADR-012 establishes:
      - It never invents `'127.0.0.1'` as a client identity.
      - Untrusted forwarding headers (`CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`, `X-Barea-*`) remain strictly ignored.
      - Test fixture overrides (`setTrustedClientIpForTesting`) remain strictly blocked in production mode.
-  2. **Safe Pre-Deployment Abuse-Control (`InMemoryRateLimiter`)**:
-     - Room lookup failure throttling is keyed by the server-validated, normalized target `roomCode` (`maxFailedLookupsPerRoomCodePerMinute: 15`).
-     - Lookups for an active legitimate session succeed with 0 failures, ensuring legitimate participants never trip the failure limiter.
-     - An attacker probing random or non-existent room codes only throttles the specific target code being attacked; unrelated legitimate room sessions remain 100% accessible.
-     - No global unauthenticated rate-limit bucket exists that an attacker could exhaust to block unrelated sessions.
-     - IP-based rate limiting (15 failed lookups/min per IP, 60/min per subnet, 100 unauth requests/10s per IP) is applied conditionally *only* when an authenticated/trusted client IP string is available.
-  3. **Authenticated Join Throttling Unaffected**:
+  2. **Elimination of Shared Per-Room Failure Bucket & Safe Abuse-Control**:
+     - The shared per-room failure bucket (`roomCodeFailedLookups`) was completely removed. Knowledge of a room code CANNOT be used as a denial-of-service weapon.
+     - No global unauthenticated rate-limit bucket exists.
+     - IP-based rate limiting (15 failed lookups/min per IP, 60/min per subnet, 100 unauth requests/10s per IP) applies conditionally *only* when a verified client IP string is available.
+     - In pre-deployment (`clientIp === null`), unauthenticated room lookups for active sessions succeed with 0 risk of being blocked by an attacker's failed attempts.
+     - Broad unauthenticated network-layer flood protection is explicitly deferred to post-MVP Cloudflare deployment when real client-IP provenance can be experimentally proven.
+  3. **Exact-Room & Cross-Room Isolation**:
+     - An attacker knowing a legitimate room code and generating rapid or failed lookups cannot exhaust any shared budget that blocks legitimate users from accessing that session.
+     - An attacker targeting room A has 0 impact on room B.
+     - An attacker rotating forwarding headers cannot evade rate limiting.
+  4. **Authenticated Join Throttling Unaffected**:
      - `checkJoinMutation(userId)` remains strictly keyed by server-authoritative authenticated `userId` (1 mutation / 5s).
      - 50+ participants behind church Wi-Fi NAT join seamlessly with zero per-IP seat quotas.
-  4. **Deferred Cloudflare Integration**:
+  5. **Deferred Cloudflare Integration**:
      - Cloudflare provisioning is explicitly deferred until MVP application completion.
      - No Cloudflare infrastructure is provisioned now.
      - Real client-IP provenance will be experimentally established in a fresh environment after MVP completion.
@@ -858,7 +863,9 @@ The practical deployment contract designed to satisfy ADR-012 establishes:
 1. `resolveServerClientIp()` returns `null` when direct, ignoring all client-supplied forwarding headers.
 2. Configured-but-direct attack test confirms forwarding headers are ignored even if proxy environment variables are set.
 3. Test fixture overrides fail closed in production (`NODE_ENV === 'production'`).
-4. Attacker probing invalid codes is throttled on the probed code, while legitimate session lookups succeed without interruption.
-5. 50+ church NAT participants join successfully without IP exhaustion.
-6. Authenticated user join throttling (`1 / 5s / userId`) prevents duplicate mutation abuse.
-7. Zero BAREA-007 scope introduced (no WebSockets, SSE, timers, or live quiz transitions).
+4. Exact-Room DoS test: repeated failed lookups targeting the exact legitimate room code cannot exhaust a shared budget or block legitimate access.
+5. Cross-room isolation: attacking room A cannot block access to room B.
+6. Bucket/key rotation by attacker-controlled forwarding headers cannot evade the rate limiter.
+7. 50+ church NAT participants join successfully without IP exhaustion.
+8. Authenticated user join throttling (`1 / 5s / userId`) prevents duplicate mutation abuse.
+9. Zero BAREA-007 scope introduced (no WebSockets, SSE, timers, or live quiz transitions).

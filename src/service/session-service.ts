@@ -19,7 +19,8 @@ import {
 import {
   SessionNotFoundError,
   SessionAccessDeniedError,
-  CrossTenantSnapshotError
+  CrossTenantSnapshotError,
+  InvalidRoomCodeError
 } from '../domain/domain-errors';
 import type { SessionRepository, CreateSessionPayload } from '../persistence/sqlite-session-repository';
 import type { RateLimiter } from './rate-limiter';
@@ -65,15 +66,15 @@ export class SessionService {
   getPublicInfo(rawRoomCode: string, clientIp?: string | null): SessionPublicInfo {
     if (this.rateLimiter) {
       this.rateLimiter.checkUnauthenticatedRequest(clientIp);
-      this.rateLimiter.checkRoomLookup(rawRoomCode, clientIp);
+      this.rateLimiter.checkRoomLookup(clientIp);
     }
 
     let validatedCode: RoomCode;
     try {
       validatedCode = normalizeAndValidateRoomCode(rawRoomCode);
     } catch (err) {
-      if (this.rateLimiter) {
-        this.rateLimiter.recordFailedLookup(rawRoomCode, clientIp);
+      if (err instanceof InvalidRoomCodeError && this.rateLimiter && clientIp) {
+        this.rateLimiter.recordFailedLookup(clientIp);
       }
       throw err;
     }
@@ -81,8 +82,8 @@ export class SessionService {
     try {
       return this.repo.getPublicInfo(validatedCode);
     } catch (err) {
-      if (err instanceof SessionNotFoundError && this.rateLimiter) {
-        this.rateLimiter.recordFailedLookup(validatedCode, clientIp);
+      if (err instanceof SessionNotFoundError && this.rateLimiter && clientIp) {
+        this.rateLimiter.recordFailedLookup(clientIp);
       }
       throw err;
     }

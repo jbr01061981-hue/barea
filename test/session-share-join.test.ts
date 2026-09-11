@@ -620,7 +620,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     // ADV-NAT-02: Rapid failed probes from an attacker IP are throttled
     const attackerIp = '198.51.100.77';
     for (let i = 0; i < 15; i++) {
-      rateLimiter.recordFailedLookup('ZZZZZZ', attackerIp);
+      rateLimiter.recordFailedLookup(attackerIp);
     }
 
     assert.throws(() => {
@@ -835,35 +835,108 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     const malformedResolved = await resolveServerClientIp();
     assert.equal(malformedResolved, null);
 
-    // 8. PRE-DEPLOYMENT SAFE RATE-LIMITING & ISOLATION:
-    // In pre-deployment (clientIp === null), rate limiting is scoped to the target roomCode
-    // rather than an invented shared IP (127.0.0.1).
-    // Attacker probing code '222222' across 15 requests is throttled on '222222',
-    // but CANNOT DoS legitimate sessions (session.roomCode remains fully accessible).
+    // 8. EXACT-ROOM DoS ADVERSARIAL TEST:
+    // An attacker knows the exact legitimate room code (`session.roomCode`).
+    // In pre-deployment (clientIp === null), there is NO shared per-room failure bucket
+    // and NO fabricated shared client IP.
+    // An attacker repeatedly generating failed or rapid lookups targeting that exact room code
+    // CANNOT exhaust a shared budget that blocks legitimate participants from accessing that session.
     rateLimiter.reset();
-    for (let i = 0; i < 15; i++) {
+
+    // Attacker sends rapid repeated lookups / probes with attacker headers:
+    for (let i = 0; i < 30; i++) {
       setMockRequestHeadersForTesting({
         'cf-connecting-ip': `198.51.100.${i + 1}`,
         'x-forwarded-for': `198.51.100.${i + 1}`,
         'x-real-ip': `198.51.100.${i + 1}`
       });
-      await lookupRoomAction('222222');
+      await lookupRoomAction(session.roomCode);
     }
 
-    // 16th probe for '222222' is throttled:
-    const blockedProbe = await lookupRoomAction('222222');
-    assert.equal(blockedProbe.success, false);
-    if (!blockedProbe.success) {
-      assert.equal(blockedProbe.error.code, 'RATE_LIMIT_EXCEEDED');
-      assert.equal(blockedProbe.error.httpStatus, 429);
+    // Attacker also attempts 20 non-existent room probes:
+    for (let i = 0; i < 20; i++) {
+      await lookupRoomAction('NONEXT');
     }
 
-    // CRITICAL ISOLATION: Legitimate session lookup is completely unaffected by attacker's probes!
-    const legitLookupAfterAttacker = await lookupRoomAction(session.roomCode);
-    assert.equal(legitLookupAfterAttacker.success, true);
-    if (legitLookupAfterAttacker.success) {
-      assert.equal(legitLookupAfterAttacker.data.quizTitle, 'Faith Quiz');
+    // CRITICAL EXACT-ROOM INVARIANT:
+    // Legitimate participant looking up the exact room code is NEVER blocked by RATE_LIMIT_EXCEEDED!
+    setMockRequestHeadersForTesting(null);
+    const legitimateLookup = await lookupRoomAction(session.roomCode);
+    assert.equal(legitimateLookup.success, true);
+    if (legitimateLookup.success) {
+      assert.equal(legitimateLookup.data.quizTitle, 'Faith Quiz');
+      assert.equal(legitimateLookup.data.roomCode, session.roomCode);
     }
+
+    // Exact-room join by legitimate participants also succeeds without hindrance:
+    setAuthenticatedUserContext({
+      userId: 'exact_room_legit_participant',
+      providerType: 'GOOGLE',
+      providerSub: 'sub_exact_legit',
+      email: 'exact.legit@church.org',
+      emailVerified: true,
+      phone: null,
+      phoneVerified: false,
+      displayName: 'Exact Legit User'
+    });
+    const exactRoomJoin = await joinSessionAction(session.roomCode);
+    assert.equal(exactRoomJoin.success, true);
+    assert.ok(exactRoomJoin.data?.participantId);
+
+    // 8B. CROSS-ROOM ISOLATION:
+    // Attacking room A cannot block access to unrelated room B
+    const roomB = sessionService.createSession({
+      workspaceType: WorkspaceType.ORGANIZATION,
+      organizationId: orgTenant,
+      publishedQuizSnapshotId: snap,
+      hostUserId: 'teacher_f1',
+      participationMode: ParticipationMode.INDIVIDUAL_AUTHENTICATED,
+      admissionPolicy: AdmissionPolicy.OPEN
+    });
+
+    for (let i = 0; i < 20; i++) {
+      await lookupRoomAction(session.roomCode);
+      await lookupRoomAction('999999');
+    }
+
+    const roomBLookup = await lookupRoomAction(roomB.roomCode);
+    assert.equal(roomBLookup.success, true);
+    if (roomBLookup.success) {
+      assert.equal(roomBLookup.data.quizTitle, 'Faith Quiz');
+    }
+
+    // 8C. BUCKET / KEY ROTATION RESISTANCE:
+    // When a trusted client IP IS provided (e.g. from edge or test fixture):
+    // An attacker on IP 198.51.100.99 rotating forwarding headers on every attempt
+    // CANNOT evade the rate limiter by switching headers.
+    setTrustedClientIpForTesting('198.51.100.99');
+    for (let i = 0; i < 15; i++) {
+      setMockRequestHeadersForTesting({
+        'cf-connecting-ip': `203.0.113.${i + 1}`,
+        'x-forwarded-for': `203.0.113.${i + 1}`,
+        'x-real-ip': `203.0.113.${i + 1}`
+      });
+      await lookupRoomAction('NONEXT');
+    }
+    // 16th attempt from the attacker's IP is throttled even with yet another header:
+    setMockRequestHeadersForTesting({
+      'cf-connecting-ip': '10.0.0.1',
+      'x-forwarded-for': '10.0.0.1',
+      'x-real-ip': '10.0.0.1'
+    });
+    const throttledAttacker = await lookupRoomAction(session.roomCode);
+    assert.equal(throttledAttacker.success, false);
+    if (!throttledAttacker.success) {
+      assert.equal(throttledAttacker.error.code, 'RATE_LIMIT_EXCEEDED');
+      assert.equal(throttledAttacker.error.httpStatus, 429);
+    }
+    // Meanwhile, legitimate user on a different IP (or without IP override) can access the exact room:
+    setTrustedClientIpForTesting('203.0.113.88');
+    const legitUserOnDiffIp = await lookupRoomAction(session.roomCode);
+    assert.equal(legitUserOnDiffIp.success, true);
+
+    setTrustedClientIpForTesting(null);
+    setMockRequestHeadersForTesting(null);
 
     // 9. Authenticated join throttling: 1 / 5s per userId
     setAuthenticatedUserContext({
