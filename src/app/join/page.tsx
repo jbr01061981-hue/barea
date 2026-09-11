@@ -1,6 +1,7 @@
 'use client';
 
-import { FormEvent, useState, useTransition } from 'react';
+import type { FormEvent } from 'react';
+import { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { lookupRoomAction } from '../session/actions';
 import { AdmissionPolicy, ParticipationMode, type SessionPublicInfo } from '../../domain/session';
