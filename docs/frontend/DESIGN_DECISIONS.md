@@ -115,3 +115,11 @@ This document records decisions that should remain stable unless a deliberate pr
 **Reason:** BAREA has three materially different surfaces (teacher, participant, presentation), and code review alone cannot validate real responsive layout, typography, interaction, and projector readability.
 
 **Consequence:** Frontend stage acceptance includes preview verification for relevant routes, including desktop, mobile, and presentation contexts. Preview credentials and secrets must remain outside Git.
+
+## DD-015 — Cloudflare build command is distinct from the repository TypeScript build
+
+**Decision:** Cloudflare Workers Builds must use `npm run build:vinext`, not the repository's generic `npm run build`.
+
+**Reason:** The existing `build` script runs `tsc` for the TypeScript package/test architecture. It does not generate the vinext/Cloudflare Worker output. A preview attempt that used `npm run build` caused Wrangler to fall back to Next.js auto-configuration/OpenNext and fail because the expected `.next/server/middleware-manifest.json` was absent.
+
+**Consequence:** Cloudflare Workers Build settings are part of the deployment contract: `Build command = npm run build:vinext`, production deploy = `npx wrangler deploy`, and preview deploy = `npx wrangler versions upload`. Do not silently change these to the generic TypeScript build.
