@@ -1,27 +1,42 @@
-# AGY PROMPT — BAREA-006 CLOUDFLARE DEPLOYMENT GATE
+# AGY PROMPT — BAREA-006 CLOUDFLARE PROVISIONING + PROVENANCE VERIFICATION GATE
 
 Repository: `jbr01061981-hue/barea`
 Branch: `barea-006-share-join`
 Application checkpoint: `eb8d4160ec2f0fb99f46ffa5b2153cc477e90976`
+Current documentation checkpoint: `52ee878`
 Architecture decision: ADR-012
 
 ## CURRENT DECISION
 
-**PRODUCTION DEPLOYMENT TARGET SELECTED: CLOUDFLARE.**
+**PRODUCTION TARGET: CLOUDFLARE EDGE + CLOUDFLARE TUNNEL (`cloudflared`) + PRIVATE BAREA ORIGIN.**
 
-The user has explicitly selected Cloudflare for BAREA production deployment.
+This decision is final. Do not ask the user to choose AWS/GCP/Linux reverse proxy alternatives.
 
-ADR-012 remains the platform-neutral security architecture contract, but the concrete implementation target for the current deployment work is now:
+The prior ChatGPT independent review gives:
 
-**Cloudflare Edge + Cloudflare Tunnel (`cloudflared`) + private BAREA origin.**
+- Cloudflare architecture direction: GO.
+- Documentation corrections: resolved.
+- Merge authorization: NO-GO until actual Cloudflare infrastructure is provisioned and verified.
+- BAREA-007: remains blocked.
 
-Do not continue asking the user to choose between Cloudflare, AWS/GCP, or a Linux reverse proxy. That decision has been made.
+This prompt authorizes the next phase: **actual Cloudflare deployment provisioning and end-to-end provenance verification**, followed by the smallest necessary application change. It does NOT authorize merge.
 
-This does NOT authorize merge. It authorizes AGY to proceed with the concrete Cloudflare deployment-boundary design and, where explicitly permitted below, implementation.
+## CRITICAL PRINCIPLE
 
-## SECURITY OBJECTIVE
+Do not claim that architecture documentation, unit tests, or theoretical Cloudflare behavior proves a production trust boundary.
 
-Required production topology:
+The following are separate states and MUST remain separate in all reports:
+
+1. Architecture specified.
+2. Cloudflare infrastructure provisioned.
+3. Cloudflare infrastructure operational.
+4. End-to-end provenance experimentally verified.
+5. Application integration verified.
+6. Merge authorized.
+
+Only #6 can authorize merge, and **only ChatGPT can authorize #6**.
+
+## REQUIRED PRODUCTION TOPOLOGY
 
 ```text
 PUBLIC INTERNET
@@ -29,269 +44,266 @@ PUBLIC INTERNET
       v
 CLOUDFLARE EDGE / DNS / TLS
       |
+      | authenticated outbound Tunnel connection
       v
-CLOUDFLARE TUNNEL
+cloudflared ON PRIVATE ORIGIN HOST
       |
-      | private outbound connector
+      | local/private service connection
       v
-PRIVATE BAREA ORIGIN
+NEXT.JS / NODE :3000
       |
       v
-Next.js / Node :3000
+SQLITE / PERSISTENT STORAGE
 ```
 
-The origin must not be directly reachable from the public Internet.
+The origin must not have a public application ingress path.
 
 ## NON-NEGOTIABLE SECURITY INVARIANTS
 
-1. BAREA production origin port 3000 MUST NOT be publicly reachable.
-2. Cloudflare Tunnel must be the intended inbound application path.
-3. Public callers may send arbitrary forwarding and identity headers; those caller values must never be accepted as authoritative merely because they exist.
-4. The trusted Cloudflare path must provide the authoritative client-IP signal used by BAREA's abuse controls.
-5. If application-level attestation is retained, it is meaningful only because the origin is private/unreachable by arbitrary callers and the credential is injected only by the trusted deployment path.
-6. Never expose `BAREA_EDGE_SECRET`, tunnel credentials, private keys, or equivalent secrets to browsers or commit them to Git.
-7. Never restore a client-supplied `clientIp` parameter.
-8. Never use `BAREA_TRUSTED_PROXY` alone as proof of provenance.
-9. IP is an anti-abuse signal, not an authentication or authorization identity.
-10. Authenticated participant join throttling remains keyed by authenticated `userId`.
-11. Church NAT scalability must remain intact; no successful-participant-per-IP seat quota.
-12. BAREA-007 remains out of scope.
+1. Port `3000` MUST NOT be publicly reachable.
+2. `cloudflared` is the intended public-to-origin application path.
+3. Never restore a client-controlled `clientIp` parameter.
+4. Never trust `X-Forwarded-For`, `X-Real-IP`, `X-Barea-Client-IP`, or a caller-supplied `CF-Connecting-IP` merely because the header exists.
+5. Do not use `BAREA_TRUSTED_PROXY` alone as provenance proof.
+6. IP is an anti-abuse signal, never authentication or authorization identity.
+7. Authenticated join throttling remains keyed by authenticated `userId`.
+8. No successful-participant-per-IP seat quota; church NAT scalability must remain intact.
+9. Never expose tunnel credentials or application secrets to browser code.
+10. Never commit secrets.
+11. BAREA-007 remains completely out of scope.
+12. Preserve tenant isolation, authorization, error sanitization, session expiry, and all previously reviewed protections.
 
-## CHATGPT INDEPENDENT REVIEW CORRECTIONS — MUST BE RESOLVED
+## PHASE 1 — PROVISION THE ACTUAL CLOUDFLARE ENVIRONMENT
 
-The architecture direction is approved for continued Cloudflare provisioning, but the following two issues identified in the independent review MUST be corrected before the Cloudflare deployment design is considered complete.
+Use the actual Cloudflare account/zone available to the deployment environment.
 
-### Correction 1 — Do not claim ordinary Transform Rules provide HMAC attestation
+Provision, where access permits:
 
-ADR-012 currently describes `X-Barea-Edge-Attestation` as an HMAC-style edge attestation. Do NOT implement or describe ordinary Cloudflare Transform Rules as if they cryptographically sign each request. A static secret header is not an HMAC.
+- Cloudflare-managed DNS hostname for BAREA.
+- Cloudflare Tunnel.
+- `cloudflared` connector on the private origin host.
+- Tunnel ingress mapping from the BAREA hostname to the actual local/private Next.js service.
+- Production TLS/HTTPS behavior.
+- Origin process supervision/restart.
+- Origin service binding to `127.0.0.1:3000` or another explicitly isolated private service address.
+- Host firewall/network configuration preventing public access to `3000`.
+- Tunnel credential/token storage outside Git.
 
-Before introducing any custom attestation, verify the actual Cloudflare capability and determine whether it is necessary at all.
+### IMPORTANT: NO FAKE PROVISIONING
 
-**Preferred direction:** use Cloudflare's native trusted client-IP mechanism if the private Tunnel/origin boundary provides the required provenance guarantee. Do not add a Worker, HMAC, custom signature, or custom header merely because ADR-012 contains generic platform-neutral language.
+If AGY does not have authenticated access to the Cloudflare account, it MUST NOT fabricate provisioning results.
 
-If custom attestation is genuinely required, document:
-- exactly why native Cloudflare provenance is insufficient;
-- exactly where the attestation is generated;
-- exactly how caller-supplied copies are stripped;
-- exactly how the origin authenticates it;
-- why replay/spoofing/direct-origin bypass is impossible;
-- and the minimum secure implementation.
+Instead:
 
-### Correction 2 — Cloudflare Tunnel does not require a Cloudflare-to-origin :3000 firewall allowlist
+- document the exact commands/dashboard/API/Terraform steps required;
+- identify exactly which values are still unavailable;
+- mark infrastructure as **NOT PROVISIONED / NOT VERIFIED**;
+- do not report deployment tests as PASS.
 
-For the selected Tunnel topology, `cloudflared` connects from the private origin host/network to the local/private Next.js service. Do not document the architecture as though Cloudflare Edge directly connects to origin port 3000.
+Do not create fake credentials, fake DNS records, fake tunnel IDs, fake IP addresses, or simulated production evidence and label them as real.
 
-The selected invariant is:
+## PHASE 2 — VERIFY THE REAL CLOUDFLARE TRUST MODEL
 
-```text
-Internet --X--> public origin :3000
-                    |
-                    X no public application ingress
-                    |
-              cloudflared
-                    |
-                    v
-             127.0.0.1:3000
-```
+Use current official Cloudflare documentation and the actual deployed configuration.
 
-If the hosting environment uses a private container/network interface instead of loopback, document the exact interface/network and its isolation. Do not invent a Cloudflare source-CIDR allowlist for a Tunnel connector path.
+Determine and record:
 
-### Required outcome of these corrections
+1. How the public request reaches Cloudflare Edge.
+2. How the Tunnel authenticates `cloudflared`.
+3. How the origin remains unreachable from arbitrary Internet clients.
+4. Which request metadata represents the real visitor/client IP.
+5. Exactly how `CF-Connecting-IP` behaves on the selected proxied/Tunnel path.
+6. Exactly how Cloudflare handles caller-supplied `CF-Connecting-IP`, `X-Forwarded-For`, and `X-Real-IP`.
+7. Whether any caller-supplied `X-Barea-*` header reaches the origin.
+8. Whether Transform Rules are actually configured and what they do.
+9. Whether a Worker is necessary.
+10. Whether custom application attestation is necessary.
 
-The final deployment documentation must clearly distinguish:
-- Cloudflare Edge public ingress;
-- the outbound Tunnel connection;
-- the private origin service path;
-- the actual trusted client-IP mechanism;
-- and any optional application attestation.
+### PREFERRED DESIGN
 
-Do not mark a mechanism as implemented until it has been verified in the actual Cloudflare configuration.
+Prefer the simplest native Cloudflare mechanism that establishes the required provenance.
 
-## IMPORTANT — VERIFY CLOUDFLARE'S ACTUAL TRUST MODEL FIRST
+If the real Cloudflare Tunnel boundary plus `CF-Connecting-IP` is sufficient, use that.
 
-Before changing `src/`, determine from current official Cloudflare documentation and the actual deployment configuration:
+**Do not introduce `X-Barea-Edge-Attestation`, HMAC, a Worker, custom signatures, or cryptographic request signing merely because ADR-012 contains generic platform-neutral language.**
 
-- how Cloudflare Tunnel reaches the origin;
-- how the origin is made unreachable from arbitrary Internet clients;
-- which Cloudflare request metadata represents the connecting client IP;
-- whether that metadata is guaranteed by the selected Tunnel/origin topology;
-- how caller-supplied `CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`, and `X-Barea-*` values are handled;
-- whether Cloudflare overwrites or preserves each relevant header;
-- whether a Worker is necessary or unnecessary;
-- whether an additional origin attestation is actually required;
-- how the selected mechanism behaves for direct origin attempts;
-- what configuration is needed for DNS, TLS, tunnel ingress, and origin service routing.
+If custom attestation is genuinely required, stop and document the reason before implementing it.
 
-Do not rely on assumptions from the earlier technology-neutral ADR when Cloudflare-specific behavior can be verified.
+A static secret header is NOT an HMAC.
 
-Prefer Cloudflare's native trusted mechanism over custom cryptographic machinery when it provides the required provenance guarantees.
+## PHASE 3 — PROVE ORIGIN ISOLATION
 
-Do NOT automatically implement `X-Barea-Edge-Attestation` + `X-Barea-Client-IP` merely because the generic ADR mentions those names. First verify whether they are necessary for Cloudflare.
+From a genuinely external network, attempt to reach the origin directly.
 
-## CLOUDFLARE DEPLOYMENT MODEL
+Prove:
 
-Use the simplest secure model that satisfies ADR-012:
+- public DNS does not expose an application origin address;
+- port `3000` is not publicly reachable;
+- the origin cannot be reached by bypassing Cloudflare;
+- stopping `cloudflared` does not create another public route;
+- the Next.js service remains bound only to its intended local/private interface.
 
-- Cloudflare-managed DNS for the BAREA hostname;
-- Cloudflare TLS at the public edge;
-- `cloudflared` connector running on the private origin host/network;
-- Tunnel ingress routing the BAREA hostname to the local/private Next.js service;
-- no public application ingress to port 3000;
-- origin firewall/host configuration consistent with the Tunnel deployment;
-- secrets and tunnel credentials stored outside Git.
+Record actual commands, targets, timestamps/results, and PASS/FAIL.
 
-Do not introduce a Cloudflare Worker unless the verified design requires one.
+Do not mark this PASS from documentation alone.
 
-## ORIGIN HOST REQUIREMENTS
+## PHASE 4 — PROVE CLIENT-IP PROVENANCE END TO END
 
-Document and implement, where the environment permits:
+This is the central BAREA-006 acceptance gate.
 
-- production Next.js process;
-- process supervision/restart;
-- port 3000 binding;
-- firewall rules;
-- public-IP exposure status;
-- local/private service target used by `cloudflared`;
-- operating-system hardening relevant to origin isolation.
+Test through the actual public Cloudflare hostname using at least two genuinely separate clients/networks where possible.
 
-If the chosen hosting environment makes a specific control unnecessary, document why rather than fabricating it.
+### Required tests
 
-## CLIENT-IP PROVENANCE
+#### A. Legitimate Cloudflare identity
 
-The critical BAREA-006 problem is trustworthy per-client abuse-control identity.
+Two legitimate external clients must produce the expected distinct authoritative client identities where IP-based abuse controls require them.
 
-The final implementation must establish a chain equivalent to:
+#### B. Spoofed `CF-Connecting-IP`
 
-```text
-real client connection
-      -> Cloudflare edge
-      -> authenticated/private Tunnel path
-      -> trusted request metadata
-      -> BAREA server-side identity resolution
-      -> rate limiter
-```
+Send a caller-controlled `CF-Connecting-IP` value. Prove it cannot replace the authoritative client IP seen by BAREA.
 
-A public caller's arbitrary header must not be able to break that chain.
+#### C. Spoofed `X-Forwarded-For`
 
-If Cloudflare's trusted request metadata is consumed directly by the application, document the exact trust assumption and the reason the private Tunnel/origin boundary prevents direct spoofing.
+Send arbitrary XFF chains. Prove they cannot select the BAREA rate-limit identity.
 
-If custom attestation is required, document why Cloudflare's native mechanism is insufficient and implement the smallest secure addition.
+#### D. Spoofed `X-Real-IP`
 
-## RATE-LIMIT REQUIREMENTS
+Prove it cannot select the BAREA rate-limit identity.
 
-Preserve:
+#### E. Spoofed `X-Barea-Client-IP`
 
-- failed room lookup throttling;
-- subnet containment where applicable;
-- authenticated `userId` join throttling;
-- no successful-participant-per-IP quota;
-- church NAT scalability;
-- independent rate-limit identities for independent legitimate clients where IP throttling requires them.
+Prove it cannot select the BAREA rate-limit identity.
 
-The solution must prevent one unauthenticated attacker from collapsing all public clients into the same `127.0.0.1` bucket.
+#### F. Spoofed `X-Barea-Edge-Attestation`
 
-## APPLICATION CHANGE AUTHORIZATION
+If the application does not use this header, prove that it is irrelevant/ignored.
+If it is used, prove caller-supplied values cannot satisfy the trust check.
 
-Application changes are now authorized **only for the verified Cloudflare integration required to resolve the BAREA-006 provenance blocker**.
+#### G. Bucket hopping
 
-Keep changes minimal and security-focused.
+Repeatedly vary public forwarding/identity headers and prove the attacker cannot move between rate-limit buckets.
 
-Likely scope is limited to:
+## PHASE 5 — APPLICATION INTEGRATION
 
-- `resolveServerClientIp()` or its direct supporting code;
+Only after the real Cloudflare trust path has been established may AGY modify `src/`.
+
+Expected scope is minimal:
+
+- `resolveServerClientIp()` and direct supporting code;
 - trusted Cloudflare request metadata handling;
 - required environment configuration;
 - focused security/integration tests.
 
-Do not modify unrelated session, tenant, authorization, admission, persistence, or quiz behavior.
+Do not modify unrelated session, tenant, authorization, admission, persistence, quiz, or UI behavior.
 
-Do not weaken the existing fail-closed behavior until the Cloudflare trust path is actually established.
+### Expected security behavior
 
-## DEPLOYMENT SECRETS
+```text
+Legitimate Cloudflare request
+        |
+        v
+verified trusted Cloudflare path
+        |
+        v
+authoritative client IP
+        |
+        v
+BAREA rate limiter
+```
 
-Never commit secret values.
+Where the trust condition is absent or invalid:
 
-Potential production secrets include tunnel credentials and, only if genuinely required, an application edge-attestation secret.
+```text
+untrusted/direct request
+        |
+        v
+FAIL CLOSED
+        |
+        v
+127.0.0.1 quarantine bucket
+```
 
-Requirements:
+Do not weaken the current fail-closed behavior before the actual production path is proven.
 
-- generate high-entropy credentials;
-- store them in the deployment environment/secret manager;
-- never place them in source, reports, tests, or Git history;
-- document rotation;
-- revoke old credentials after rotation;
-- use least privilege;
-- ensure browser/client code cannot read them.
+## RATE LIMIT ACCEPTANCE
 
-## DNS / TLS
+Preserve the existing model:
 
-Document the actual Cloudflare configuration required for:
+- failed room lookup throttling: 15/min per IP;
+- subnet containment: existing /24 or /48 logic;
+- unauthenticated flood protection: 30/10s per IP;
+- authenticated join mutation throttling: 1/5s per authenticated `userId`;
+- zero successful-participant-per-IP seat quota.
 
-- BAREA production hostname;
-- DNS routing;
-- TLS mode;
-- Tunnel ingress hostname/service mapping;
-- certificate behavior;
-- redirect/HTTPS behavior;
-- origin connection encryption where applicable.
+Explicitly test:
 
-Do not claim configuration is active until it has actually been provisioned and verified.
+- 50+ legitimate participants behind one church NAT;
+- independent legitimate clients where IP-based controls apply;
+- attacker header rotation;
+- authenticated userId isolation.
 
-## HEALTH CHECKS
+## SECRETS
 
-Health checks must not become an authorization bypass.
+Never commit:
 
-If `/api/health` is exposed for Cloudflare/origin monitoring, verify that it returns only safe operational information and does not expose tenant data, secrets, provider identities, or quiz content.
+- Cloudflare API tokens;
+- Tunnel tokens/credentials;
+- private keys;
+- origin secrets;
+- `BAREA_EDGE_SECRET` if ultimately required.
 
-Document whether the health path is public, tunnel-only, or separately protected and why.
+Use environment variables or the appropriate secret manager.
 
-## REQUIRED DEPLOYMENT TESTS
+If a secret is required, document:
 
-Once the actual Cloudflare environment is provisioned, prove:
+- generation;
+- storage;
+- least privilege;
+- rotation;
+- revocation;
+- browser exclusion.
 
-### 1. Direct-origin bypass
+Never place real secret values in tests, reports, documentation, screenshots, or Git history.
 
-A public Internet client cannot reach the Next.js origin directly on port 3000.
+## DNS / TLS / TUNNEL VERIFICATION
 
-### 2. Public header spoofing
+Verify actual production configuration, not intended configuration:
 
-A public caller sending arbitrary:
+- BAREA hostname;
+- DNS record/tunnel route;
+- HTTPS behavior;
+- TLS configuration;
+- tunnel ingress hostname/service mapping;
+- origin service health;
+- connector health;
+- restart/recovery behavior.
 
-- `CF-Connecting-IP`
-- `X-Forwarded-For`
-- `X-Real-IP`
-- `X-Barea-Client-IP`
-- `X-Barea-Edge-Attestation`
+Do not claim "active" or "verified" until experimentally confirmed.
 
-cannot choose the authoritative identity used by BAREA.
+## HEALTH / OBSERVABILITY
 
-### 3. Legitimate Cloudflare path
+Any health endpoint must expose only safe operational information.
 
-Two legitimate clients arriving through Cloudflare receive distinct authoritative identities where IP-based abuse controls require them.
+Verify it does not expose:
 
-### 4. Bucket hopping
+- secrets;
+- tenant data;
+- quiz content;
+- authentication data;
+- provider credentials.
 
-Changing public forwarding headers cannot move an attacker between rate-limit identities.
+Record useful Cloudflare, `cloudflared`, host, and application logs without leaking sensitive values.
 
-### 5. Church NAT
+## BAREA-007 FUTURE TRANSPORT
 
-At least 50 legitimate participants behind one church NAT remain compatible with BAREA and do not hit a successful-participant-per-IP seat quota.
+Do not implement BAREA-007.
 
-### 6. Authenticated join throttling
+Only verify deployment compatibility if required. Do not add WebSocket/SSE/live-session code.
 
-Authenticated join mutations remain keyed by authenticated `userId`.
+## REQUIRED AUTOMATED VERIFICATION AFTER APPLICATION CHANGES
 
-### 7. Failure behavior
-
-Missing/invalid trusted metadata cannot grant arbitrary client identity and fails safely.
-
-### 8. Tunnel/origin isolation
-
-Stopping/bypassing the Cloudflare Tunnel does not create an alternate public path to the origin.
-
-## VERIFICATION COMMANDS
-
-Run after implementation:
+Run:
 
 ```text
 npm test
@@ -304,70 +316,72 @@ git status
 git diff
 ```
 
-Also run the actual Cloudflare deployment/integration tests. Unit tests alone do not prove the network trust boundary.
+All must pass.
+
+Also run the real Cloudflare integration tests. Unit tests alone cannot prove the network trust boundary.
 
 ## TWO FRESH INDEPENDENT REVIEWERS
 
-After implementation, invoke exactly two fresh independent reviewers.
+After actual provisioning, integration testing, and application changes, invoke exactly two fresh independent reviewers.
 
 ### Agent 1 — Security + Cloudflare Red Team
 
-Challenge:
+Must attack:
 
-- Cloudflare/Tunnel trust boundary;
-- origin isolation;
 - direct-origin bypass;
-- header spoofing;
-- client-IP provenance;
-- tunnel credential security;
-- application attestation if present;
+- Tunnel trust boundary;
+- CF-Connecting-IP provenance;
+- XFF/X-Real-IP/header spoofing;
+- X-Barea header spoofing;
 - rate-limit bucket hopping;
+- secret exposure;
+- tunnel credential misuse;
 - church NAT scalability;
 - tenant/authentication/authorization regressions;
-- BAREA-007 quarantine.
+- BAREA-007 boundary.
 
 ### Agent 2 — Deployment QA + Operations
 
-Challenge:
+Must verify:
 
-- Cloudflare DNS/TLS correctness;
+- DNS/TLS;
 - Tunnel configuration;
-- origin process/restart behavior;
-- firewall/private ingress;
+- connector startup/restart;
+- origin isolation;
+- service binding;
+- firewall/network behavior;
 - health checks;
-- observability;
-- secret rotation;
-- failure/recovery behavior;
+- logs/observability;
+- secret lifecycle;
+- failure/recovery;
 - reproducibility;
-- integration tests;
-- future BAREA-007 compatibility.
+- actual end-to-end integration.
 
-Both must issue explicit GO/NO-GO verdicts.
+Both must provide explicit GO/NO-GO verdicts and concrete findings.
 
-Their verdicts do not authorize merge.
+Their verdicts do NOT authorize merge.
 
 ## DOCUMENTATION
 
-Update only relevant documentation:
+Update only relevant files:
 
-- `DECISIONS.md` / ADR-012;
-- `ROADMAP.md`;
+- `docs/DECISIONS.md` / ADR-012;
+- `docs/ROADMAP.md`;
 - `AGY-REPORT.md`;
-- deployment documentation/configuration where actually required.
+- deployment documentation/configuration where genuinely required.
 
-Record that Cloudflare is now the selected production target.
+Every report must distinguish:
 
-Distinguish clearly between:
-
-- architecture specified;
-- infrastructure provisioned;
-- infrastructure verified;
-- application implementation verified;
+- specified;
+- provisioned;
+- operational;
+- experimentally verified;
+- application verified;
 - merge authorized.
 
-Correct ADR-012 where necessary so it no longer implies that Cloudflare Transform Rules provide HMAC signing or that Cloudflare Edge directly opens an origin :3000 connection through a source-CIDR firewall rule.
+Never report an architecture assumption as a deployment test result.
 
-## GIT / MERGE RULES
+## GIT RULES
 
 Remain on `barea-006-share-join`.
 
@@ -376,71 +390,85 @@ Do not self-merge.
 Do not start BAREA-007.
 Do not commit secrets.
 Do not make unrelated changes.
+Preserve the existing application/security behavior outside the narrowly authorized Cloudflare provenance integration.
 
-## FINAL REPORT
+## FINAL REPORT REQUIRED
 
-### Cloudflare deployment
-- Cloudflare deployment model;
-- origin hosting model;
+### 1. Infrastructure
+- Cloudflare zone/hostname configuration (without secrets);
 - Tunnel configuration;
-- DNS/TLS;
-- origin exposure;
-- firewall/private ingress;
-- client-IP provenance;
-- header handling;
-- application attestation, if any;
-- secret lifecycle;
-- health checks;
-- observability.
+- connector status;
+- origin host/service;
+- port binding;
+- public exposure result;
+- DNS/TLS result.
 
-### Application
+### 2. Provenance
+- exact authoritative client-IP mechanism;
+- why it is trusted;
+- header behavior;
+- direct-origin behavior;
+- spoofing results;
+- bucket-hopping results.
+
+### 3. Application
 - exact files changed;
 - exact client-IP resolution path;
-- security rationale for each change;
-- unrelated functionality confirmed unchanged.
+- security rationale;
+- confirmation that unrelated behavior is unchanged.
 
-### Deployment verification
-- direct-origin bypass: PASS/FAIL;
-- public header spoofing: PASS/FAIL;
-- legitimate Cloudflare identity: PASS/FAIL;
-- bucket hopping: PASS/FAIL;
-- NAT scalability: PASS/FAIL;
-- authenticated join throttling: PASS/FAIL;
-- failure behavior: PASS/FAIL;
-- tunnel/origin isolation: PASS/FAIL.
+### 4. Deployment tests
 
-### Existing protections
-- tenant isolation: PASS/FAIL;
-- authorization: PASS/FAIL;
-- error sanitization: PASS/FAIL;
-- session expiry: PASS/FAIL;
-- BAREA-007 quarantine: PASS/FAIL.
+Report each individually as PASS/FAIL/NOT RUN:
 
-### Automated verification
-- npm test: PASS/FAIL;
-- typecheck: PASS/FAIL;
-- build: PASS/FAIL;
-- build:next: PASS/FAIL;
-- no `any`: PASS/FAIL;
-- diff check: PASS/FAIL.
+- direct-origin bypass;
+- spoofed CF-Connecting-IP;
+- spoofed XFF;
+- spoofed X-Real-IP;
+- spoofed X-Barea-Client-IP;
+- spoofed X-Barea-Edge-Attestation;
+- legitimate Cloudflare identity;
+- bucket hopping;
+- 50+ church NAT participants;
+- authenticated userId throttling;
+- missing/invalid trusted metadata;
+- tunnel/origin isolation;
+- connector restart/recovery.
 
-### Two-agent review
+### 5. Existing protections
+
+- tenant isolation;
+- authorization;
+- error sanitization;
+- session expiry;
+- BAREA-007 quarantine.
+
+### 6. Automated verification
+
+- npm test;
+- typecheck;
+- build;
+- build:next;
+- no `any`;
+- diff check.
+
+### 7. Two-agent review
+
 - Agent 1: GO/NO-GO + findings;
 - Agent 2: GO/NO-GO + findings.
 
-### Git
+### 8. Git
+
 - branch;
 - previous commit;
 - new commit;
 - push result;
 - remote verification.
 
-## FINAL STOP CONDITION
+## ABSOLUTE STOP CONDITION
 
-Cloudflare is selected and deployment implementation is authorized within the scope above.
+Even if every AGY test and both independent reviewers return GO:
 
-**Completion does NOT authorize merge.**
+**DO NOT MERGE. DO NOT START BAREA-007. DO NOT CLAIM PRODUCTION SECURITY COMPLETE.**
 
-After Cloudflare infrastructure is actually provisioned, integration tests pass, and the two fresh reviewers complete:
-
-**STOP. DO NOT MERGE. DO NOT START BAREA-007. WAIT FOR CHATGPT'S INDEPENDENT SECURITY RE-REVIEW AND EXPLICIT MERGE AUTHORIZATION.**
+Stop at the completed Cloudflare deployment/integration state and wait for **ChatGPT's independent security re-review and explicit merge authorization**.
