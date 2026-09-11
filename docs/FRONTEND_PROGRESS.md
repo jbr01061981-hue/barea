@@ -39,7 +39,7 @@ Key visual decisions carried into the frontend:
 
 ### Homepage implementation
 
-- Hero now uses a dedicated client-side Scripture typewriter component.
+- Hero uses a dedicated client-side Scripture typewriter component with additional breathing room and larger Scripture treatment.
 - Scripture cycles through:
   - `Let the Word dwell richly.` — Colossians 3:16
   - `Your word is a lamp to my feet.` — Psalm 119:105
@@ -51,8 +51,11 @@ Key visual decisions carried into the frontend:
 - Primary homepage action is `Explore BAREA`.
 - General `Log in` entry is used instead of teacher-only login wording.
 - No fake OAuth/provider flow or credentials are requested/simulated.
-- `The BAREA rhythm` remains a focused Prepare → Verify → Play explanation.
-- Host, Participant, and Projector are represented as distinct experiences.
+- `The BAREA rhythm` is concise: Prepare → Verify → Play, with one short sentence per step.
+- The rhythm entry area keeps `Explore BAREA` and general `Log in` together before the three steps.
+- Human-review messaging is simplified to `Human review. Thoughtful preparation.`
+- Whole-room experiences are framed as `Host`, `Participant`, and `Sanctuary Display`.
+- Closing CTA is intentionally single-action: `Bring your church together around the Word.` / `Explore BAREA`.
 - Existing truthful teacher-review/product positioning is retained without inventing new backend capability.
 
 ### Public entry boundary
@@ -67,6 +70,11 @@ Key visual decisions carried into the frontend:
 - `src/app/layout.tsx`
 - `src/app/globals.css`
 - `src/app/components/scripture-typewriter.tsx`
+
+### Latest implementation commits
+
+- `6e70480a` — refined homepage Scripture presentation.
+- `194c8fd3` — refined homepage copy and whole-room experience language.
 
 ### Verification
 
