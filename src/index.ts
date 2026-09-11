@@ -74,3 +74,62 @@ export {
 export {
   QuizService
 } from './service/quiz-service';
+
+
+export {
+  ParticipationMode,
+  AdmissionPolicy,
+  WorkspaceType,
+  SessionStatus,
+  assertValidModeAdmissionCompatibility,
+  type QuizSession,
+  type SessionPublicInfo,
+  type AuthenticatedParticipant,
+  type SessionGroup,
+  type SessionGroupPupil,
+  type SessionInvitation
+} from './domain/session';
+
+export {
+  type RoomCode,
+  type ParticipantToken,
+  type ClientIp,
+  normalizeAndValidateRoomCode,
+  validateParticipantToken,
+  normalizeAllowlistEmail,
+  normalizeAllowlistPhone,
+  validateScheduledStartTime,
+  derivePersonalTenantId,
+  isPersonalTenantId
+} from './domain/value-objects';
+
+export {
+  BareaDomainError,
+  SessionNotFoundError,
+  SessionClosedError,
+  SessionLockedError,
+  SessionFullError,
+  SessionAccessDeniedError,
+  CrossTenantSnapshotError,
+  InvalidScheduledTimeError,
+  InvalidRoomCodeError,
+  InvalidParticipantTokenError,
+  InvalidClientIpError,
+  RateLimitExceededError
+} from './domain/domain-errors';
+
+export {
+  SqliteSessionRepository,
+  type SessionRepository,
+  type CreateSessionPayload
+} from './persistence/sqlite-session-repository';
+
+export {
+  SessionService,
+  type CreateSessionServiceInput
+} from './service/session-service';
+
+export {
+  InMemoryRateLimiter,
+  type RateLimiter
+} from './service/rate-limiter';

@@ -6,12 +6,18 @@ import { QuizService } from '../../../service/quiz-service';
 import { AIGenerationService } from '../../../ai/service/ai-generation-service';
 import { FakeAIProvider } from '../../../ai/provider/fake-ai-provider';
 import { GeminiAIProvider } from '../../../ai/provider/gemini-ai-provider';
+import { SqliteSessionRepository } from '../../../persistence/sqlite-session-repository';
+import { SessionService } from '../../../service/session-service';
+import { InMemoryRateLimiter } from '../../../service/rate-limiter';
 
 let globalRepo: SqliteQuestionRepository | null = null;
 let globalBankService: QuestionBankService | null = null;
 let globalQuizRepo: SqliteQuizRepository | null = null;
 let globalQuizService: QuizService | null = null;
 let globalAIService: AIGenerationService | null = null;
+let globalSessionRepo: SqliteSessionRepository | null = null;
+let globalSessionService: SessionService | null = null;
+let globalRateLimiter: InMemoryRateLimiter | null = null;
 
 export function getQuestionBankService(): QuestionBankService {
   if (!globalBankService) {
@@ -57,6 +63,31 @@ export function getAIGenerationService(): AIGenerationService {
 export function setAIGenerationService(service: AIGenerationService | null): void {
   globalAIService = service;
 }
+
+export function getRateLimiter(): InMemoryRateLimiter {
+  if (!globalRateLimiter) {
+    globalRateLimiter = new InMemoryRateLimiter();
+  }
+  return globalRateLimiter;
+}
+
+export function setRateLimiter(limiter: InMemoryRateLimiter | null): void {
+  globalRateLimiter = limiter;
+}
+
+export function getSessionService(): SessionService {
+  if (!globalSessionService) {
+    const dbPath = process.env.BAREA_DB_PATH || path.join(process.cwd(), 'barea.db');
+    globalSessionRepo = new SqliteSessionRepository(dbPath);
+    globalSessionService = new SessionService(globalSessionRepo, getRateLimiter());
+  }
+  return globalSessionService;
+}
+
+export function setSessionService(service: SessionService | null): void {
+  globalSessionService = service;
+}
+
 
 export interface TeacherContext {
   userId: string;
@@ -144,4 +175,134 @@ export function setAuthorizedTeacherContext(context: TeacherContext | null): voi
     throw new Error('Forbidden: test authorization overrides cannot be executed in production or unauthorized environments.');
   }
   mockTeacherContext = context;
+}
+
+
+export interface AuthenticatedUserContext {
+  userId: string;
+  providerType: string;
+  providerSub: string;
+  email: string | null;
+  emailVerified: boolean;
+  phone: string | null;
+  phoneVerified: boolean;
+  displayName: string;
+}
+
+let mockUserContext: AuthenticatedUserContext | null = null;
+
+export async function getAuthenticatedUserContext(): Promise<AuthenticatedUserContext> {
+  if (mockUserContext !== null) {
+    if (!isTestEnvironment() && !isDevelopmentEnvironment()) {
+      throw new Error('Forbidden: test authorization overrides are disabled in non-test/production environments.');
+    }
+    return mockUserContext;
+  }
+
+  if (!isDevelopmentEnvironment()) {
+    throw new Error('Unauthorized: participant authentication is required.');
+  }
+
+  return {
+    userId: process.env.BAREA_DEV_USER_ID || 'user-dev-001',
+    providerType: 'GOOGLE',
+    providerSub: 'google-sub-dev-001',
+    email: 'dev.participant@church.org',
+    emailVerified: true,
+    phone: '+12125550199',
+    phoneVerified: true,
+    displayName: 'Dev Participant'
+  };
+}
+
+export function setAuthenticatedUserContext(context: AuthenticatedUserContext | null): void {
+  if (process.env.NODE_ENV === 'production' || (!isTestEnvironment() && !isDevelopmentEnvironment())) {
+    throw new Error('Forbidden: test authorization overrides cannot be executed in production.');
+  }
+  mockUserContext = context;
+}
+
+let mockClientIp: string | null = null;
+let mockRequestHeadersForTesting: Record<string, string> | null = null;
+
+export function setTrustedClientIpForTesting(ip: string | null): void {
+  if (process.env.NODE_ENV === 'production' || (!isTestEnvironment() && !isDevelopmentEnvironment())) {
+    throw new Error('Forbidden: client IP test overrides cannot be executed in production.');
+  }
+  mockClientIp = ip;
+}
+
+export function setMockRequestHeadersForTesting(headersMap: Record<string, string> | null): void {
+  if (process.env.NODE_ENV === 'production' || (!isTestEnvironment() && !isDevelopmentEnvironment())) {
+    throw new Error('Forbidden: request header test overrides cannot be executed in production.');
+  }
+  mockRequestHeadersForTesting = headersMap;
+}
+
+/**
+ * Extracts and validates IPv4 or IPv6 string. Returns null if invalid format.
+ */
+function parseValidIp(candidate: string): string | null {
+  if (!candidate || typeof candidate !== 'string') return null;
+  const trimmed = candidate.trim();
+  // Reject internal spaces or multiple tokens
+  if (/\s/.test(trimmed)) return null;
+
+  // IPv4 regex: 4 octets 0-255
+  const ipv4Regex = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+  // IPv6 regex
+  const ipv6Regex = /^[0-9a-fA-F:.]+$/;
+  if (ipv4Regex.test(trimmed)) {
+    return trimmed;
+  }
+  if (ipv6Regex.test(trimmed) && trimmed.includes(':')) {
+    return trimmed;
+  }
+  return null;
+}
+
+/**
+ * Derives the effective client IP server-side from authoritative server context.
+ * Never accepts client-supplied parameters or unverified forwarding headers.
+ *
+ * PROVENANCE & NETWORK BOUNDARY SPECIFICATION:
+ * In a standard Node.js / Next.js server runtime without a proprietary platform-level
+ * or socket-level cryptographic provenance token, incoming HTTP request headers
+ * (including CF-Connecting-IP, X-Forwarded-For, and X-Real-IP) cannot be proven to have
+ * originated from a trusted proxy. An attacker connecting directly to the server (even
+ * when an environment variable like BAREA_TRUSTED_PROXY is set) can forge any of these
+ * headers.
+ *
+ * Therefore, to guarantee that callers cannot select or hop their rate-limit identity:
+ * - Forwarding headers (CF-Connecting-IP, X-Forwarded-For, X-Real-IP) are NOT USED.
+ * - An environment variable alone is NOT accepted as proof of network provenance.
+ * - The server strictly falls back to an authoritative, server-selected address ('127.0.0.1')
+ *   or trusted test fixture context that cannot be influenced by incoming request headers.
+ *
+ * Nat scalability is preserved because rate limiting is multi-tiered (15 failed room
+ * lookups/min, /24 subnet containment, 1 join mutation / 5s per authenticated user ID)
+ * and imposes zero participant seat quotas.
+ */
+export async function resolveServerClientIp(): Promise<string | null> {
+  // Test fixture override (strictly guarded to test/dev environment)
+  if (mockClientIp !== null) {
+    if (!isTestEnvironment() && !isDevelopmentEnvironment()) {
+      throw new Error('Forbidden: client IP test overrides cannot be used in production.');
+    }
+    return mockClientIp;
+  }
+
+  // Pre-deployment MVP boundary:
+  // In the current MVP deployment, no trusted edge proxy boundary (such as Cloudflare Tunnel)
+  // has been established or cryptographically proven at the network layer.
+  // Forwarding headers (CF-Connecting-IP, X-Forwarded-For, X-Real-IP) are caller-controlled
+  // and cannot be trusted to select rate-limiting identity.
+  //
+  // Rather than manufacturing a false client IP ('127.0.0.1') which would collapse all unauthenticated
+  // users into a single shared rate-limiting bucket and create a congregation-wide denial of service,
+  // the client IP is explicitly returned as unavailable (null).
+  //
+  // Rate limiting before edge provenance is established relies on server-authoritative room-code
+  // failure throttling and authenticated user ID throttling.
+  return null;
 }

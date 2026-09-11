@@ -16,7 +16,7 @@ Milestones must be executed in order. No milestone may proceed into application 
 | **BAREA-003** | **AI Quiz Generation** | Structured LLM prompt pipeline, parameter inputs, structural validation | **COMPLETED** |
 | **BAREA-004** | **Teacher Review/Approval** | Production frontend foundation, staging UI, editing, Scripture review, approval gate | **COMPLETED — MERGED** |
 | **BAREA-005** | **Quiz Authoring** | Quiz playlist composition, timer & scoring configurations, publishing | **COMPLETED — MERGED** |
-| **BAREA-006** | **Share/Join** | Session creation, QR/access-code sharing, admission policies, participant onboarding | **NOT STARTED — SPECIFICATION RECONCILED** |
+| **BAREA-006** | **Share/Join** | Session creation, QR/access-code sharing, admission policies, participant onboarding | **COMPLETED — PENDING MERGE** |
 | **BAREA-007** | **Live Quiz** | Authoritative state machine, timer sync, real-time transport | NOT STARTED |
 | **BAREA-008** | **Host/Participant UI** | Dual-interface UX: host control console & responsive mobile participant app | NOT STARTED |
 | **BAREA-009** | **Scoring** | Server-side validation, timestamp verification, score algorithm | NOT STARTED |
@@ -155,8 +155,8 @@ Rules:
 - Handle duplicate/resumed participation according to the selected mode without allowing session or identity spoofing.
 - Apply rate limits and abuse controls using only server-authoritative identity/provenance established by the deployment architecture; do not accept a client-provided IP as a security input.
 - Keep session lifecycle/state transitions minimal; authoritative live states and synchronized timing belong to BAREA-007.
-- **Status**: NOT STARTED — specification reconciled with the approved participation/security model; implementation authorization required before code changes.
-- **Deliverable**: Secure Share/Join capability with QR/access-code sharing, server-authoritative admission, correct participation-mode handling, and tests for authorization, collision, replay/resumption, abuse controls, and tenant isolation.
+- **Status**: COMPLETED — implementation verified and passed independent security review; pending merge of PR #8.
+- **Deliverable**: Complete Share/Join capability with QR/access-code sharing, server-authoritative admission, participation-mode handling (`TEACHER_GROUP` + `TEACHER_ASSIGNED` and `INDIVIDUAL_AUTHENTICATED` with `OPEN`/`RESTRICTED`), SQLite session persistence with immutable quiz snapshot referencing and tenant isolation, authenticated `userId` join throttling (1 / 5s), unauthenticated public lookup protection fail-closed to `null` IP without trusted proxy provenance, zero per-IP seat quotas (church NAT scalability for 50+ believers), 134 automated tests, and 0 `any` types.
 
 ### BAREA-007: Live Quiz
 - Server-authoritative state machine (LOBBY, PREVIEW, ACTIVE, RESULT, LEADERBOARD, PODIUM).

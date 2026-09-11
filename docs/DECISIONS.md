@@ -17,6 +17,7 @@ This document tracks architectural principles, established decisions, and open t
 - [ADR-009: AI LLM Gateway Provider Port & Architecture](#adr-009-ai-llm-gateway-provider-port--architecture)
 - [ADR-010: BAREA Frontend Application Stack](#adr-010-barea-frontend-application-stack)
 - [ADR-011: BAREA Design System and UI Component Strategy](#adr-011-barea-design-system-and-ui-component-strategy)
+- [ADR-012: Edge Reverse Proxy and Origin Ingress Trust Boundary](#adr-012-edge-reverse-proxy-and-origin-ingress-trust-boundary)
 - [Open Technical Decisions](#open-technical-decisions)
 
 ---
@@ -276,6 +277,123 @@ This approach separates three concerns: React Aria provides robust interaction a
 
 ---
 
+## ADR-012: Edge Reverse Proxy and Origin Ingress Trust Boundary
+
+### Status
+**ACCEPTED (BAREA-006 ARCHITECTURE SPECIFICATION)**
+
+### Context
+In BAREA-006, unauthenticated participants join quiz lobbies via short room codes or direct links. Abuse controls (15 failed lookups/min, /24 subnet containment, 30 unauth requests/10s) protect against room code enumeration and denial-of-service.
+However, in standard Node.js / Next.js Server Actions, raw TCP socket addresses are not directly exposed to application action handlers. If the origin server is directly reachable from the public internet, incoming HTTP request headers (such as `X-Forwarded-For`, `CF-Connecting-IP`, or `X-Real-IP`) can be arbitrarily forged by an attacker.
+Conversely, falling back to a universal constant (`127.0.0.1`) collapses all unauthenticated clients into a single global rate-limit bucket, creating a shared denial-of-service vulnerability that violates BAREA's church-scale multi-user requirements.
+
+### Decision
+1. **Enforced Deployment Boundary (Option 1)**: BAREA establishes a mandatory deployment contract wherein the Next.js origin server is NEVER directly accessible from the public Internet.
+2. **Edge Reverse Proxy Ingress**: All public HTTP/HTTPS traffic must terminate at an authorized, managed Edge Reverse Proxy (e.g. Cloudflare Tunnel, AWS ALB, or isolated Nginx/Caddy gateway).
+3. **Origin Firewalling**: Direct TCP access to origin port 3000 from the public internet is dropped/blocked by network firewall, security group, private subnet routing, or daemon tunnel binding.
+4. **Header Normalization at Ingress**: The edge proxy unconditionally removes/strips all caller-supplied forwarding headers (`X-Forwarded-For`, `CF-Connecting-IP`, `X-Real-IP`, `X-Barea-*`). The proxy extracts the client IP strictly from its own connection socket (`remoteAddress`) and writes the canonical client IP to an internal header (`X-Barea-Client-IP`).
+5. **Edge Attestation**: The proxy authenticates to the origin using mutual TLS (mTLS) or an independently managed, high-entropy shared secret (`X-Barea-Edge-Attestation` matching `process.env.BAREA_EDGE_SECRET`).
+6. **Application Verification**: The application verifies the edge attestation in constant time before consuming `X-Barea-Client-IP`. Requests lacking valid edge attestation are relegated to a quarantined, non-privileged fallback bucket (`127.0.0.1`), preventing spoofing and preventing collision with legitimate proxied traffic.
+7. **Application Checkpoint Preservation**: Until an active production deployment environment implements and enforces this boundary, the application code safely remains at checkpoint commit `eb8d416`, without manufacturing a fake application-only trust model.
+
+### Practical Deployment Contract Specifications
+
+To satisfy ADR-012 without coupling BAREA to a single cloud vendor, the deployment contract specifies the required behaviors across 14 operational facets:
+
+1. **Production Hosting Target & Edge Technology**:
+   - Status: **SELECTED — CLOUDFLARE EDGE + CLOUDFLARE TUNNEL (`cloudflared`)**.
+   - Concrete Deployment Topology:
+     ```text
+     PUBLIC INTERNET
+           |
+           v (HTTPS / TLS 1.3 Anycast)
+     CLOUDFLARE EDGE (DNS / TLS termination)
+           |
+           v (Encrypted outbound-only QUIC/TLS tunnel connector)
+     CLOUDFLARE TUNNEL (`cloudflared` daemon on private origin host)
+           |
+           v (Loopback HTTP: 127.0.0.1:3000)
+     PRIVATE BAREA ORIGIN (Next.js App Router on Node.js 20+)
+     ```
+   - Reference Architectures Evaluated:
+     - *Cloudflare Tunnel + Container/VM Origin* (Selected).
+     - *AWS / GCP Private VPC* (Evaluated / Deferred).
+     - *Bare Metal / Dedicated Linux VM with Reverse Proxy (Nginx / Caddy)* (Evaluated / Deferred).
+2. **Origin Exposure Model**:
+   - The Next.js Node process binds strictly to loopback (`127.0.0.1:3000`) or a private isolated container network.
+   - Zero public IPv4/IPv6 routing to origin port 3000.
+   - The host requires NO inbound public listening ports and NO public IP address.
+3. **Firewall / Network Ingress Model**:
+   - For Cloudflare Tunnel, `cloudflared` initiates outbound-only connections from the private origin host to Cloudflare's Edge PoPs.
+   - **Correction Note**: Cloudflare Edge does NOT initiate direct inbound connections to origin port 3000. Therefore, a Cloudflare source-CIDR inbound firewall allowlist on port 3000 is neither required nor applicable.
+   - Host/OS packet filter (e.g. `ufw`, `nftables`, or cloud security group) drops all inbound public connections to port 3000 (`0.0.0.0/0:3000` dropped).
+4. **Trusted Edge Behavior**:
+   - Terminates public TLS with modern ciphers (TLS 1.3 / TLS 1.2).
+   - Ingests public client requests over Anycast edge PoPs.
+5. **Header Stripping & Client-IP Handling Contract**:
+   - **Native Cloudflare Mechanism**: Cloudflare Edge terminates the client TCP socket and automatically overwrites `CF-Connecting-IP` with the connecting client's true socket IP address. Any client-provided `CF-Connecting-IP` is overwritten by Cloudflare Edge before traversing the tunnel.
+   - Incoming `X-Forwarded-For` is appended or normalized by Cloudflare; caller-controlled values are untrusted.
+   - Any external caller attempts to pass `X-Barea-*` headers must be stripped at the ingress boundary or ignored.
+   - Because `cloudflared` is an authenticated, outbound-only connector that only Cloudflare Edge can route traffic to, and because the origin is unreachable from the public internet, `CF-Connecting-IP` arriving through the tunnel possesses genuine network-level provenance.
+6. **Origin Authentication & Attestation (Correction Applied)**:
+   - **No Fake HMAC**: Ordinary Cloudflare Transform Rules do NOT provide cryptographic per-request HMAC signing. A static shared secret header is not an HMAC.
+   - **Native Trust Boundary**: The primary provenance guarantee is provided by the private Tunnel architecture: the origin listens only on loopback, has no public ingress, and can only receive requests dispatched through the authenticated `cloudflared` daemon.
+   - **Optional Shared Secret (Defense-in-Depth)**: If an additional application-level attestation token (`BAREA_EDGE_SECRET`) is injected via Cloudflare HTTP Request Header Modification rules (Transform Rules) and verified by the origin application, it acts as an additional defense-in-depth barrier against accidental origin exposure. It is a static shared token, not an HMAC signature.
+7. **Secret Lifecycle**:
+   - `cloudflared` tunnel token and any optional edge secret managed via environment variables (`CLOUDFLARE_TUNNEL_TOKEN`, `BAREA_EDGE_SECRET`) strictly outside of Git.
+   - Dual-secret rotation support: origin accepts `BAREA_EDGE_SECRET` and optional `BAREA_EDGE_SECRET_PREVIOUS` during rotation windows if application-level attestation is active.
+8. **Health Checks**:
+   - Dedicated unauthenticated health endpoint (`/api/health`) responds `200 OK` to local `cloudflared` and monitoring probes.
+   - Health check probes are exempted from participant abuse rate limits.
+9. **TLS Termination**:
+   - Public TLS terminates at Cloudflare Edge.
+   - In-transit encryption between `cloudflared` and Cloudflare PoPs is encrypted via QUIC/TLS.
+   - Connection between `cloudflared` and Next.js is private local loopback (`127.0.0.1:3000`).
+10. **Logging / Observability Expectations**:
+    - Cloudflare dashboard and tunnel metrics provide edge connection and tunnel status monitoring.
+    - Application logs record rate-limit events with redacted client IP prefix (e.g. `203.0.113.***`) for privacy while retaining security auditability.
+11. **Local Development Behavior**:
+    - When `NODE_ENV === 'development'`, local developers run `next dev` directly on loopback `127.0.0.1:3000` without requiring `cloudflared` or edge secrets.
+12. **Test Environment Behavior**:
+    - In `NODE_ENV === 'test'`, automated tests use controlled in-memory fixtures and test seams (`setMockRequestHeadersForTesting`, `setTrustedClientIpForTesting`), which are strictly disabled and throw `Forbidden` in production (`NODE_ENV === 'production'`).
+13. **Failure Behavior (Direct / Unauthenticated Access)**:
+    - If a request reaches the application without valid edge provenance (or if a direct connection is attempted), the application fails closed: it ignores forwarding headers and relegates the request to the quarantined fallback identity (`127.0.0.1`).
+14. **How Direct-Origin Traffic Is Blocked**:
+    - Network Layer: Next.js binds to `127.0.0.1:3000`; no public IP or public port forwarding exists. Public packets cannot reach port 3000.
+    - Application Layer (Defense-in-Depth): Unprovenanced requests resolve strictly to `127.0.0.1`, preventing attacker-controlled rate-limit bucket evasion.
+
+### Hosting Target Candidate Evaluation Matrix
+
+In accordance with BAREA architectural constraints (church-scale usage, cost, operational simplicity, secret management, origin isolation, Next.js App Router compatibility, and future BAREA-007 WebSocket/live transport), the three supported candidate families are evaluated below:
+
+| Evaluation Dimension | Candidate A: Cloudflare Tunnel + Cloudflare Edge | Candidate B: Private Cloud VPC (AWS ALB / GCP Cloud Armor) | Candidate C: Linux VM + Reverse Proxy (Nginx / Caddy) |
+| :--- | :--- | :--- | :--- |
+| **Monthly Baseline Cost** | **Lowest**: Free tier / $0–$5/mo (Cloudflare Zero Trust free tier includes tunnels; compute on low-cost VM/container). | **Highest**: ~$35–$60+/mo baseline (AWS ALB ~$16–$22/mo + NAT Gateway / VPC endpoints + compute). | **Low to Moderate**: ~$5–$20/mo (Single VPS on Hetzner, DigitalOcean, Linode, or AWS Lightsail). |
+| **Operational Complexity** | **Low**: No public IP required; no inbound firewall ports to open; `cloudflared` initiates outbound connection only. | **High**: Requires VPC setup, public/private subnets, route tables, internet gateways, NAT gateways, security groups. | **Moderate**: Requires OS maintenance, firewall (`nftables`/`ufw`), reverse proxy config, manual/certbot TLS renewal. |
+| **Origin Isolation Strength** | **Exceptional**: Origin has ZERO public listening ports or public IPv4/IPv6 addresses. Directly unreachable from internet. | **Strong**: Origin in private subnet with security group allowing ingress solely from load balancer security group. | **Strong (if configured correctly)**: Origin binds strictly to `127.0.0.1:3000`; OS packet filter drops external packets to 3000. |
+| **IP Provenance Reliability** | **High**: Edge sets `CF-Connecting-IP` / `X-Barea-Client-IP` from ingress socket; tunnel ingress strips incoming spoofed headers. | **High**: ALB strips untrusted `X-Forwarded-For` or appends client IP; security group guarantees packet arrived via ALB. | **High**: Nginx/Caddy sets `$remote_addr` to internal header and discards caller-supplied forwarding headers. |
+| **Secret & Attestation Management** | **Simple**: High-entropy tunnel token stored outside Git; native CF-Connecting-IP over authenticated tunnel requires zero custom HMAC or Worker machinery. | **Integrated**: Secret stored in AWS Secrets Manager / Parameter Store and injected via ALB / CloudFront headers. | **Direct**: Secret stored in environment file (`/etc/barea.env`) and configured directly in proxy upstream blocks. |
+| **Observability & Logs** | **Strong**: Cloudflare analytics, tunnel status metrics, and request logging. | **Comprehensive**: CloudWatch / Cloud Logging with detailed access logs and VPC flow logs. | **Basic to Moderate**: Local access logs (`/var/log/nginx/access.log`), systemd journal, optional Loki/Prometheus agent. |
+| **Fit for Next.js App Router** | **Seamless**: Standard Node.js / standalone output proxying over HTTP/1.1 or HTTP/2. | **Seamless**: Standard container/EC2 target behind ALB target groups. | **Seamless**: Standard upstream reverse-proxy configuration. |
+| **Future BAREA-007 Live Transport** | **Excellent**: Cloudflare Tunnel natively supports WebSockets and HTTP/2 Server-Sent Events (SSE) out of the box. | **Excellent**: AWS ALB natively supports WebSockets and long-lived HTTP connections. | **Excellent**: Nginx and Caddy both offer robust, battle-tested WebSocket proxying (`Upgrade` / `Connection` headers). |
+| **Fit for Small Church / Startup Scale** | **Best Fit**: Minimal operational burden, zero maintenance of inbound firewall rules, enterprise-grade edge security for free. | **Overkill for MVP**: Complex setup and recurring fixed infrastructure charges unsuitable for small community budgets. | **Viable**: Inexpensive, but requires manual OS patching, firewall maintenance, and certificate renewal oversight. |
+
+### Target Recommendation
+- **Recommended Target**: **Candidate A (Cloudflare Tunnel + Cloudflare Edge)**.
+- **Rationale**:
+  1. *Zero Inbound Attack Surface*: Origin requires no public IP and no open inbound firewall ports; `cloudflared` initiates outbound-only connections to Cloudflare's edge network.
+  2. *Unmatched Cost-to-Security Ratio*: Eliminates AWS ALB / NAT Gateway recurring fixed costs while providing enterprise-grade DDoS mitigation, automated TLS, and global CDN caching.
+  3. *BAREA-007 Ready*: Native zero-configuration WebSocket and SSE support.
+  4. *Low Operational Burden*: Ideal for church and non-profit administration without dedicated 24/7 DevOps teams.
+- **Selection Status**: **SELECTED — CANDIDATE A (CLOUDFLARE EDGE + CLOUDFLARE TUNNEL)**. Formally selected by user decision (commit `a6a8f3b`).
+- **Provisioning Status**: **NOT YET PROVISIONED**. Physical infrastructure provisioning and verified Cloudflare deployment integration tests are required before merge authorization.
+
+### Consequences
+- **Positive**: Eliminates IP header spoofing; provides true network provenance; maintains church-scale client isolation and NAT scalability (zero per-IP seat quotas); prevents global rate-limit bucket exhaustion.
+- **Negative**: Requires production infrastructure (private network, firewall, edge proxy configuration) to be provisioned before live internet deployment.
+
+---
+
 ## Open Technical Decisions
 
 The following technical selections remain intentionally deferred:
@@ -284,4 +402,4 @@ The following technical selections remain intentionally deferred:
 2. **Database & Data Layer for Distributed Environments**: Relational database engine, schema management, and live session state storage for multi-server deployment.
 3. **HTTP/API Contract**: Specific API style and validation/transport implementation.
 4. **Authentication/Authorization**: Teacher/host authentication implementation and authorization model.
-5. **Deployment/Hosting**: Production hosting platform and infrastructure composition.
+5. **Deployment/Hosting Target**: **RESOLVED — CLOUDFLARE EDGE + CLOUDFLARE TUNNEL (`cloudflared`)** (ADR-012). Physical provisioning in progress.
