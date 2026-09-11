@@ -17,6 +17,7 @@ This document tracks architectural principles, established decisions, and open t
 - [ADR-009: AI LLM Gateway Provider Port & Architecture](#adr-009-ai-llm-gateway-provider-port--architecture)
 - [ADR-010: BAREA Frontend Application Stack](#adr-010-barea-frontend-application-stack)
 - [ADR-011: BAREA Design System and UI Component Strategy](#adr-011-barea-design-system-and-ui-component-strategy)
+- [ADR-012: Edge Reverse Proxy and Origin Ingress Trust Boundary](#adr-012-edge-reverse-proxy-and-origin-ingress-trust-boundary)
 - [Open Technical Decisions](#open-technical-decisions)
 
 ---
@@ -276,6 +277,31 @@ This approach separates three concerns: React Aria provides robust interaction a
 
 ---
 
+## ADR-012: Edge Reverse Proxy and Origin Ingress Trust Boundary
+
+### Status
+**ACCEPTED (BAREA-006 ARCHITECTURE SPECIFICATION)**
+
+### Context
+In BAREA-006, unauthenticated participants join quiz lobbies via short room codes or direct links. Abuse controls (15 failed lookups/min, /24 subnet containment, 30 unauth requests/10s) protect against room code enumeration and denial-of-service.
+However, in standard Node.js / Next.js Server Actions, raw TCP socket addresses are not directly exposed to application action handlers. If the origin server is directly reachable from the public internet, incoming HTTP request headers (such as `X-Forwarded-For`, `CF-Connecting-IP`, or `X-Real-IP`) can be arbitrarily forged by an attacker.
+Conversely, falling back to a universal constant (`127.0.0.1`) collapses all unauthenticated clients into a single global rate-limit bucket, creating a shared denial-of-service vulnerability that violates BAREA's church-scale multi-user requirements.
+
+### Decision
+1. **Enforced Deployment Boundary (Option 1)**: BAREA establishes a mandatory deployment contract wherein the Next.js origin server is NEVER directly accessible from the public Internet.
+2. **Edge Reverse Proxy Ingress**: All public HTTP/HTTPS traffic must terminate at an authorized, managed Edge Reverse Proxy (e.g. Cloudflare Tunnel, AWS ALB, or isolated Nginx/Caddy gateway).
+3. **Origin Firewalling**: Direct TCP access to origin port 3000 from the public internet is dropped/blocked by network firewall, security group, private subnet routing, or daemon tunnel binding.
+4. **Header Normalization at Ingress**: The edge proxy unconditionally removes/strips all caller-supplied forwarding headers (`X-Forwarded-For`, `CF-Connecting-IP`, `X-Real-IP`, `X-Barea-*`). The proxy extracts the client IP strictly from its own connection socket (`remoteAddress`) and writes the canonical client IP to an internal header (`X-Barea-Client-IP`).
+5. **Edge Attestation**: The proxy authenticates to the origin using mutual TLS (mTLS) or an independently managed, high-entropy shared secret (`X-Barea-Edge-Attestation` matching `process.env.BAREA_EDGE_SECRET`).
+6. **Application Verification**: The application verifies the edge attestation in constant time before consuming `X-Barea-Client-IP`. Requests lacking valid edge attestation are relegated to a quarantined, non-privileged fallback bucket (`127.0.0.1`), preventing spoofing and preventing collision with legitimate proxied traffic.
+7. **Application Checkpoint Preservation**: Until an active production deployment environment implements and enforces this boundary, the application code safely remains at checkpoint commit `eb8d416`, without manufacturing a fake application-only trust model.
+
+### Consequences
+- **Positive**: Eliminates IP header spoofing; provides true network provenance; maintains church-scale client isolation and NAT scalability (zero per-IP seat quotas); prevents global rate-limit bucket exhaustion.
+- **Negative**: Requires production infrastructure (private network, firewall, edge proxy configuration) to be provisioned before live internet deployment.
+
+---
+
 ## Open Technical Decisions
 
 The following technical selections remain intentionally deferred:
@@ -284,4 +310,4 @@ The following technical selections remain intentionally deferred:
 2. **Database & Data Layer for Distributed Environments**: Relational database engine, schema management, and live session state storage for multi-server deployment.
 3. **HTTP/API Contract**: Specific API style and validation/transport implementation.
 4. **Authentication/Authorization**: Teacher/host authentication implementation and authorization model.
-5. **Deployment/Hosting**: Production hosting platform and infrastructure composition.
+5. **Deployment/Hosting Target**: Selection of specific cloud vendor/host (AWS, Cloudflare, Bare Metal) implementing the ADR-012 edge boundary.
