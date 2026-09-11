@@ -21,8 +21,8 @@ const experienceCards = [
     eyebrow: 'For teachers',
     title: 'Prepare with confidence.',
     text: 'Generate, review, edit, approve, and assemble scripture-based questions before they reach a quiz.',
-    href: '/teacher/quizzes',
-    action: 'Open teacher workspace',
+    href: '#how-it-works',
+    action: 'See the teacher workflow',
   },
   {
     eyebrow: 'For your church',
@@ -35,7 +35,7 @@ const experienceCards = [
 
 export default function HomePage() {
   return (
-    <div className="-mx-4 -mt-6 -mb-6 sm:-mx-6 lg:-mx-8">
+    <div>
       <section className="relative overflow-hidden border-b border-[var(--barea-border)] bg-[var(--barea-cream)]">
         <div className="mx-auto grid max-w-7xl gap-12 px-5 py-16 sm:px-8 sm:py-20 lg:grid-cols-[1.15fr_.85fr] lg:items-center lg:px-10 lg:py-24">
           <div>
@@ -51,16 +51,16 @@ export default function HomePage() {
 
             <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
               <a
-                href="/teacher/quizzes"
+                href="#how-it-works"
                 className="inline-flex min-h-12 items-center justify-center rounded-[var(--barea-radius-control)] bg-[var(--barea-ink)] px-6 text-sm font-semibold text-white transition-colors hover:bg-[var(--barea-ink-soft)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2"
               >
-                Start preparing a quiz
+                See how BAREA works
               </a>
               <a
-                href="#how-it-works"
+                href="#experiences"
                 className="inline-flex min-h-12 items-center justify-center rounded-[var(--barea-radius-control)] border border-[var(--barea-border-strong)] bg-white px-6 text-sm font-semibold text-[var(--barea-ink)] transition-colors hover:bg-[var(--barea-paper)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2"
               >
-                How BAREA works
+                Explore the experiences
               </a>
             </div>
 
@@ -158,10 +158,10 @@ export default function HomePage() {
             </p>
           </div>
           <a
-            href="/teacher/quizzes"
+            href="#how-it-works"
             className="inline-flex min-h-12 shrink-0 items-center justify-center rounded-[var(--barea-radius-control)] bg-white px-6 text-sm font-semibold text-[var(--barea-ink)] transition-colors hover:bg-[var(--barea-paper)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--barea-ink)]"
           >
-            Open teacher workspace
+            Explore the workflow
           </a>
         </div>
       </section>
