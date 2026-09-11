@@ -57,11 +57,11 @@ export function ScriptureTypewriter() {
 
   return (
     <div
-      className="flex min-h-[13rem] flex-col items-center justify-center text-center sm:min-h-[15rem]"
+      className="flex min-h-[14rem] flex-col items-center justify-center text-center sm:min-h-[16rem]"
       aria-live="polite"
       aria-label={`${verses[verseIndex].text} — ${verses[verseIndex].reference}`}
     >
-      <p className="font-serif text-[2.35rem] font-normal leading-[1.18] tracking-[-0.025em] text-[var(--barea-ivory)] sm:text-5xl lg:text-[4.25rem]">
+      <p className="max-w-5xl font-serif text-[2.55rem] font-normal leading-[1.12] tracking-[-0.03em] text-[var(--barea-ivory)] sm:text-6xl lg:text-[4.75rem]">
         <span className="italic">“{visibleText}”</span>
         <span
           aria-hidden="true"
@@ -69,7 +69,7 @@ export function ScriptureTypewriter() {
         />
       </p>
       <p
-        className={`mt-7 text-[0.68rem] font-bold uppercase tracking-[0.28em] text-[var(--barea-gold)] transition-opacity duration-300 ${phase === 'transitioning' ? 'opacity-0' : 'opacity-100'}`}
+        className={`mt-8 text-[0.68rem] font-bold uppercase tracking-[0.28em] text-[var(--barea-gold)] transition-opacity duration-300 ${phase === 'transitioning' ? 'opacity-0' : 'opacity-100'}`}
       >
         {verses[verseIndex].reference}
       </p>
