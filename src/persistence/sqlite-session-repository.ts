@@ -107,10 +107,12 @@ export interface SessionRepository {
     sessionGroupId?: string | null;
     sessionGroupPupilId?: string | null;
     selectedOptionIndices: readonly number[];
-    submittedAt: string;
+    submittedAt?: string;
     clientTimestamp?: string;
-    isWithinDeadline: boolean;
+    isWithinDeadline?: boolean;
   }): ParticipantSubmission;
+  getCurrentTimeMs?(): number;
+  setClockForTesting?(clock: (() => number) | null): void;
   getParticipantSubmission(sessionId: string, questionPosition: number, participantIdOrUserId: string): ParticipantSubmission | null;
   getGroupSubmission(sessionId: string, questionPosition: number, groupId: string): ParticipantSubmission | null;
   getSubmissionCountForQuestion(sessionId: string, questionPosition: number): number;
@@ -181,8 +183,9 @@ export interface InvitationRow {
 export class SqliteSessionRepository implements SessionRepository {
   private db: DatabaseSync;
   private ownsDb: boolean;
+  private testClock: (() => number) | null = null;
 
-  constructor(dbOrPath: DatabaseSync | string = ':memory:') {
+  constructor(dbOrPath: DatabaseSync | string = ':memory:', clock?: () => number) {
     if (typeof dbOrPath === 'string') {
       this.db = new DatabaseSync(dbOrPath);
       this.ownsDb = true;
@@ -190,7 +193,27 @@ export class SqliteSessionRepository implements SessionRepository {
       this.db = dbOrPath;
       this.ownsDb = false;
     }
+    if (clock) {
+      this.setClockForTesting(clock);
+    }
     this.init();
+  }
+
+  setClockForTesting(clock: (() => number) | null): void {
+    if (process.env.NODE_ENV === 'production' || (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'development')) {
+      throw new Error('Forbidden: test clock overrides cannot be executed in production or unauthorized environments.');
+    }
+    this.testClock = clock;
+  }
+
+  getCurrentTimeMs(): number {
+    if (this.testClock !== null) {
+      if (process.env.NODE_ENV === 'production' || (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'development')) {
+        throw new Error('Forbidden: test clock overrides are disabled in production.');
+      }
+      return this.testClock();
+    }
+    return Date.now();
   }
 
   getDatabase(): DatabaseSync {
@@ -1296,9 +1319,9 @@ export class SqliteSessionRepository implements SessionRepository {
     sessionGroupId?: string | null;
     sessionGroupPupilId?: string | null;
     selectedOptionIndices: readonly number[];
-    submittedAt: string;
+    submittedAt?: string;
     clientTimestamp?: string;
-    isWithinDeadline: boolean;
+    isWithinDeadline?: boolean;
   }): ParticipantSubmission {
     return this.transaction(() => {
       const session = this.findSessionById(submission.sessionId);
@@ -1318,12 +1341,18 @@ export class SqliteSessionRepository implements SessionRepository {
         throw new InvalidLiveStateTransitionError(`Question position mismatch: live question is at position ${liveRow.current_question_position}, submission was for position ${submission.questionPosition}`);
       }
 
-      // Server-authoritative deadline check
-      const serverNow = new Date(submission.submittedAt).getTime();
-      const deadline = new Date(liveRow.answer_deadline_at).getTime();
-      if (serverNow > deadline) {
+      if (!liveRow.answer_deadline_at) {
+        throw new InvalidLiveStateTransitionError('No active answer deadline configured for current question.');
+      }
+
+      // Authoritative deadline check at persistence boundary using fresh server time
+      const serverNowMs = this.getCurrentTimeMs();
+      const deadlineMs = new Date(liveRow.answer_deadline_at).getTime();
+      if (serverNowMs > deadlineMs) {
         throw new AnswerDeadlineExpiredError();
       }
+
+      const authoritativeSubmittedAt = new Date(serverNowMs).toISOString();
 
       // Deterministic duplicate check (First accepted submission wins)
       if (submission.userId) {
@@ -1343,26 +1372,33 @@ export class SqliteSessionRepository implements SessionRepository {
       }
 
       const id = 'ans_' + crypto.randomUUID();
-      this.db.prepare(`
-        INSERT INTO session_answers (
-          id, session_id, question_position, question_id,
-          participant_id, user_id, session_group_id, session_group_pupil_id,
-          selected_option_indices, submitted_at, client_submitted_at, is_within_deadline
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        id,
-        submission.sessionId,
-        submission.questionPosition,
-        submission.questionId,
-        submission.participantId ?? null,
-        submission.userId ?? null,
-        submission.sessionGroupId ?? null,
-        submission.sessionGroupPupilId ?? null,
-        JSON.stringify(submission.selectedOptionIndices),
-        submission.submittedAt,
-        submission.clientTimestamp ?? null,
-        submission.isWithinDeadline ? 1 : 0
-      );
+      try {
+        this.db.prepare(`
+          INSERT INTO session_answers (
+            id, session_id, question_position, question_id,
+            participant_id, user_id, session_group_id, session_group_pupil_id,
+            selected_option_indices, submitted_at, client_submitted_at, is_within_deadline
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          id,
+          submission.sessionId,
+          submission.questionPosition,
+          submission.questionId,
+          submission.participantId ?? null,
+          submission.userId ?? null,
+          submission.sessionGroupId ?? null,
+          submission.sessionGroupPupilId ?? null,
+          JSON.stringify(submission.selectedOptionIndices),
+          authoritativeSubmittedAt,
+          submission.clientTimestamp ?? null,
+          1 // Accepted answers are authoritatively within deadline
+        );
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) {
+          throw new DuplicateAnswerSubmissionError();
+        }
+        throw err;
+      }
 
       return {
         id,
@@ -1374,9 +1410,9 @@ export class SqliteSessionRepository implements SessionRepository {
         sessionGroupId: submission.sessionGroupId ?? null,
         sessionGroupPupilId: submission.sessionGroupPupilId ?? null,
         selectedOptionIndices: submission.selectedOptionIndices,
-        submittedAt: submission.submittedAt,
+        submittedAt: authoritativeSubmittedAt,
         clientTimestamp: submission.clientTimestamp,
-        isWithinDeadline: submission.isWithinDeadline
+        isWithinDeadline: true
       };
     });
   }

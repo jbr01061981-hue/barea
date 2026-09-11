@@ -1015,3 +1015,42 @@ Milestone BAREA-007 builds the live quiz execution engine for the BAREA platform
   - `git grep ": any" -- src/`: 0 occurrences.
   - `git diff --check`: Clean (0 whitespace errors).
   - Out-of-scope milestones: Zero BAREA-008 UI, zero BAREA-009 scoring, zero Cloudflare infrastructure provisioning.
+
+### I. PR #11 Final Security Remediation: Atomic Authoritative Deadline Enforcement at Persistence Boundary
+- **Remaining Persistence Timing Blocker**:
+  `LiveQuizService.submitParticipantAnswer` and `submitGroupAnswer` previously validated deadline boundaries at the service layer prior to calling repository persistence methods. However, the final acceptance decision inside SQLite `recordAnswerSubmission` evaluated against `submission.submittedAt` (passed from the caller/service layer) rather than fresh server time at the physical point of transaction execution. A submission passing service pre-checks right before deadline expiration could experience scheduling delay or concurrency queueing, arriving at SQLite after the deadline, and still be committed.
+- **Root Cause**:
+  Decoupling service-time checks from physical persistence execution allowed a gap between authorization check and transactional commit (TOCTOU race), permitting late writes if stale timestamps were preserved.
+- **Exact Atomic Persistence Boundary Remediation**:
+  1. **Atomic Transactional Enforcement Inside `BEGIN IMMEDIATE`**:
+     In `SqliteSessionRepository.recordAnswerSubmission`, execution takes place inside `this.transaction(() => { ... })` (`BEGIN IMMEDIATE`).
+     - The repository queries the live session state (`sessions_live`) directly within the active transaction lock.
+     - Fresh authoritative server time is sampled via `const serverNowMs = this.getCurrentTimeMs()`.
+     - The physical deadline is evaluated against fresh time: `if (serverNowMs > deadlineMs) { throw new AnswerDeadlineExpiredError(...); }`.
+     - If the deadline has expired when the write lock is acquired, the submission is aborted, no database row is inserted, and an `AnswerDeadlineExpiredError` is thrown.
+  2. **Authoritative Timestamp and Deadline Derivation**:
+     - `submittedAt` and `isWithinDeadline` are no longer accepted from caller claims.
+     - `authoritativeSubmittedAt` is derived from `new Date(serverNowMs).toISOString()`.
+     - `is_within_deadline` is strictly committed as `1` because expired attempts never reach row insertion.
+     - The returned `ParticipantSubmission` carries the authoritative `serverNowMs` timestamp, which is used for downstream realtime event publishing.
+  3. **Teacher-Group Answer Submission Parity**:
+     `SqliteSessionRepository.recordGroupAnswer` and `LiveQuizService.submitGroupAnswer` undergo the exact same atomic transaction-level deadline enforcement: late group submissions are rejected at the persistence boundary with zero state changes.
+  4. **Service-Level Defense-in-Depth**:
+     `LiveQuizService.submitParticipantAnswer` and `submitGroupAnswer` continue to perform pre-checks against repository server time to reject clearly expired requests early before acquiring database transaction locks.
+  5. **Deterministic Concurrency & Race Testing**:
+     In `test/live-quiz.test.ts`, **Test 14** was implemented to deterministically simulate:
+     - Pre-check at service layer passes before deadline (T0 < deadline).
+     - Test clock advances past deadline (T1 > deadline) before repository transaction executes.
+     - Submission is strictly rejected with `AnswerDeadlineExpiredError`.
+     - Verified that 0 rows are persisted in `participant_submissions`.
+     - Verified caller-supplied past timestamps (`submittedAt: "2000-01-01T00:00:00.000Z"`) cannot win or bypass deadline expiry when persistence clock is expired.
+     - Verified first-write-wins concurrency: first valid participant answer commits; immediate duplicate is rejected; late submission after deadline expiration is rejected with 0 database mutations.
+- **Verification Gates**:
+  - `npm test`: 149/149 tests pass.
+  - `node --test dist/test/live-quiz.test.js`: 15/15 tests pass.
+  - `npm run typecheck`: 0 errors.
+  - `npm run build`: 0 errors.
+  - `npm run build:next`: 0 errors (Turbopack production build succeeded).
+  - `git grep ": any" -- src/`: 0 occurrences.
+  - `git diff --check`: Clean (0 whitespace errors).
+  - Out-of-scope milestones: Zero BAREA-008 UI, zero BAREA-009 scoring, zero Cloudflare infrastructure provisioning.

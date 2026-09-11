@@ -291,16 +291,17 @@ export class LiveQuizService {
       );
     }
 
-    // 4. Server-Authoritative Deadline check
+    // 4. Server-Authoritative Deadline pre-check
     if (!liveState.answerDeadlineAt) {
       throw new InvalidLiveStateTransitionError('No active answer deadline configured for current question.');
     }
-    const nowServerMs = Date.now();
+    const nowServerMs = typeof (this.repo as any).getCurrentTimeMs === 'function'
+      ? (this.repo as any).getCurrentTimeMs()
+      : Date.now();
     const deadlineMs = new Date(liveState.answerDeadlineAt).getTime();
     if (nowServerMs > deadlineMs) {
       throw new AnswerDeadlineExpiredError();
     }
-    const isWithinDeadline = nowServerMs <= deadlineMs;
 
     const snapshot = this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
     if (!snapshot) throw new CrossTenantSnapshotError('Quiz snapshot not found.');
@@ -320,8 +321,6 @@ export class LiveQuizService {
       }
     }
 
-    const nowIso = new Date(nowServerMs).toISOString();
-
     const submission = this.repo.recordAnswerSubmission({
       sessionId: input.sessionId,
       questionPosition: liveState.currentQuestionPosition,
@@ -329,9 +328,7 @@ export class LiveQuizService {
       participantId: participant.id,
       userId: participant.userId,
       selectedOptionIndices: input.selectedOptionIndices,
-      submittedAt: nowIso,
-      clientTimestamp: input.clientTimestamp,
-      isWithinDeadline
+      clientTimestamp: input.clientTimestamp
     });
 
     if (this.transport) {
@@ -341,7 +338,7 @@ export class LiveQuizService {
         eventType: LiveQuizEventType.ANSWER_SUBMITTED,
         sessionId: input.sessionId,
         stateVersion: session.stateVersion,
-        timestamp: nowIso,
+        timestamp: submission.submittedAt,
         payload: {
           questionPosition: liveState.currentQuestionPosition,
           participantId: participant.id,
@@ -381,16 +378,17 @@ export class LiveQuizService {
       );
     }
 
-    // 4. Server-Authoritative Deadline check
+    // 4. Server-Authoritative Deadline pre-check
     if (!liveState.answerDeadlineAt) {
       throw new InvalidLiveStateTransitionError('No active answer deadline configured for current question.');
     }
-    const nowServerMs = Date.now();
+    const nowServerMs = typeof (this.repo as any).getCurrentTimeMs === 'function'
+      ? (this.repo as any).getCurrentTimeMs()
+      : Date.now();
     const deadlineMs = new Date(liveState.answerDeadlineAt).getTime();
     if (nowServerMs > deadlineMs) {
       throw new AnswerDeadlineExpiredError();
     }
-    const isWithinDeadline = nowServerMs <= deadlineMs;
 
     // Verify group belongs to session
     const groups = this.repo.listGroups(input.sessionId);
@@ -417,16 +415,12 @@ export class LiveQuizService {
       }
     }
 
-    const nowIso = new Date(nowServerMs).toISOString();
-
     const submission = this.repo.recordAnswerSubmission({
       sessionId: input.sessionId,
       questionPosition: liveState.currentQuestionPosition,
       questionId: question.id,
       sessionGroupId: input.groupId,
-      selectedOptionIndices: input.selectedOptionIndices,
-      submittedAt: nowIso,
-      isWithinDeadline
+      selectedOptionIndices: input.selectedOptionIndices
     });
 
     if (this.transport) {
@@ -436,7 +430,7 @@ export class LiveQuizService {
         eventType: LiveQuizEventType.ANSWER_SUBMITTED,
         sessionId: input.sessionId,
         stateVersion: session.stateVersion,
-        timestamp: nowIso,
+        timestamp: submission.submittedAt,
         payload: {
           questionPosition: liveState.currentQuestionPosition,
           sessionGroupId: input.groupId,

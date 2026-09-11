@@ -404,10 +404,10 @@ In accordance with BAREA architectural constraints (church-scale usage, cost, op
      - Session state transitions strictly follow: `LOBBY` -> `ACTIVE` -> `COMPLETED`.
      - Individual question lifecycle transitions strictly follow: `NOT_STARTED` -> `PREVIEW` (optional) -> `ANSWERING` -> `LOCKED` -> `COMPLETED`.
      - All mutations are strictly server-authoritative and can only be triggered by the authenticated host who owns the session. Non-hosts and unauthenticated callers fail closed with `NotSessionHostError` (403).
-  2. **Server-Authoritative Time & Deadlines**:
-     - Client clocks are untrusted. The question deadline is determined by the server upon opening as `openedAtUtc + timeLimitSeconds * 1000`.
-     - The answer acceptance window is enforced strictly at the database/repository level using authoritative server UTC time.
-     - Any submission received after the deadline is rejected with `AnswerDeadlineExpiredError` (400), regardless of client timestamps.
+   2. **Server-Authoritative Time & Deadlines**:
+      - Client clocks are untrusted. The question deadline is determined by the server upon opening as `openedAtUtc + timeLimitSeconds * 1000`.
+      - The answer acceptance window is enforced strictly at the database/repository level using authoritative server UTC time within the persistence transaction (`BEGIN IMMEDIATE`). An answer is persisted only if the fresh authoritative server time at the persistence boundary is at or before the persisted `answerDeadlineAt`. Stale service timestamps or client claims cannot win a deadline race.
+      - Any submission evaluated after the deadline at persistence is rejected with `AnswerDeadlineExpiredError` (400), creating zero persisted records, regardless of client timestamps or earlier service-level checks.
   3. **Optimistic Concurrency & Monotonic Versioning**:
      - Every state transition increments `stateVersion` monotonically.
      - State mutation actions accept an optional `expectedVersion`. Stale requests are rejected with `ConcurrencyConflictError` (409).

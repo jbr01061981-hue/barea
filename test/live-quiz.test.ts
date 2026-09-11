@@ -1079,6 +1079,58 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     }, DuplicateAnswerSubmissionError);
 
     assert.equal(getPersistedCount(), 1);
+
+    // 6. Group answer after deadline is rejected with zero persisted submissions
+    const groupSession = env.sessionService.createSession({
+      workspaceType: WorkspaceType.PERSONAL,
+      organizationId: orgId,
+      publishedQuizSnapshotId: snapshotId,
+      hostUserId: hostId,
+      participationMode: ParticipationMode.TEACHER_GROUP,
+      admissionPolicy: AdmissionPolicy.TEACHER_ASSIGNED
+    });
+    const group1 = env.sessionService.createGroup(groupSession.id, hostId, 'Team Lions');
+    env.liveQuizService.startLiveQuiz(groupSession.id, hostId);
+
+    // Artificially expire group session deadline in database
+    env.sharedDb.prepare(
+      'UPDATE session_live_states SET answer_deadline_at = ? WHERE session_id = ?'
+    ).run(pastDeadline, groupSession.id);
+
+    assert.throws(() => {
+      env.liveQuizService.submitGroupAnswer({
+        sessionId: groupSession.id,
+        hostUserId: hostId,
+        groupId: group1.id,
+        questionPosition: 1,
+        selectedOptionIndices: [0]
+      });
+    }, AnswerDeadlineExpiredError);
+
+    const getGroupPersistedCount = (): number => {
+      const row = env.sharedDb.prepare(
+        'SELECT count(*) as count FROM session_answers WHERE session_id = ?'
+      ).get(groupSession.id) as { count: number };
+      return row.count;
+    };
+    assert.equal(getGroupPersistedCount(), 0);
+
+    // 7. Group answer before deadline is accepted
+    env.sharedDb.prepare(
+      'UPDATE session_live_states SET answer_deadline_at = ? WHERE session_id = ?'
+    ).run(futureDeadline, groupSession.id);
+
+    const validGroupSub = env.liveQuizService.submitGroupAnswer({
+      sessionId: groupSession.id,
+      hostUserId: hostId,
+      groupId: group1.id,
+      questionPosition: 1,
+      selectedOptionIndices: [0]
+    });
+    assert.ok(validGroupSub);
+    assert.equal(validGroupSub.isWithinDeadline, true);
+    assert.equal(validGroupSub.sessionGroupId, group1.id);
+    assert.equal(getGroupPersistedCount(), 1);
   });
 
   await t.test('13. SSE & Service History Replay Canonical Projection Isolation (PR #11 Blocker Remediation)', async () => {
@@ -1257,6 +1309,208 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     assert.strictEqual(JSON.stringify(participantHistory).includes('correctOptionIndices'), false);
     assert.strictEqual(JSON.stringify(projectorHistory).includes('correctOptionIndices'), false);
     assert.ok(JSON.stringify(hostHistory).includes('correctOptionIndices'));
+  });
+
+  await t.test('14. Atomic Persistence-Boundary Deadline Enforcement & Concurrency Race Defense (PR #11 Blocker Remediation)', async () => {
+    const env = setupTestEnvironment();
+    const hostId = 'teacher_race_guard';
+    const orgId = derivePersonalTenantId(hostId);
+    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 3);
+
+    const session = env.sessionService.createSession({
+      workspaceType: WorkspaceType.PERSONAL,
+      organizationId: orgId,
+      publishedQuizSnapshotId: snapshotId,
+      hostUserId: hostId,
+      participationMode: ParticipationMode.INDIVIDUAL_AUTHENTICATED,
+      admissionPolicy: AdmissionPolicy.OPEN
+    });
+
+    const participantToken = env.sessionService.joinSession(session.id, {
+      userId: 'pupil_race_1',
+      providerType: 'GOOGLE',
+      providerSub: 'sub_race_1',
+      verifiedEmail: 'race1@test.org',
+      verifiedPhone: null,
+      displayName: 'Race Pupil'
+    });
+
+    const participant2Token = env.sessionService.joinSession(session.id, {
+      userId: 'pupil_race_2',
+      providerType: 'GOOGLE',
+      providerSub: 'sub_race_2',
+      verifiedEmail: 'race2@test.org',
+      verifiedPhone: null,
+      displayName: 'Race Pupil 2'
+    });
+
+    // Start live quiz -> Question 1 active, answering
+    env.liveQuizService.startLiveQuiz(session.id, hostId);
+
+    // Get deadline from live state
+    const liveRow = env.sharedDb.prepare(
+      'SELECT answer_deadline_at FROM session_live_states WHERE session_id = ?'
+    ).get(session.id) as { answer_deadline_at: string };
+    const deadlineMs = new Date(liveRow.answer_deadline_at).getTime();
+
+    const getAnswerCount = (pos: number = 1): number => {
+      const row = env.sharedDb.prepare(
+        'SELECT count(*) as count FROM session_answers WHERE session_id = ? AND question_position = ?'
+      ).get(session.id, pos) as { count: number };
+      return row.count;
+    };
+    assert.equal(getAnswerCount(), 0);
+
+    // 1. Mandatory Race-Boundary Regression Test:
+    // Model: service/pre-check: deadline still open
+    //        ↓ (logical delay / simulated passage of time)
+    //        persistence decision: deadline expired
+    //        ↓
+    //        submission MUST NOT be inserted
+    let serviceCheckOccurred = false;
+    env.sessionRepo.setClockForTesting(() => {
+      if (!serviceCheckOccurred) {
+        // First clock query: service pre-check (10 seconds before deadline)
+        serviceCheckOccurred = true;
+        return deadlineMs - 10_000;
+      }
+      // Subsequent clock query: inside persistence transaction (2 seconds after deadline)
+      return deadlineMs + 2_000;
+    });
+
+    assert.throws(() => {
+      env.liveQuizService.submitParticipantAnswer({
+        sessionId: session.id,
+        token: participantToken.token,
+        questionPosition: 1,
+        selectedOptionIndices: [0]
+      });
+    }, AnswerDeadlineExpiredError);
+
+    // CRITICAL: Verify zero rows inserted even though service pre-check passed!
+    assert.equal(getAnswerCount(), 0);
+    env.sessionRepo.setClockForTesting(null);
+
+    // 2. Teacher-Group Race-Boundary Regression Test:
+    const groupSession = env.sessionService.createSession({
+      workspaceType: WorkspaceType.PERSONAL,
+      organizationId: orgId,
+      publishedQuizSnapshotId: snapshotId,
+      hostUserId: hostId,
+      participationMode: ParticipationMode.TEACHER_GROUP,
+      admissionPolicy: AdmissionPolicy.TEACHER_ASSIGNED
+    });
+    const groupA = env.sessionService.createGroup(groupSession.id, hostId, 'Team Alpha');
+    env.liveQuizService.startLiveQuiz(groupSession.id, hostId);
+
+    const groupLiveRow = env.sharedDb.prepare(
+      'SELECT answer_deadline_at FROM session_live_states WHERE session_id = ?'
+    ).get(groupSession.id) as { answer_deadline_at: string };
+    const groupDeadlineMs = new Date(groupLiveRow.answer_deadline_at).getTime();
+
+    let groupServiceCheckOccurred = false;
+    env.sessionRepo.setClockForTesting(() => {
+      if (!groupServiceCheckOccurred) {
+        groupServiceCheckOccurred = true;
+        return groupDeadlineMs - 5_000; // Open at service check
+      }
+      return groupDeadlineMs + 3_000; // Expired at persistence check
+    });
+
+    assert.throws(() => {
+      env.liveQuizService.submitGroupAnswer({
+        sessionId: groupSession.id,
+        hostUserId: hostId,
+        groupId: groupA.id,
+        questionPosition: 1,
+        selectedOptionIndices: [0]
+      });
+    }, AnswerDeadlineExpiredError);
+
+    const getGroupAnswerCount = (): number => {
+      const row = env.sharedDb.prepare(
+        'SELECT count(*) as count FROM session_answers WHERE session_id = ?'
+      ).get(groupSession.id) as { count: number };
+      return row.count;
+    };
+    assert.equal(getGroupAnswerCount(), 0);
+    env.sessionRepo.setClockForTesting(null);
+
+    // 3. Stale caller-supplied submittedAt or clientTimestamp cannot bypass deadline at persistence
+    // Even if caller passes a fake past timestamp, the repository derives fresh server time
+    env.sessionRepo.setClockForTesting(() => deadlineMs + 5_000);
+    assert.throws(() => {
+      env.sessionRepo.recordAnswerSubmission({
+        sessionId: session.id,
+        questionPosition: 1,
+        questionId: 'q_fake',
+        userId: 'pupil_race_1',
+        selectedOptionIndices: [0],
+        submittedAt: new Date(deadlineMs - 60_000).toISOString(), // Stale claim before deadline
+        clientTimestamp: new Date(deadlineMs - 60_000).toISOString()
+      });
+    }, AnswerDeadlineExpiredError);
+    assert.equal(getAnswerCount(), 0);
+    env.sessionRepo.setClockForTesting(null);
+
+    // 4. Concurrency / First-Write-Wins Verification:
+    // Set clock before deadline so submissions are in valid window
+    env.sessionRepo.setClockForTesting(() => deadlineMs - 5_000);
+
+    const firstSub = env.liveQuizService.submitParticipantAnswer({
+      sessionId: session.id,
+      token: participantToken.token,
+      questionPosition: 1,
+      selectedOptionIndices: [0]
+    });
+    assert.ok(firstSub);
+    assert.equal(firstSub.isWithinDeadline, true);
+    assert.equal(getAnswerCount(), 1);
+
+    // Competing/duplicate submission by same participant must be rejected
+    assert.throws(() => {
+      env.liveQuizService.submitParticipantAnswer({
+        sessionId: session.id,
+        token: participantToken.token,
+        questionPosition: 1,
+        selectedOptionIndices: [1]
+      });
+    }, DuplicateAnswerSubmissionError);
+    assert.equal(getAnswerCount(), 1);
+
+    // Second participant CAN submit during open deadline
+    const secondSub = env.liveQuizService.submitParticipantAnswer({
+      sessionId: session.id,
+      token: participant2Token.token,
+      questionPosition: 1,
+      selectedOptionIndices: [2]
+    });
+    assert.ok(secondSub);
+    assert.equal(secondSub.isWithinDeadline, true);
+    assert.equal(getAnswerCount(), 2);
+
+    // 5. No late submission can be persisted after authoritative deadline
+    env.sessionRepo.setClockForTesting(() => deadlineMs + 1_000);
+    const participant3Token = env.sessionService.joinSession(session.id, {
+      userId: 'pupil_race_3',
+      providerType: 'GOOGLE',
+      providerSub: 'sub_race_3',
+      verifiedEmail: 'race3@test.org',
+      verifiedPhone: null,
+      displayName: 'Race Pupil 3'
+    });
+
+    assert.throws(() => {
+      env.liveQuizService.submitParticipantAnswer({
+        sessionId: session.id,
+        token: participant3Token.token,
+        questionPosition: 1,
+        selectedOptionIndices: [0]
+      });
+    }, AnswerDeadlineExpiredError);
+    // Count remains 2
+    assert.equal(getAnswerCount(), 2);
+    env.sessionRepo.setClockForTesting(null);
   });
 
 });
