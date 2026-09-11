@@ -62,18 +62,27 @@ export class SessionService {
     return this.repo.findSessionById(sessionId);
   }
 
-  getPublicInfo(rawRoomCode: string, clientIp?: string): SessionPublicInfo {
-    if (this.rateLimiter && clientIp) {
+  getPublicInfo(rawRoomCode: string, clientIp?: string | null): SessionPublicInfo {
+    if (this.rateLimiter) {
       this.rateLimiter.checkUnauthenticatedRequest(clientIp);
-      this.rateLimiter.checkRoomLookup(clientIp);
+      this.rateLimiter.checkRoomLookup(rawRoomCode, clientIp);
     }
 
-    const validatedCode = normalizeAndValidateRoomCode(rawRoomCode);
+    let validatedCode: RoomCode;
+    try {
+      validatedCode = normalizeAndValidateRoomCode(rawRoomCode);
+    } catch (err) {
+      if (this.rateLimiter) {
+        this.rateLimiter.recordFailedLookup(rawRoomCode, clientIp);
+      }
+      throw err;
+    }
+
     try {
       return this.repo.getPublicInfo(validatedCode);
     } catch (err) {
-      if (err instanceof SessionNotFoundError && this.rateLimiter && clientIp) {
-        this.rateLimiter.recordFailedLookup(clientIp);
+      if (err instanceof SessionNotFoundError && this.rateLimiter) {
+        this.rateLimiter.recordFailedLookup(validatedCode, clientIp);
       }
       throw err;
     }
@@ -89,7 +98,7 @@ export class SessionService {
       verifiedPhone: string | null;
       displayName: string;
     },
-    clientIp?: string
+    clientIp?: string | null
   ): { participant: AuthenticatedParticipant; token: ParticipantToken } {
     if (this.rateLimiter) {
       this.rateLimiter.checkJoinMutation(participant.userId);

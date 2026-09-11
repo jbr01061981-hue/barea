@@ -825,6 +825,40 @@ The practical deployment contract designed to satisfy ADR-012 establishes:
 - **Infrastructure Status**: **NOT YET PROVISIONED**.
 - **Production Hosting Target**: **SELECTED — CLOUDFLARE EDGE + CLOUDFLARE TUNNEL (`cloudflared`)**.
 - **Edge Technology**: **CLOUDFLARE TUNNEL / EDGE**.
-- **Application Code Status**: ZERO application code changed in `src/`. Checkpoint remains at `eb8d4160ec2f0fb99f46ffa5b2153cc477e90976`.
-- **Merge Status**: Branch `barea-006-share-join` remains unmerged. No self-merge to `main`. Zero scope creep into BAREA-007.
 - **Production Prerequisite**: Live production release requires physical provisioning of the Cloudflare Tunnel, DNS/TLS routing, and deployment secrets before IP-based rate-limit differentiation can be activated.
+
+---
+
+## 11. Milestone BAREA-006: Pre-Deployment Client-IP Semantics & Safe Abuse-Control Correction
+
+### A. Context & Architectural Defect Remediation
+- **Identified Defect**: Returning the deterministic fallback `'127.0.0.1'` in `resolveServerClientIp()` during pre-deployment caused `InMemoryRateLimiter` to collapse all unauthenticated clients into a single shared IP bucket. A single attacker probing invalid room codes could trip the bucket and DoS legitimate session lookups for the entire congregation.
+- **Architectural Correction**:
+  1. **Explicit Client IP Semantics (`string | null`)**:
+     - In `src/app/teacher/review/db.ts`, `resolveServerClientIp()` returns `Promise<string | null>`.
+     - In pre-deployment runtime where no verified edge-to-origin network boundary exists, it returns `null` (unknown/unavailable).
+     - It never invents `'127.0.0.1'` as a client identity.
+     - Untrusted forwarding headers (`CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`, `X-Barea-*`) remain strictly ignored.
+     - Test fixture overrides (`setTrustedClientIpForTesting`) remain strictly blocked in production mode.
+  2. **Safe Pre-Deployment Abuse-Control (`InMemoryRateLimiter`)**:
+     - Room lookup failure throttling is keyed by the server-validated, normalized target `roomCode` (`maxFailedLookupsPerRoomCodePerMinute: 15`).
+     - Lookups for an active legitimate session succeed with 0 failures, ensuring legitimate participants never trip the failure limiter.
+     - An attacker probing random or non-existent room codes only throttles the specific target code being attacked; unrelated legitimate room sessions remain 100% accessible.
+     - No global unauthenticated rate-limit bucket exists that an attacker could exhaust to block unrelated sessions.
+     - IP-based rate limiting (15 failed lookups/min per IP, 60/min per subnet, 100 unauth requests/10s per IP) is applied conditionally *only* when an authenticated/trusted client IP string is available.
+  3. **Authenticated Join Throttling Unaffected**:
+     - `checkJoinMutation(userId)` remains strictly keyed by server-authoritative authenticated `userId` (1 mutation / 5s).
+     - 50+ participants behind church Wi-Fi NAT join seamlessly with zero per-IP seat quotas.
+  4. **Deferred Cloudflare Integration**:
+     - Cloudflare provisioning is explicitly deferred until MVP application completion.
+     - No Cloudflare infrastructure is provisioned now.
+     - Real client-IP provenance will be experimentally established in a fresh environment after MVP completion.
+
+### B. Updated Security Invariant Verification
+1. `resolveServerClientIp()` returns `null` when direct, ignoring all client-supplied forwarding headers.
+2. Configured-but-direct attack test confirms forwarding headers are ignored even if proxy environment variables are set.
+3. Test fixture overrides fail closed in production (`NODE_ENV === 'production'`).
+4. Attacker probing invalid codes is throttled on the probed code, while legitimate session lookups succeed without interruption.
+5. 50+ church NAT participants join successfully without IP exhaustion.
+6. Authenticated user join throttling (`1 / 5s / userId`) prevents duplicate mutation abuse.
+7. Zero BAREA-007 scope introduced (no WebSockets, SSE, timers, or live quiz transitions).

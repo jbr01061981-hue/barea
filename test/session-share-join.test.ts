@@ -620,7 +620,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     // ADV-NAT-02: Rapid failed probes from an attacker IP are throttled
     const attackerIp = '198.51.100.77';
     for (let i = 0; i < 15; i++) {
-      rateLimiter.recordFailedLookup(attackerIp);
+      rateLimiter.recordFailedLookup('ZZZZZZ', attackerIp);
     }
 
     assert.throws(() => {
@@ -768,7 +768,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
 
     // 4. Church NAT: 50 participants can join through joinSessionAction from same NAT IP without IP seat quota
     setTrustedClientIpForTesting('203.0.113.88');
-    for (let i = 1; i <= 20; i++) {
+    for (let i = 1; i <= 50; i++) {
       setAuthenticatedUserContext({
         userId: `church_nat_member_${i}`,
         providerType: 'GOOGLE',
@@ -785,7 +785,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
       assert.ok(joinRes.data?.token);
     }
 
-    // Reset test client IP hook
+    // Reset test client IP hook (return to unconfigured pre-deployment state where clientIp is null)
     setTrustedClientIpForTesting(null);
 
     // 5. PROVENANCE & DIRECT ATTACKER HEADER SPOOFING:
@@ -799,14 +799,14 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     });
 
     const directResolvedIp = await resolveServerClientIp();
-    // Must fail closed to server fallback '127.0.0.1', completely ignoring caller-controlled headers
-    assert.equal(directResolvedIp, '127.0.0.1');
+    // Must resolve to null (unavailable/unknown), completely ignoring caller-controlled headers and NOT inventing 127.0.0.1
+    assert.equal(directResolvedIp, null);
 
     // 6. CONFIGURED-BUT-DIRECT DEPLOYMENT ATTACK TEST:
     // Even if operator configured BAREA_TRUSTED_PROXY=cloudflare or reverse-proxy,
     // an attacker connecting directly cannot establish network provenance.
     // The application MUST NOT trust the forwarding header without verifiable network provenance,
-    // marking forwarding headers NOT USED and remaining locked to authoritative server fallback '127.0.0.1'.
+    // marking forwarding headers NOT USED and remaining locked to null.
     process.env.BAREA_TRUSTED_PROXY = 'cloudflare';
     setMockRequestHeadersForTesting({
       'cf-connecting-ip': '203.0.113.100',
@@ -814,7 +814,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
       'x-real-ip': '203.0.113.102'
     });
     const cfDirectResolved = await resolveServerClientIp();
-    assert.equal(cfDirectResolved, '127.0.0.1');
+    assert.equal(cfDirectResolved, null);
 
     process.env.BAREA_TRUSTED_PROXY = 'reverse-proxy';
     setMockRequestHeadersForTesting({
@@ -823,21 +823,23 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
       'x-real-ip': '203.0.113.202'
     });
     const proxyDirectResolved = await resolveServerClientIp();
-    assert.equal(proxyDirectResolved, '127.0.0.1');
+    assert.equal(proxyDirectResolved, null);
 
     // 7. HEADER ATTACKS & MALFORMED PAYLOADS:
-    // Conflicting headers, multiple XFF values, whitespace/SQL injection payloads fail closed to 127.0.0.1
+    // Conflicting headers, multiple XFF values, whitespace/SQL injection payloads return null
     setMockRequestHeadersForTesting({
       'cf-connecting-ip': 'invalid-ip-string; drop table',
       'x-forwarded-for': '198.51.100.1, 203.0.113.50, malformed-payload',
       'x-real-ip': '   203.0.113.99  \r\n'
     });
     const malformedResolved = await resolveServerClientIp();
-    assert.equal(malformedResolved, '127.0.0.1');
+    assert.equal(malformedResolved, null);
 
-    // 8. RATE-LIMIT BUCKET SPOOF RESISTANCE:
-    // Attacker rotating headers across 15 requests cannot escape rate-limit bucket
-    // because all requests resolve authoritatively to 127.0.0.1
+    // 8. PRE-DEPLOYMENT SAFE RATE-LIMITING & ISOLATION:
+    // In pre-deployment (clientIp === null), rate limiting is scoped to the target roomCode
+    // rather than an invented shared IP (127.0.0.1).
+    // Attacker probing code '222222' across 15 requests is throttled on '222222',
+    // but CANNOT DoS legitimate sessions (session.roomCode remains fully accessible).
     rateLimiter.reset();
     for (let i = 0; i < 15; i++) {
       setMockRequestHeadersForTesting({
@@ -847,16 +849,51 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
       });
       await lookupRoomAction('222222');
     }
-    // Attempting to lookup room with yet another spoofed header is blocked by RATE_LIMIT_EXCEEDED
-    setMockRequestHeadersForTesting({
-      'cf-connecting-ip': '198.51.100.99',
-      'x-forwarded-for': '198.51.100.99',
-      'x-real-ip': '198.51.100.99'
+
+    // 16th probe for '222222' is throttled:
+    const blockedProbe = await lookupRoomAction('222222');
+    assert.equal(blockedProbe.success, false);
+    if (!blockedProbe.success) {
+      assert.equal(blockedProbe.error.code, 'RATE_LIMIT_EXCEEDED');
+      assert.equal(blockedProbe.error.httpStatus, 429);
+    }
+
+    // CRITICAL ISOLATION: Legitimate session lookup is completely unaffected by attacker's probes!
+    const legitLookupAfterAttacker = await lookupRoomAction(session.roomCode);
+    assert.equal(legitLookupAfterAttacker.success, true);
+    if (legitLookupAfterAttacker.success) {
+      assert.equal(legitLookupAfterAttacker.data.quizTitle, 'Faith Quiz');
+    }
+
+    // 9. Authenticated join throttling: 1 / 5s per userId
+    setAuthenticatedUserContext({
+      userId: 'user_throttle_test',
+      providerType: 'GOOGLE',
+      providerSub: 'sub_throttle',
+      email: 'throttle@church.org',
+      emailVerified: true,
+      phone: null,
+      phoneVerified: false,
+      displayName: 'Throttle Test User'
     });
-    const spoofEvadeAttempt = await lookupRoomAction(session.roomCode);
-    assert.equal(spoofEvadeAttempt.success, false);
-    if (!spoofEvadeAttempt.success) {
-      assert.equal(spoofEvadeAttempt.error.code, 'RATE_LIMIT_EXCEEDED');
+    const firstJoin = await joinSessionAction(session.roomCode);
+    assert.equal(firstJoin.success, true);
+    const rapidSecondJoin = await joinSessionAction(session.roomCode);
+    assert.equal(rapidSecondJoin.success, false);
+    if (!rapidSecondJoin.success) {
+      assert.equal(rapidSecondJoin.error.code, 'RATE_LIMIT_EXCEEDED');
+      assert.equal(rapidSecondJoin.error.httpStatus, 429);
+    }
+
+    // 10. Test hook isolation: client IP overrides are strictly blocked in production
+    const origNodeEnv = process.env.NODE_ENV;
+    try {
+      (process.env as Record<string, string | undefined>).NODE_ENV = 'production';
+      assert.throws(() => {
+        setTrustedClientIpForTesting('1.2.3.4');
+      }, /Forbidden/);
+    } finally {
+      (process.env as Record<string, string | undefined>).NODE_ENV = origNodeEnv;
     }
 
     // Clean up test environment

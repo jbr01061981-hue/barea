@@ -283,7 +283,7 @@ function parseValidIp(candidate: string): string | null {
  * lookups/min, /24 subnet containment, 1 join mutation / 5s per authenticated user ID)
  * and imposes zero participant seat quotas.
  */
-export async function resolveServerClientIp(): Promise<string> {
+export async function resolveServerClientIp(): Promise<string | null> {
   // Test fixture override (strictly guarded to test/dev environment)
   if (mockClientIp !== null) {
     if (!isTestEnvironment() && !isDevelopmentEnvironment()) {
@@ -292,11 +292,17 @@ export async function resolveServerClientIp(): Promise<string> {
     return mockClientIp;
   }
 
-  // Forwarding headers are marked NOT USED:
-  // Without socket-level or network-level provenance proof, forwarding headers
-  // (CF-Connecting-IP, X-Forwarded-For, X-Real-IP) are caller-controlled and cannot
-  // be trusted to select rate-limiting identity.
+  // Pre-deployment MVP boundary:
+  // In the current MVP deployment, no trusted edge proxy boundary (such as Cloudflare Tunnel)
+  // has been established or cryptographically proven at the network layer.
+  // Forwarding headers (CF-Connecting-IP, X-Forwarded-For, X-Real-IP) are caller-controlled
+  // and cannot be trusted to select rate-limiting identity.
   //
-  // Returns deterministic, server-selected authoritative fallback address:
-  return '127.0.0.1';
+  // Rather than manufacturing a false client IP ('127.0.0.1') which would collapse all unauthenticated
+  // users into a single shared rate-limiting bucket and create a congregation-wide denial of service,
+  // the client IP is explicitly returned as unavailable (null).
+  //
+  // Rate limiting before edge provenance is established relies on server-authoritative room-code
+  // failure throttling and authenticated user ID throttling.
+  return null;
 }
