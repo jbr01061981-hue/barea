@@ -1,188 +1,277 @@
-# AGY PROMPT — BAREA-006 FINAL APPLICATION CORRECTION BEFORE MERGE
+# AGY PROMPT — BAREA-006 EXACT-ROOM ABUSE-CONTROL CORRECTION
 
 Repository: `jbr01061981-hue/barea`
 Branch: `barea-006-share-join`
-PR: #8
+PR: `#8`
+Current application checkpoint: `eb8d4160ec2f0fb99f46ffa5b2153cc477e90976`
+Current correction head: `d43ef0f`
 
 ## CURRENT DECISION
 
-ChatGPT independently reviewed the updated BAREA-006 application correction at commit `205868e`.
+ChatGPT independently reviewed PR #8 at `d43ef0f` and found a remaining release blocker.
 
-**Merge: NO-GO for now.**
+**MERGE: NO-GO FOR NOW.**
 
-The previous correction correctly eliminated the fabricated `127.0.0.1` client identity and changed unavailable client IP provenance to `null`. That part is accepted.
+The previous correction correctly removed the fabricated `127.0.0.1` client identity and the shared per-room failure bucket. However, that correction now leaves unauthenticated public room lookup without a meaningful pre-deployment abuse-control mechanism when client-IP provenance is unavailable.
 
-However, the new unauthenticated lookup abuse-control mechanism is keyed by the **target room code**. This creates a remaining denial-of-service boundary:
+The next correction must address that gap without restoring either of the two rejected designs:
 
-> An attacker who knows the room code of a legitimate active session can deliberately generate failed lookup attempts for that exact room code and exhaust the shared per-room failure bucket, potentially blocking legitimate users from accessing that session.
-
-The current evidence that attacking `222222` does not block an unrelated legitimate room is insufficient. The security property that must be demonstrated is stronger: **an attacker must not be able to exhaust the lookup/admission control for a legitimate room merely by knowing or targeting its room code.**
-
-This is a material BAREA-006 blocker.
-
-Cloudflare remains explicitly deferred until MVP completion. Do not provision infrastructure now.
+- no fake universal IP identity;
+- no shared per-room failure budget.
 
 ## PRIMARY OBJECTIVE
 
-Make the smallest secure application-level correction that removes the per-room denial-of-service weakness without restoring fake client IP provenance and without creating a new congregation-wide shared limiter.
+Design and implement the **smallest defensible pre-deployment abuse-control mechanism** for unauthenticated public room lookup that:
 
-Do not redesign unrelated BAREA-006 functionality.
+1. does not invent a client IP;
+2. does not trust caller-supplied forwarding headers;
+3. does not use the target room code as a shared limiter key;
+4. cannot be exhausted by one attacker to block legitimate access to the targeted room;
+5. cannot be exhausted by one attacker to create a congregation-wide denial of service;
+6. remains bounded in memory/resource use;
+7. preserves 50+ church-NAT participation;
+8. preserves authenticated `userId` throttling;
+9. remains compatible with future Cloudflare client-IP provenance;
+10. does not introduce BAREA-007 behavior.
 
 ## NON-NEGOTIABLE RULES
 
 1. Do NOT provision Cloudflare, Cloudflare Tunnel, Workers, DNS, or production infrastructure now.
 2. Do NOT restore a caller-supplied `clientIp` parameter.
-3. Do NOT trust `CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`, `X-Barea-*`, or any other incoming forwarding header in the current application deployment.
-4. Do NOT treat `127.0.0.1` as the actual identity of every remote client.
-5. Do NOT claim that environment variables establish network provenance.
-6. Do NOT weaken authenticated participant throttling: authenticated join throttling must remain keyed by server-authoritative authenticated `userId`.
-7. Do NOT introduce a successful-participant-per-IP quota.
-8. Church NAT scalability must remain intact.
-9. Do NOT introduce a new global unauthenticated rate-limit bucket that can be exhausted by one attacker and thereby block the entire congregation.
-10. Do NOT replace the per-room bucket with another attacker-shareable key that allows one caller to exhaust protection for an unrelated legitimate participant/session.
-11. Do NOT add HMAC, static secret headers, custom edge attestation, Workers, or other cryptographic infrastructure merely to work around the deferred deployment boundary.
-12. Do NOT implement BAREA-007.
-13. Preserve tenant isolation, authorization, admission policy enforcement, session expiry, error sanitization, persistence integrity, and all existing BAREA-006 behavior unrelated to this correction.
+3. Do NOT trust `CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`, `X-Barea-*`, or arbitrary forwarding headers in the current deployment.
+4. Do NOT use `127.0.0.1` or another constant as the identity of all remote callers.
+5. Do NOT restore `roomCodeFailedLookups` or any equivalent target-room shared failure bucket.
+6. Do NOT create a new global unauthenticated bucket shared across the congregation/deployment.
+7. Do NOT create a limiter keyed solely by room/session code.
+8. Do NOT impose a successful-participant-per-IP quota.
+9. Do NOT weaken authenticated join throttling keyed by server-authoritative `userId`.
+10. Do NOT add HMAC, custom attestation, static secret headers, Workers, or deployment-specific cryptographic machinery solely to solve this pre-deployment issue.
+11. Do NOT implement BAREA-007.
+12. Preserve tenant isolation, authorization, admission policy enforcement, session expiry, error sanitization, persistence integrity, and unrelated BAREA-006 functionality.
 
-## REQUIRED DESIGN CORRECTION
+## REQUIRED INVESTIGATION BEFORE EDITING
 
-Remove or redesign the current **shared per-room failed-lookup limiter** so that knowledge of a legitimate room code cannot itself become a denial-of-service capability.
+Inspect the actual current implementation and trace:
 
-The corrected pre-deployment behavior must satisfy all of these properties:
+`lookupRoomAction -> resolveServerClientIp -> SessionService.getPublicInfo -> RateLimiter -> repository`
 
-- Missing/untrusted client IP remains explicitly unavailable (`null` or equivalent), never a fabricated address.
-- Caller-controlled forwarding headers remain untrusted.
-- No global unauthenticated bucket exists.
-- No shared per-room failure bucket can be exhausted by an attacker to block legitimate access to that room.
-- Authenticated join throttling remains keyed by server-authoritative `userId`.
-- 50+ legitimate participants behind one church NAT remain able to participate.
-- An attacker targeting one room cannot consume the same abuse-control budget used by unrelated legitimate sessions.
-- The mechanism must remain server-authoritative and must not depend on a caller-selected arbitrary identifier.
+Inspect:
 
-### IMPORTANT: inspect the actual application flow before choosing the mechanism
+- `src/app/session/actions.ts`
+- `src/app/teacher/review/db.ts`
+- `src/service/session-service.ts`
+- `src/service/rate-limiter.ts`
+- `test/session-share-join.test.ts`
 
-Do not blindly implement another guessed key.
+Also inspect the actual browser `/join` entry flow and determine whether BAREA already has an appropriate server-issued session/device identifier that can be used as an abuse-control identity.
 
-Trace the actual BAREA-006 flow through:
+Do not assume a cookie, token, or session identifier exists. Verify it.
 
+## DESIGN REQUIREMENTS
+
+The selected mechanism must distinguish **abuse-control identity** from **authentication identity**.
+
+It must NOT become authentication or authorization.
+
+A promising direction, if supported by the actual application flow, is a **server-issued ephemeral anonymous abuse-control token**:
+
+```text
+/join page request
+   -> server creates random opaque anti-abuse identifier
+   -> identifier stored in server-set cookie
+   -> public room lookup keyed by that server-issued identifier
+   -> identifier expires and is bounded/evicted
+```
+
+But this is only a candidate. Do not implement it blindly.
+
+Before choosing any design, explicitly analyze:
+
+- attacker clearing/replacing cookies;
+- attacker opening many tabs/devices;
+- attacker creating unlimited fresh identities;
+- token theft/replay;
+- shared church devices;
+- multiple people sharing a NAT;
+- memory exhaustion;
+- state eviction;
+- anonymous identity rotation;
+- whether authenticated users should stop using anonymous abuse controls after authentication;
+- failure behavior when the limiter store is full/unavailable;
+- whether a bounded secondary control is possible without creating a global congregation-wide kill switch.
+
+If you conclude that no safe pre-deployment mechanism can be implemented without a trusted network identity or equivalent server-authoritative caller identity, **STOP and report that conclusion**. Do not manufacture a false guarantee.
+
+## CORE SECURITY PROPERTY
+
+The security property is NOT merely “room A does not block room B.”
+
+The required property is:
+
+> **An attacker who knows a legitimate room code must not be able to consume a shared abuse-control budget and thereby prevent a legitimate participant from accessing that same room.**
+
+Therefore, the attack scenario must be explicitly tested:
+
+```text
+attacker knows LEGITIMATE_ROOM_CODE
+        |
+        +--> repeated failed/abusive lookup requests
+        |
+        +--> legitimate participant then looks up LEGITIMATE_ROOM_CODE
+
+REQUIRED: legitimate lookup remains available.
+```
+
+## RATE-LIMITER REQUIREMENTS
+
+### Client IP semantics
+
+Keep:
+
+```ts
+resolveServerClientIp(): Promise<string | null>
+```
+
+where:
+
+- `string` means genuinely trusted server-derived provenance;
+- `null` means unavailable/untrusted provenance.
+
+Normal MVP runtime must resolve to `null` until the future Cloudflare deployment proves a trusted client-IP path.
+
+### Authenticated path
+
+Keep authenticated join throttling isolated by server-authoritative user identity:
+
+- `checkJoinMutation(userId)` = existing approved `1 / 5s` (or explicitly documented equivalent).
+
+### Unauthenticated lookup path
+
+The pre-deployment mechanism must:
+
+- not use fake IP identity;
+- not use target room code as a shared budget;
+- not use a global anonymous bucket;
+- prevent one attacker from consuming the same budget as a legitimate unrelated caller/session;
+- remain bounded and evictable;
+- clearly document what abuse protection is deferred to the future Cloudflare deployment.
+
+## BOUNDED RESOURCE REQUIREMENTS
+
+If you introduce anonymous abuse-control state, define exact limits.
+
+For example, document:
+
+- maximum active identities;
+- maximum entries per identity;
+- expiry duration;
+- cleanup/eviction policy;
+- behavior when capacity is reached;
+- whether requests without an abuse-control token are allowed, throttled, or rejected;
+- why capacity exhaustion cannot become a global denial-of-service primitive.
+
+Do not implement unbounded `Map` growth.
+
+## TESTS REQUIRED
+
+Add/update focused adversarial tests using the actual production services.
+
+At minimum:
+
+### `ADV-SJ-NEW-01` — Exact-room DoS isolation
+
+An attacker repeatedly targets the **exact room code of a legitimate active session**.
+
+Prove that legitimate lookup/access to that same session remains available.
+
+### `ADV-SJ-NEW-02` — Cross-room isolation
+
+Attack room A repeatedly.
+
+Prove legitimate room B remains available.
+
+### `ADV-SJ-NEW-03` — No fake IP
+
+Without trusted provenance, `resolveServerClientIp()` returns `null`, never `127.0.0.1`.
+
+### `ADV-SJ-NEW-04` — Header spoof resistance
+
+Caller-controlled `CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`, `X-Barea-*` cannot establish or rotate abuse-control identity.
+
+### `ADV-SJ-NEW-05` — Identity rotation resistance
+
+A caller must not be able to trivially create unlimited fresh abuse-control identities to bypass every limit.
+
+Test cookie clearing/replacement or equivalent identity rotation as applicable to the chosen mechanism.
+
+### `ADV-SJ-NEW-06` — Bounded memory/state
+
+Repeated anonymous activity cannot grow the limiter state without bound.
+
+Verify eviction/expiry and a defined capacity limit.
+
+### `ADV-SJ-NEW-07` — Church NAT scalability
+
+At least 50 legitimate participants using one church NAT must be able to use the designed flow without a successful-participant-per-IP quota.
+
+### `ADV-SJ-NEW-08` — Authenticated user throttling
+
+Two different authenticated users remain independently throttled by `userId`.
+
+### `ADV-SJ-NEW-09` — Limiter exhaustion behavior
+
+Force the anonymous limiter to its capacity and prove it does not create a hidden congregation-wide kill switch or block unrelated legitimate sessions.
+
+### `ADV-SJ-NEW-10` — Existing security regressions
+
+Tenant isolation, restricted admission, session expiry, error sanitization, room-code validation, and BAREA-007 quarantine all remain intact.
+
+The exact-room DoS test is mandatory. A random/nonexistent room test alone is insufficient.
+
+## IMPORTANT TEST QUALITY RULE
+
+Do not build a test around an invented cookie/token abstraction that is not present in the real application path.
+
+If a server-issued anonymous identity is selected, the test must exercise the actual mechanism through the real `/join`/Server Action flow or an explicitly documented equivalent server entry point.
+
+Do not claim production-path coverage if the test bypasses the mechanism under review.
+
+## IMPLEMENTATION SCOPE
+
+Keep changes narrow and type-safe.
+
+Likely files:
+
+- `src/app/teacher/review/db.ts`
 - `src/app/session/actions.ts`
 - `src/service/session-service.ts`
 - `src/service/rate-limiter.ts`
-- `src/app/teacher/review/db.ts`
-- the existing BAREA-006 tests
+- focused BAREA-006 tests
+- relevant security documentation/report
 
-Determine exactly what constitutes:
-
-1. room-code validation;
-2. failed lookup;
-3. successful public session lookup;
-4. authenticated join;
-5. admission authorization;
-6. rate-limit state mutation.
-
-Then choose the **smallest defensible pre-deployment design**.
-
-A viable design may, for example, use a server-generated/request-derived control mechanism that does not create a shared budget for a target room, or may reduce the unauthenticated lookup limiter to a narrowly scoped mechanism that cannot deny legitimate sessions. These are examples only; select the design based on the actual code and threat model.
-
-Do NOT use a room code itself as the shared failure-budget key if doing so permits the exact-room DoS described above.
-
-If no safe unauthenticated abuse-control mechanism can be implemented without a trusted network identity or another server-authoritative per-caller identity, **STOP and report that conclusion instead of inventing a weak substitute**. In that case, document the exact deployment dependency and do not claim merge readiness.
-
-## SERVER CLIENT-IP API
-
-Keep the corrected semantics from the previous task.
-
-`resolveServerClientIp()` must represent unavailable provenance explicitly, such as `Promise<string | null>`:
-
-- `string` means an actually trusted server-derived client identity;
-- `null` means client IP provenance is not available/trusted in the current deployment.
-
-Normal MVP requests must resolve to unknown, not `127.0.0.1`.
-
-Test/development fixtures may continue to provide explicit test values, but they must remain strictly guarded from production and must never be sourced from incoming request headers.
-
-## RATE LIMITER REQUIREMENTS
-
-Preserve:
-
-- authenticated join mutation: `1 / 5s / authenticated userId`.
-
-Do NOT feed fake IPs into IP-specific limiters.
-
-For public unauthenticated room lookup, the corrected mechanism must be evaluated against these adversarial cases:
-
-### Exact-room attack
-
-One attacker knows the legitimate room code and repeatedly causes failed lookup attempts against that exact code.
-
-**Required result:** the attacker cannot exhaust a shared budget that prevents legitimate participants from looking up/accessing that session.
-
-### Cross-room attack
-
-One attacker attacks room A repeatedly.
-
-**Required result:** legitimate access to unrelated room B remains unaffected.
-
-### Church NAT
-
-At least 50 legitimate participants share one public NAT address.
-
-**Required result:** legitimate participants remain able to perform the designed lookup/join flow; no successful-participant-per-IP quota is introduced.
-
-### Bucket hopping
-
-An attacker varies any caller-controlled room code, header, query parameter, cookie, or other arbitrary identifier available to evade the selected limiter.
-
-**Required result:** the mechanism is not trivially defeated by attacker-controlled key rotation.
-
-Document precisely:
-
-- what key/state is used;
-- where it is generated or derived;
-- why the attacker cannot select/rotate it to evade the control;
-- why one attacker cannot consume protection for unrelated legitimate sessions;
-- what abuse protection remains deferred until trusted edge provenance exists.
+Do not modify unrelated BAREA-001 through BAREA-005 application behavior.
 
 ## FUTURE CLOUDFLARE BOUNDARY
 
-Keep this architectural boundary unchanged:
+Keep the deployment distinction explicit:
 
 ```text
 CURRENT MVP
 public request
-    -> Next.js application
-    -> no trusted proxy provenance
-    -> client IP = unavailable/unknown
+    -> BAREA application
+    -> client-IP provenance unavailable
+    -> bounded pre-deployment abuse-control identity
 
-FUTURE DEPLOYMENT
+FUTURE MVP DEPLOYMENT
 real client
     -> Cloudflare Edge
-    -> trusted/private origin boundary
+    -> trusted deployment boundary
     -> experimentally verified client-IP metadata
     -> resolveServerClientIp()
-    -> IP-based rate limiter
+    -> IP/subnet rate limiting
 ```
 
 Do not implement the future Cloudflare path now.
-
-## REQUIRED TESTS
-
-Add or update focused adversarial tests. At minimum verify:
-
-1. Normal application request without trusted provenance does NOT resolve to `127.0.0.1` as a remote caller identity.
-2. Caller-supplied forwarding headers cannot establish client identity.
-3. Test-only client-IP overrides remain unavailable in production.
-4. Authenticated join throttling remains isolated by authenticated `userId`.
-5. **Exact-room DoS test:** repeated failed lookup attempts targeting the exact legitimate room code cannot exhaust a shared budget that blocks legitimate lookup/access to that same session.
-6. Cross-room isolation: attacking room A cannot block legitimate room B.
-7. Bucket/key rotation by attacker-controlled input does not trivially evade the selected control.
-8. 50+ legitimate participants behind one church NAT can still participate as designed.
-9. Room-code validation/collision resistance remains intact.
-10. Existing tenant isolation and authorization tests continue to pass.
-11. Existing error sanitization and expiry protections continue to pass.
-12. No BAREA-007 live state, answer submission, scoring, WebSocket, or SSE behavior is introduced.
-
-The exact-room test is mandatory. A test that only attacks a nonexistent/random room is not sufficient evidence for merge.
 
 ## REQUIRED VERIFICATION
 
@@ -201,99 +290,74 @@ git diff
 
 All must pass.
 
-Do not report only aggregate test counts. Identify the exact-room DoS test and other new/changed security tests explicitly.
+Report exact test counts and explicitly name the new adversarial tests.
 
-## CODE SCOPE
+## TWO FRESH INDEPENDENT REVIEWERS
 
-Keep the change narrowly focused.
-
-Expected files are likely limited to:
-
-- `src/app/teacher/review/db.ts`
-- `src/service/rate-limiter.ts`
-- `src/service/session-service.ts`
-- `src/app/session/actions.ts`
-- focused BAREA-006 tests
-- relevant security documentation/report if needed
-
-Do not modify unrelated quiz/question/teacher-authoring code.
-
-## DOCUMENTATION
-
-Update the BAREA-006 security report to describe the final pre-deployment abuse-control model accurately.
-
-State explicitly:
-
-- Cloudflare is deferred until MVP completion.
-- Real client-IP provenance is not yet available in the current deployment.
-- The application does not trust forwarding headers.
-- The pre-deployment abuse-control mechanism does not use a fabricated IP.
-- The pre-deployment mechanism cannot be exhausted by one attacker to block a legitimate room.
-- True per-client IP throttling remains a later deployment integration concern to be experimentally verified.
-
-Do not mark Cloudflare as provisioned, operational, or experimentally verified.
-
-## TWO FRESH REVIEWERS
-
-After implementing the correction and passing all automated checks, ask two fresh independent reviewers to inspect the actual changed code.
+After implementation, invoke **exactly two** fresh independent subagents.
 
 ### Agent 1 — Security Red Team
 
-Specifically attack:
+Attack:
 
-- fake `127.0.0.1` identity;
-- caller-controlled IP/forwarding headers;
-- exact-room denial of service;
-- cross-room denial of service;
-- rate-limit bucket hopping;
-- one-attacker congregation-wide denial of service;
-- church NAT scalability;
-- authenticated userId throttling;
-- tenant/authorization regressions;
+- exact-room DoS;
+- cross-room DoS;
+- fake IP identity;
+- forwarding-header spoofing;
+- cookie/token rotation;
+- unlimited anonymous identity creation;
+- memory/state exhaustion;
+- church NAT behavior;
+- authenticated user throttling;
+- tenant isolation;
 - BAREA-007 boundary.
-
-The reviewer must explicitly test or reason about an attacker who knows a legitimate room code and repeatedly submits failed lookup attempts against that exact room.
 
 ### Agent 2 — QA / Architecture Reviewer
 
 Verify:
 
-- the new rate-limit semantics;
+- actual lookup-path integration;
+- bounded state and eviction;
+- deterministic tests;
 - exact-room isolation;
-- cross-room isolation;
 - 50+ participant behavior;
-- test coverage;
 - type safety;
-- compatibility with later Cloudflare integration;
+- future Cloudflare compatibility;
 - absence of unrelated changes.
 
-Both reviewers must provide explicit GO/NO-GO findings with concrete evidence.
+Both reviewers must give explicit GO/NO-GO findings with concrete evidence.
 
 ## GIT RULES
 
 Remain on `barea-006-share-join`.
 
-Do not merge PR #8 yourself.
-Do not start BAREA-007.
-Do not provision Cloudflare.
-Do not commit secrets.
-Do not make unrelated changes.
+Update PR #8.
 
-Commit the correction, push it, and report:
+Do NOT create a new PR.
+Do NOT merge PR #8 yourself.
+Do NOT start BAREA-007.
+Do NOT provision Cloudflare.
+Do NOT commit secrets.
+Do NOT modify unrelated milestones.
+
+Commit and push the correction, then report:
 
 - new commit SHA;
 - changed files;
-- test results;
-- exact-room adversarial test result;
-- reviewer verdicts;
+- exact design selected;
+- exact security rationale;
+- exact-room adversarial result;
+- bounded-state/eviction evidence;
+- full verification results;
+- two fresh reviewer verdicts;
 - PR #8 updated HEAD.
 
 ## STOP CONDITION
 
 After completing the correction:
 
-**DO NOT MERGE. DO NOT START BAREA-007.**
+**DO NOT MERGE. DO NOT START BAREA-007. DO NOT PROVISION CLOUDFLARE.**
 
 Stop and wait for ChatGPT's independent review of the updated PR.
 
-ChatGPT will independently inspect the actual updated code and decide whether BAREA-006 is safe to merge.
+ChatGPT will independently inspect the actual implementation and decide whether BAREA-006 is safe to merge.
