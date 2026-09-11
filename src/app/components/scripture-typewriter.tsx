@@ -20,7 +20,6 @@ export function ScriptureTypewriter() {
 
   useEffect(() => {
     const verse = verses[verseIndex].text;
-    let delay = TYPE_DELAY;
 
     if (phase === 'typing') {
       if (visibleText.length < verse.length) {
