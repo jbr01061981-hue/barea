@@ -57,6 +57,56 @@ The origin must not be directly reachable from the public Internet.
 11. Church NAT scalability must remain intact; no successful-participant-per-IP seat quota.
 12. BAREA-007 remains out of scope.
 
+## CHATGPT INDEPENDENT REVIEW CORRECTIONS — MUST BE RESOLVED
+
+The architecture direction is approved for continued Cloudflare provisioning, but the following two issues identified in the independent review MUST be corrected before the Cloudflare deployment design is considered complete.
+
+### Correction 1 — Do not claim ordinary Transform Rules provide HMAC attestation
+
+ADR-012 currently describes `X-Barea-Edge-Attestation` as an HMAC-style edge attestation. Do NOT implement or describe ordinary Cloudflare Transform Rules as if they cryptographically sign each request. A static secret header is not an HMAC.
+
+Before introducing any custom attestation, verify the actual Cloudflare capability and determine whether it is necessary at all.
+
+**Preferred direction:** use Cloudflare's native trusted client-IP mechanism if the private Tunnel/origin boundary provides the required provenance guarantee. Do not add a Worker, HMAC, custom signature, or custom header merely because ADR-012 contains generic platform-neutral language.
+
+If custom attestation is genuinely required, document:
+- exactly why native Cloudflare provenance is insufficient;
+- exactly where the attestation is generated;
+- exactly how caller-supplied copies are stripped;
+- exactly how the origin authenticates it;
+- why replay/spoofing/direct-origin bypass is impossible;
+- and the minimum secure implementation.
+
+### Correction 2 — Cloudflare Tunnel does not require a Cloudflare-to-origin :3000 firewall allowlist
+
+For the selected Tunnel topology, `cloudflared` connects from the private origin host/network to the local/private Next.js service. Do not document the architecture as though Cloudflare Edge directly connects to origin port 3000.
+
+The selected invariant is:
+
+```text
+Internet --X--> public origin :3000
+                    |
+                    X no public application ingress
+                    |
+              cloudflared
+                    |
+                    v
+             127.0.0.1:3000
+```
+
+If the hosting environment uses a private container/network interface instead of loopback, document the exact interface/network and its isolation. Do not invent a Cloudflare source-CIDR allowlist for a Tunnel connector path.
+
+### Required outcome of these corrections
+
+The final deployment documentation must clearly distinguish:
+- Cloudflare Edge public ingress;
+- the outbound Tunnel connection;
+- the private origin service path;
+- the actual trusted client-IP mechanism;
+- and any optional application attestation.
+
+Do not mark a mechanism as implemented until it has been verified in the actual Cloudflare configuration.
+
 ## IMPORTANT — VERIFY CLOUDFLARE'S ACTUAL TRUST MODEL FIRST
 
 Before changing `src/`, determine from current official Cloudflare documentation and the actual deployment configuration:
@@ -314,6 +364,8 @@ Distinguish clearly between:
 - infrastructure verified;
 - application implementation verified;
 - merge authorized.
+
+Correct ADR-012 where necessary so it no longer implies that Cloudflare Transform Rules provide HMAC signing or that Cloudflare Edge directly opens an origin :3000 connection through a source-CIDR firewall rule.
 
 ## GIT / MERGE RULES
 
