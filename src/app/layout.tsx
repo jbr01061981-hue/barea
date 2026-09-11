@@ -35,8 +35,14 @@ export default function RootLayout({
                 How it works
               </a>
               <a
+                href="/login"
+                className="inline-flex min-h-11 items-center justify-center rounded-sm px-3 text-sm font-semibold text-[var(--barea-ink)] hover:text-[var(--barea-gold-dark)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] sm:px-2"
+              >
+                Sign in
+              </a>
+              <a
                 href="/#how-it-works"
-                className="inline-flex min-h-11 items-center justify-center rounded-[var(--barea-radius-control)] bg-[var(--barea-ink)] px-4 text-sm font-semibold text-white transition-colors hover:bg-[var(--barea-ink-soft)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2"
+                className="hidden min-h-11 items-center justify-center rounded-[var(--barea-radius-control)] bg-[var(--barea-ink)] px-4 text-sm font-semibold text-white transition-colors hover:bg-[var(--barea-ink-soft)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2 sm:inline-flex"
               >
                 See the teacher workflow
               </a>
