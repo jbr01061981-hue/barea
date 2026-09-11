@@ -807,6 +807,36 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const unauthHostReq = new NextRequest(`http://localhost:3000/api/session/${session.id}/live?role=host`);
     const unauthHostRes = await liveSseRoute(unauthHostReq, { params: Promise.resolve({ id: session.id }) });
     assert.equal(unauthHostRes.status, 401);
+    const unauthHostBody = await unauthHostRes.json();
+    assert.equal(unauthHostBody.error, 'UNAUTHORIZED');
+    assert.equal(unauthHostBody.message, 'Teacher authentication failed.');
+    // Regression check: verify no internal runtime strings or error objects are leaked
+    assert.strictEqual(unauthHostBody.message.includes('runtime'), false);
+    assert.strictEqual(unauthHostBody.message.includes('test'), false);
+
+    // 1b. Regression test: SSE host-authentication error leakage prevention
+    // Raw exceptions (e.g. database corruption, filesystem paths, credentials) must NEVER leak to client
+    const errorThrowingTeacher = new Proxy({} as import('../src/app/teacher/review/db').TeacherContext, {
+      get(target, prop) {
+        if (prop === 'userId') {
+          throw new Error('CRITICAL SQLITE_CORRUPT: /var/secrets/teacher_key.sqlite disk image malformed');
+        }
+        return undefined;
+      }
+    });
+    setAuthorizedTeacherContext(errorThrowingTeacher);
+    const leakingHostReq = new NextRequest(`http://localhost:3000/api/session/${session.id}/live?role=host`);
+    const leakingHostRes = await liveSseRoute(leakingHostReq, { params: Promise.resolve({ id: session.id }) });
+    assert.equal(leakingHostRes.status, 401);
+    const leakingHostBody = await leakingHostRes.json();
+    assert.equal(leakingHostBody.error, 'UNAUTHORIZED');
+    assert.equal(leakingHostBody.message, 'Teacher authentication failed.');
+    // Strictly verify raw internal error details are redacted
+    assert.strictEqual(JSON.stringify(leakingHostBody).includes('SQLITE_CORRUPT'), false);
+    assert.strictEqual(JSON.stringify(leakingHostBody).includes('/var/secrets/'), false);
+    assert.strictEqual(JSON.stringify(leakingHostBody).includes('teacher_key.sqlite'), false);
+    assert.strictEqual(JSON.stringify(leakingHostBody).includes('CRITICAL'), false);
+    setAuthorizedTeacherContext(null);
 
     // 2. Participant caller cannot obtain host SSE projection by passing ?role=host
     const participantSpoofReq = new NextRequest(

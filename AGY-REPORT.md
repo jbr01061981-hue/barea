@@ -952,3 +952,16 @@ Milestone BAREA-007 builds the live quiz execution engine for the BAREA platform
   - Verified fake past/future `clientTimestamp` cannot extend deadline and creates 0 submissions in database.
   - Verified valid current-question answer before deadline is accepted and creates 1 submission in database.
   - Verified subsequent duplicate submission is rejected (409) and database count remains 1.
+
+### F. PR #11 Blocker Remediation 2: SSE Host-Authentication Error Masking
+- **Identified Defect**: In `src/app/api/session/[id]/live/route.ts`, when `getAuthorizedTeacherContext()` threw an exception during host authentication, `err.message` was previously interpolated into the response: `{ error: 'UNAUTHORIZED', message: \`Teacher authentication failed: ${message}\` }`. This leaked internal runtime environment strings and could disclose database paths or sensitive exception details to unauthenticated clients.
+- **Remediation**:
+  1. **Masked Exception**: Replaced raw `err.message` interpolation with a fixed, client-safe message: `{ error: 'UNAUTHORIZED', message: 'Teacher authentication failed.' }` (HTTP 401).
+  2. **Server-Side Only Logging**: Captured full exception and stack trace via `console.error('[SSE HostAuth Error]:', err)` for operator observability without client disclosure.
+  3. **Adversarial Regression Test**: Added regression test 1b to `test/live-quiz.test.ts` using an error-throwing teacher context proxy to simulate an unexpected internal failure with sensitive database credentials (`CRITICAL SQLITE_CORRUPT: /var/secrets/teacher_key.sqlite disk image malformed`). Verified that the response is HTTP 401 with masked message and strictly asserts that sensitive strings (`SQLITE_CORRUPT`, `/var/secrets/`, `teacher_key.sqlite`, `CRITICAL`) are never leaked to the caller.
+- **Verification Gates**:
+  - `npm test`: 147/147 passing tests.
+  - `npm run typecheck`: 0 errors.
+  - `npm run build:next`: 0 errors (Turbopack production build succeeded).
+  - `git grep ": any" -- src/`: 0 occurrences.
+  - `git diff --check`: Clean (0 whitespace errors).

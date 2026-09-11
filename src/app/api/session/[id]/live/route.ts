@@ -54,9 +54,11 @@ export async function GET(
       effectiveRole = 'host';
       authenticatedUserId = teacher.userId;
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Authentication required';
+      // Security Remediation: Never leak raw exception messages, internal runtime strings,
+      // or database details to the caller. Log full error details server-side only.
+      console.error('[SSE HostAuth Error]:', err);
       return NextResponse.json(
-        { error: 'UNAUTHORIZED', message: `Teacher authentication failed: ${message}` },
+        { error: 'UNAUTHORIZED', message: 'Teacher authentication failed.' },
         { status: 401 }
       );
     }
