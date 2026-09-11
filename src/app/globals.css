@@ -2,41 +2,41 @@
 
 @layer base {
   :root {
-    /* BAREA-owned semantic design tokens */
+    --barea-midnight: #101726;
+    --barea-slate-card: #141d2d;
+    --barea-paper-dark: #111a29;
+    --barea-ivory: #f7f2e8;
+    --barea-ivory-muted: #b9bec8;
+    --barea-gold: #c59b4e;
+    --barea-gold-light: #d6b46f;
+    --barea-gold-muted: #705d3c;
+    --barea-slate-border: #303949;
+
+    /* Existing application tokens remain available to protected experiences. */
     --barea-bg: #f6f5f0;
     --barea-paper: #fbfaf7;
     --barea-card-bg: #ffffff;
     --barea-cream: #f1eee4;
-
     --barea-ink: #14243a;
     --barea-ink-soft: #243b57;
     --barea-ink-muted: #536274;
-
     --barea-border: #d9d8d2;
     --barea-border-strong: #b9b9b2;
-
-    --barea-gold: #c9a227;
     --barea-gold-dark: #876c0c;
-
     --barea-primary: var(--barea-ink);
     --barea-primary-hover: var(--barea-ink-soft);
     --barea-primary-fg: #ffffff;
-
     --barea-accent: #496b87;
     --barea-accent-hover: #36566f;
-
     --barea-pending-bg: #fef3c7;
     --barea-pending-border: #f59e0b;
     --barea-pending-text: #92400e;
-
     --barea-approved-bg: #dcfce7;
     --barea-approved-border: #10b981;
     --barea-approved-text: #065f46;
-
     --barea-danger-bg: #fee2e2;
     --barea-danger-border: #ef4444;
     --barea-danger-text: #991b1b;
-
     --barea-radius-control: 0.3rem;
     --barea-radius-card: 0.5rem;
   }
@@ -55,7 +55,7 @@
 
   ::selection {
     background: var(--barea-gold);
-    color: var(--barea-ink);
+    color: var(--barea-midnight);
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -65,6 +65,7 @@
   }
 }
 
-.scripture-font {
+.scripture-font,
+.font-serif {
   font-family: Georgia, Cambria, "Times New Roman", Times, serif;
 }
