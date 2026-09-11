@@ -1,28 +1,28 @@
-# AGY PROMPT — BAREA DEPLOYMENT READINESS: FIX THE REMAINING TEST FAILURE
+# AGY PROMPT — BAREA LOCAL/REMOTE DEPLOYMENT READINESS
 
 Repository: `jbr01061981-hue/barea`
 Branch: `main`
 
 ## EXECUTION AUTHORITY
 
-Execute this task directly in the repository. Do not merely write an audit report.
+Execute this task directly. Do not merely provide recommendations.
 
-The approved MVP deployment architecture is **ADR-012: Node.js + local SQLite behind Cloudflare Tunnel**. Do not revisit or replace that architecture during this task.
+Current approved deployment architecture: **ADR-012 — Node.js + local SQLite behind Cloudflare Tunnel**.
 
-Do NOT start BAREA-007 or any later product/frontend phase.
-Do NOT redesign the application.
+Do NOT deploy the current BAREA application directly to Cloudflare Workers.
 Do NOT migrate SQLite to D1/PostgreSQL.
 Do NOT migrate the root repository to ESM.
-Do NOT deploy the current application directly to a Cloudflare Worker.
-Do NOT modify authentication, authorization, session, tenant isolation, or other security behavior unless a genuine defect in the existing implementation is independently proven.
+Do NOT start the next product/frontend phase.
+Do NOT redesign the application.
+Do NOT modify authentication, authorization, tenant isolation, session security, live-quiz correctness, or other security behavior unless a genuine defect is independently proven and explicitly in scope.
 
-The immediate objective is to resolve and verify the repository's one remaining test failure, then assess whether the repository is ready for the physical Cloudflare Tunnel provisioning step.
+The immediate objective is to get the current repository to a clean, verified state and determine readiness for the physical Cloudflare Tunnel provisioning step.
 
 ---
 
-# 1. VERIFY CURRENT BASELINE FIRST
+# 1. VERIFY THE CURRENT BASELINE
 
-Run and record:
+Run:
 
 ```text
 git status
@@ -33,12 +33,12 @@ git remote -v
 
 Confirm:
 
-- branch is `main`;
+- current branch is `main`;
 - Phase 7 is merged;
-- current HEAD;
-- working-tree state.
+- working tree is clean before changes;
+- current HEAD is recorded.
 
-Read:
+Read current source-of-truth documentation and package configuration:
 
 ```text
 README.md
@@ -48,20 +48,20 @@ package.json
 package-lock.json
 ```
 
-Locate ADR-012 in `docs/DECISIONS.md` and preserve it as the governing deployment decision.
+Locate ADR-012 and treat it as the governing MVP deployment architecture unless the repository itself shows a later accepted superseding ADR.
 
 ---
 
-# 2. INVESTIGATE THE SINGLE FAILING TEST
+# 2. FIX THE REMAINING TEST FAILURE FIRST
 
-The last verified repository report showed:
+The last verified deployment report stated:
 
 ```text
 Tests: 148/149 PASS
-Failure: CommonJS test expects the prior `dist/index.js` compilation contract
+Failure: CommonJS distribution test expects the prior dist/index.js compilation contract
 ```
 
-Do NOT assume this description is still accurate. Reproduce the current failure from the actual repository.
+Do NOT assume that description remains accurate.
 
 Run:
 
@@ -69,32 +69,53 @@ Run:
 npm test
 ```
 
-Identify the exact failing test, source file, assertion, and root cause. Inspect the relevant test source, TypeScript configuration, package scripts, `dist` generation behavior, module/moduleResolution settings, and recent deployment-related changes.
+Reproduce the exact current failure and identify:
 
-The existing root CommonJS contract MUST remain intact:
+- exact test name;
+- source file;
+- assertion;
+- stack trace/reason;
+- root cause.
+
+Inspect the relevant:
+
+- test source;
+- tsconfig files;
+- package.json scripts;
+- dist generation;
+- module/moduleResolution settings;
+- recent deployment-related changes.
+
+Fix the underlying cause with the smallest correct change while preserving the established CommonJS contract.
+
+The following are NON-NEGOTIABLE:
 
 ```text
-root package type: CommonJS
+root package remains CommonJS
 no root "type": "module"
-TypeScript Node16 module/moduleResolution behavior preserved
-CommonJS test execution preserved
-`dist/index.js` public CommonJS contract preserved
+TypeScript Node16 module/moduleResolution remains valid
+CommonJS test execution remains valid
+dist/index.js public CommonJS contract remains valid
 ```
 
-Fix the underlying cause with the **smallest focused repository change**.
+Do NOT:
 
-Do NOT weaken, skip, delete, quarantine, or conditionally bypass the failing test merely to obtain a green result.
-Do NOT rewrite the repository's module system merely to satisfy this test.
+- weaken the test;
+- delete the test;
+- skip the test;
+- conditionally bypass the assertion;
+- rewrite the repository to ESM;
+- make an unrelated refactor.
 
-If the test exposes a genuine incompatibility introduced by ADR-012 deployment work, fix that incompatibility while preserving the existing application contract.
-
-If the test expectation is stale, update it only when repository evidence proves the intended contract legitimately changed, and document why.
+If the test expectation itself is stale, change the test only when repository evidence proves the intended contract legitimately changed, and document the reason.
 
 ---
 
-# 3. QUALITY GATES AFTER THE FIX
+# 3. RUN COMPLETE QUALITY GATES
 
-Run:
+After fixing the test, run all relevant current repository gates.
+
+At minimum:
 
 ```text
 npm test
@@ -103,125 +124,231 @@ npm run build
 npm run build:next
 ```
 
-If linting exists in `package.json`, run it too.
+Run lint if a lint script exists.
 
-Report every gate as PASS / FAIL / NOT RUN. Do not claim success unless the command actually ran.
+Report:
 
-The expected target is **149/149 tests passing**, unless repository evidence proves the suite has legitimately changed.
+```text
+PASS
+FAIL
+NOT RUN — reason
+```
 
-If tests still fail, continue investigating the actual failure while the fix remains focused and in scope.
+The normal target is:
+
+```text
+149/149 tests passing
+```
+
+unless the current repository legitimately contains a different test count.
+
+Do not claim a gate passed unless it actually ran and passed.
 
 ---
 
-# 4. VERIFY THE NODE ORIGIN CONTRACT
+# 4. VERIFY THE NODE PRODUCTION ORIGIN
 
-ADR-012 requires the native Node.js origin to remain private and loopback-only:
+ADR-012 requires the BAREA origin to remain on the native Node.js runtime and bind only to loopback:
 
 ```text
 127.0.0.1:3000
 ```
 
-Verify the current production start command/configuration. If `package.json` already contains the expected loopback binding, preserve it.
+Verify the current production start command.
 
-Where practical, perform a local production-origin smoke test after `npm run build:next`.
+The preferred result is equivalent to:
 
-Verify at minimum:
+```text
+next start -H 127.0.0.1 -p 3000
+```
+
+Do not expose port 3000 publicly.
+
+After the production build, run the Node origin locally where practical.
+
+Verify:
 
 ```text
 GET /
 ```
 
-and check that the homepage and assets are served without runtime errors.
+and the route reached by the current root behavior.
 
-This is a Node.js-origin check, not a Worker check.
+Check:
+
+- HTTP status;
+- HTML response;
+- CSS/assets;
+- JavaScript;
+- hydration/runtime errors;
+- SQLite initialization;
+- relevant Route Handlers;
+- relevant Server Actions where practical.
+
+This is a Node-origin test, not a Worker test.
 
 ---
 
-# 5. CLOUDFLARE TUNNEL READINESS — DO NOT FABRICATE INFRASTRUCTURE
+# 5. CLOUDFLARE TUNNEL LOCAL READINESS
 
-After the test/build fix, inspect the environment for the actual prerequisites for ADR-012 physical provisioning:
+Inspect whether `cloudflared` is installed:
 
-- `cloudflared` installed or not;
-- authenticated Cloudflare access available or not;
-- target host available or not;
-- required tunnel credential/token available or not.
+```text
+cloudflared --version
+```
+
+If not installed, do not fabricate its presence.
+
+Determine whether authenticated Cloudflare access is available in the current environment.
 
 Never print secret values.
 
-If the environment genuinely permits authorized staging provisioning, proceed with **non-production/staging only** using current authoritative Cloudflare procedures.
-
-If the required binary, credentials, or physical host are unavailable, complete all repository-side work. Report missing prerequisites by NAME only.
-
-Example:
-
-```text
-cloudflared: NOT INSTALLED
-CLOUDFLARE_TUNNEL_TOKEN: NOT AVAILABLE
-STAGING HOST: NOT AVAILABLE
-```
-
-Do not fabricate a tunnel UUID, hostname, DNS record, public URL, or verification result.
-
----
-
-# 6. PRESERVE ADR-012
-
-The topology remains:
-
-```text
-PUBLIC INTERNET
-      |
-      v
-CLOUDFLARE EDGE DNS / HTTPS / TLS
-      |
-      v
-CLOUDFLARE TUNNEL / cloudflared
-      |
-      v
-127.0.0.1:3000
-      |
-      v
-BAREA NEXT.JS / NODE.JS
-      |
-      v
-LOCAL SQLITE
-```
-
-Do not reopen the earlier Worker/OpenNext/vinext experiment.
-
----
-
-# 7. SECURITY BOUNDARY
-
-Preserve all existing security behavior.
-
-Do NOT weaken authorization, bypass authentication, change session handling, change tenant isolation, invent Cloudflare trust mechanisms, claim cryptographic client-IP provenance without evidence, add arbitrary trusted-proxy behavior, or expose SQLite/the Node origin publicly.
-
-Never commit or print:
+Do not commit:
 
 ```text
 CLOUDFLARE_TUNNEL_TOKEN
 Cloudflare API tokens
 Tunnel credential JSON
-DATABASE_URL
-SESSION_SECRET
-COMPETITION_HMAC_SECRET
-OAuth secrets
-BAREA_EDGE_SECRET
-private keys
 ```
+
+If the required host/credentials are unavailable, complete all repository-side readiness work and report the physical provisioning blocker.
 
 ---
 
-# 8. GIT DISCIPLINE
+# 6. CLOUDFLARE TUNNEL CONFIGURATION
 
-Before modifications:
+Use current authoritative Cloudflare documentation for the exact procedure.
+
+The intended staging mapping is:
 
 ```text
+https://<staging-hostname>
+        ↓
+Cloudflare Edge
+        ↓
+Cloudflare Tunnel
+        ↓
+127.0.0.1:3000
+```
+
+A committed runbook may show placeholders:
+
+```yaml
+tunnel: <TUNNEL_UUID>
+credentials-file: /etc/cloudflared/<TUNNEL_UUID>.json
+ingress:
+  - hostname: <STAGING_HOSTNAME>
+    service: http://127.0.0.1:3000
+  - service: http_status:404
+```
+
+Never invent real values.
+
+If real Cloudflare credentials and a target host are available, provision ONLY staging/non-production first.
+
+---
+
+# 7. SECURITY / NETWORK BOUNDARY
+
+Preserve:
+
+```text
+PUBLIC INTERNET
+    ↓
+CLOUDFLARE EDGE
+    ↓
+AUTHENTICATED CLOUDFLARE TUNNEL
+    ↓
+127.0.0.1:3000
+    ↓
+BAREA NODE.JS
+    ↓
+LOCAL SQLITE
+```
+
+Verify/document:
+
+- Node binds only to loopback;
+- port 3000 is not directly publicly exposed;
+- cloudflared is the ingress path;
+- the origin does not trust arbitrary public Internet traffic.
+
+Do NOT invent a Cloudflare source-IP allowlist for port 3000.
+Do NOT claim Cloudflare Transform Rules provide cryptographic request authentication.
+Do NOT change BAREA security behavior merely for deployment.
+
+---
+
+# 8. CLIENT-IP PROVENANCE
+
+The current BAREA application has an existing client-IP provenance/security design.
+
+Do not alter that implementation during this deployment task.
+
+When a real Cloudflare Tunnel exists, test the actual headers/provenance observed by the application and report the result.
+
+Do not call provenance cryptographically trusted unless the current implementation actually establishes cryptographic trust.
+
+Keep these operational states separate:
+
+1. Architecture Specified
+2. Infrastructure Provisioned
+3. Infrastructure Operational
+4. Client-IP Provenance Experimentally Verified
+5. Application Integration Verified
+6. Merge Authorized
+
+---
+
+# 9. DO NOT REOPEN THE WORKER MIGRATION
+
+The previous Cloudflare Worker audit established that the current application is not suitable for direct Workers deployment because of Node.js-native SQLite/DatabaseSync and filesystem/runtime requirements.
+
+That finding is accepted.
+
+ADR-012 is the resolution for the current MVP.
+
+Do NOT:
+
+- try vinext again;
+- try OpenNext again;
+- build a Worker wrapper;
+- migrate persistence;
+- migrate the root package to ESM.
+
+A future Worker/D1 or external SQL migration can be a separate architectural milestone.
+
+---
+
+# 10. DOCUMENTATION
+
+Update the deployment documentation so it accurately records:
+
+- ADR-012 as the current deployment topology;
+- Node.js origin requirement;
+- loopback binding;
+- cloudflared installation/setup;
+- staging Tunnel procedure;
+- required secret names without values;
+- verification gates;
+- physical provisioning prerequisites;
+- current Worker incompatibility;
+- historical failed Worker/OpenNext experiment.
+
+Do not rewrite history.
+
+---
+
+# 11. GIT DISCIPLINE
+
+Before changes:
+
+```text
+git status
 git diff
 ```
 
-After modifications:
+After changes:
 
 ```text
 git diff
@@ -230,37 +357,52 @@ git status
 
 Review every changed file.
 
-If a code/test/configuration fix is required, create **one focused commit** on `main`.
+If the test fix or deployment-readiness changes are required, create focused commit(s) with accurate messages. Prefer one focused commit when practical.
 
-Use a focused message such as:
+Do not force-push.
+Do not rewrite history.
+Do not create unrelated branches or PRs.
+Do not merge unrelated work.
+
+---
+
+# 12. DO NOT CLAIM A LIVE DEPLOYMENT WITHOUT REAL INFRASTRUCTURE
+
+Only report a public URL, Tunnel ID, DNS verification, or Edge → Tunnel → Origin result when it has actually been provisioned and tested.
+
+If cloudflared or Cloudflare credentials are unavailable, report:
 
 ```text
-fix(test): restore CommonJS distribution test contract
+Infrastructure: NOT PROVISIONED
+Tunnel: NOT RUN
+Hostname/DNS: NOT VERIFIED
+Public URL: NOT AVAILABLE
 ```
 
-Use the actual scope if a different message is more accurate.
-
-Do not force-push, rewrite history, create unrelated branches/PRs, or merge unrelated work.
+Do not fabricate any of them.
 
 ---
 
-# 9. HARD STOP CONDITIONS
+# 13. VISUAL INSPECTION
 
-Stop only for a concrete blocker such as:
+Only after a real staging HTTPS deployment exists:
 
-1. The failing test cannot be reproduced but the repository state is otherwise verified.
-2. Fixing the failure would require an out-of-scope architecture migration.
-3. Cloudflare physical provisioning requires credentials/access that are not available.
-4. A target host is required but unavailable.
-5. A production change would be required without explicit authorization.
+Inspect the actual BAREA homepage on:
 
-Missing Cloudflare infrastructure access is not a reason to undo ADR-012 or return to Workers. Complete repository-side readiness and report physical provisioning as pending.
+- desktop;
+- mobile.
+
+Check layout, typography, spacing, navigation, CTAs, responsiveness, touch targets, overflow, assets, hydration/runtime errors, and debug UI.
+
+Do not redesign the UI during this deployment task.
+
+Without a real public/staging URL, report visual inspection as NOT RUN.
 
 ---
 
-# 10. FINAL REPORT — EXACT STRUCTURE
+# 14. FINAL REPORT
 
-Return exactly these sections:
+Return exactly:
 
 ## CURRENT BASELINE
 
@@ -300,7 +442,7 @@ Node origin bind:
 Node origin port:
 cloudflared installed: YES / NO
 Cloudflare authenticated access: YES / NO / NOT CHECKED
-Staging host available: YES / NO / NOT CHECKED
+Target staging host: YES / NO / NOT CHECKED
 Tunnel: PROVISIONED / NOT PROVISIONED / NOT RUN
 Hostname/DNS: VERIFIED / NOT VERIFIED / NOT RUN
 Public URL: real value or NOT AVAILABLE
@@ -313,7 +455,7 @@ Confirm:
 - no secrets committed;
 - no credentials exposed;
 - no production database modified;
-- no production infrastructure modified without authorization;
+- no unauthorized production infrastructure modified;
 - origin remains loopback-only;
 - no authentication/authorization/security behavior changed;
 - no SQLite-to-D1/external-SQL migration;
@@ -335,11 +477,11 @@ Use `NONE` if no repository change was necessary.
 
 ## CLOUDFLARE PROVISIONING BLOCKERS
 
-List only concrete missing prerequisites. Do not invent values.
+List only concrete missing prerequisites.
 
 ## NEXT STEP
 
-Stop after completing this test/build/readiness task.
+STOP after completing this test/build/deployment-readiness task.
 
 Do NOT start the next BAREA product phase.
 
@@ -347,18 +489,17 @@ Do NOT start the next BAREA product phase.
 
 # SUCCESS CRITERIA
 
-This task is successful when:
+1. Current `main` baseline verified.
+2. Remaining test failure reproduced and genuinely fixed, or a concrete blocker documented.
+3. Existing CommonJS/test/public-export contracts preserved.
+4. Full test suite green where applicable.
+5. Typecheck/builds verified.
+6. Node production origin verified on `127.0.0.1:3000`.
+7. ADR-012 preserved as the deployment architecture.
+8. Cloudflare Tunnel prerequisites accurately assessed.
+9. Staging Tunnel provisioned only when real authorized infrastructure access exists.
+10. No secrets exposed.
+11. No production infrastructure modified without explicit authorization.
+12. No product phase started.
 
-1. The current `main` baseline is verified.
-2. The single failing test is reproduced and its real root cause is identified.
-3. The underlying issue is fixed without weakening the test or changing the CommonJS contract.
-4. The full test suite is green, ideally 149/149.
-5. Typecheck and both build paths pass.
-6. The Node origin remains bound to `127.0.0.1:3000`.
-7. ADR-012 remains the approved deployment architecture.
-8. Cloudflare Tunnel prerequisites are accurately assessed.
-9. Real staging provisioning is performed only if actual authorized infrastructure access exists.
-10. No secrets are exposed.
-11. No product phase is started.
-
-Do the work now. Do not merely propose commands for someone else to run.
+Do the work now. Do not merely tell the operator what they should do later.
