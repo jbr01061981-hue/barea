@@ -5,6 +5,7 @@ export interface RateLimiter {
   recordFailedLookup(clientIp?: string | null): void;
   checkUnauthenticatedRequest(clientIp?: string | null): void;
   checkJoinMutation(userId: string): void;
+  checkLiveMutation(userId: string): void;
   reset(): void;
 }
 
@@ -18,11 +19,13 @@ export class InMemoryRateLimiter implements RateLimiter {
   private subnetFailedLookups = new Map<string, WindowBucket>();
   private unauthRequests = new Map<string, WindowBucket>();
   private userJoins = new Map<string, WindowBucket>();
+  private userLiveMutations = new Map<string, WindowBucket>();
 
   private maxFailedLookupsPerMinute: number = 15;
   private maxSubnetFailedLookupsPerMinute: number = 60;
   private maxUnauthRequestsPer10Seconds: number = 100;
   private minSecondsBetweenUserJoins: number = 5;
+  private maxLiveMutationsPer5Seconds: number = 20;
 
   private nowProvider: () => number;
 
@@ -33,6 +36,7 @@ export class InMemoryRateLimiter implements RateLimiter {
       maxSubnetFailedLookupsPerMinute?: number;
       maxUnauthRequestsPer10Seconds?: number;
       minSecondsBetweenUserJoins?: number;
+      maxLiveMutationsPer5Seconds?: number;
     }
   ) {
     this.nowProvider = nowProvider;
@@ -40,6 +44,7 @@ export class InMemoryRateLimiter implements RateLimiter {
     if (options?.maxSubnetFailedLookupsPerMinute !== undefined) this.maxSubnetFailedLookupsPerMinute = options.maxSubnetFailedLookupsPerMinute;
     if (options?.maxUnauthRequestsPer10Seconds !== undefined) this.maxUnauthRequestsPer10Seconds = options.maxUnauthRequestsPer10Seconds;
     if (options?.minSecondsBetweenUserJoins !== undefined) this.minSecondsBetweenUserJoins = options.minSecondsBetweenUserJoins;
+    if (options?.maxLiveMutationsPer5Seconds !== undefined) this.maxLiveMutationsPer5Seconds = options.maxLiveMutationsPer5Seconds;
   }
 
   resetUserJoin(userId: string): void {
@@ -136,11 +141,29 @@ export class InMemoryRateLimiter implements RateLimiter {
     this.userJoins.set(userId, { count: 1, resetAt: now + (this.minSecondsBetweenUserJoins * 1000) });
   }
 
+  checkLiveMutation(userId: string): void {
+    if (!userId) return;
+    const now = this.nowProvider();
+    const bucket = this.userLiveMutations.get(userId);
+
+    // Limit live mutations per 5 seconds per authenticated user
+    if (!bucket || bucket.resetAt <= now) {
+      this.userLiveMutations.set(userId, { count: 1, resetAt: now + 5000 });
+    } else {
+      bucket.count++;
+      if (bucket.count > this.maxLiveMutationsPer5Seconds) {
+        const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
+        throw new RateLimitExceededError(Math.max(1, retryAfter));
+      }
+    }
+  }
+
   reset(): void {
     this.failedLookups.clear();
     this.subnetFailedLookups.clear();
     this.unauthRequests.clear();
     this.userJoins.clear();
+    this.userLiveMutations.clear();
   }
 
   private normalizeRoomCode(roomCode: string): string {

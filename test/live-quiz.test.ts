@@ -1,0 +1,776 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
+
+(process.env as Record<string, string | undefined>).NODE_ENV = 'test';
+
+import {
+  ParticipationMode,
+  AdmissionPolicy,
+  WorkspaceType,
+  SessionStatus,
+  derivePersonalTenantId,
+  QuestionDifficulty,
+  QuestionType,
+  QuestionStatus,
+  ScoringStyle,
+  QuestionLifecycleState,
+  SqliteQuestionRepository,
+  SqliteQuizRepository,
+  SqliteSessionRepository,
+  QuestionBankService,
+  QuizService,
+  SessionService,
+  InMemoryRateLimiter,
+  LiveQuizService,
+  InMemoryRealtimeTransport,
+  LiveQuizEventType,
+  LiveQuizEvent,
+  InvalidLiveStateTransitionError,
+  AnswerDeadlineExpiredError,
+  DuplicateAnswerSubmissionError,
+  NotSessionHostError,
+  SessionNotActiveError,
+  InvalidQuestionChoiceError,
+  ConcurrencyConflictError,
+  RateLimitExceededError
+} from '../src/index';
+
+import {
+  setAuthorizedTeacherContext,
+  setAuthenticatedUserContext,
+  setSessionService,
+  setRateLimiter,
+  setQuizService,
+  setQuestionBankService,
+  setRealtimeTransport,
+  setLiveQuizService
+} from '../src/app/teacher/review/db';
+
+import {
+  startLiveQuizAction,
+  openQuestionAction,
+  lockQuestionAction,
+  advanceQuestionAction,
+  completeLiveQuizAction,
+  getHostLiveViewAction,
+  submitAnswerAction,
+  getParticipantLiveViewAction,
+  reconnectLiveSessionAction,
+  submitGroupAnswerAction
+} from '../src/app/session/live-actions';
+
+function setupTestEnvironment(rateLimiterOptions?: { maxLiveMutationsPer5Seconds?: number }) {
+  const sharedDb = new DatabaseSync(':memory:');
+  const questionRepo = new SqliteQuestionRepository(sharedDb);
+  const quizRepo = new SqliteQuizRepository(sharedDb);
+  const sessionRepo = new SqliteSessionRepository(sharedDb);
+
+  const bankService = new QuestionBankService(questionRepo);
+  const quizService = new QuizService(quizRepo);
+  const rateLimiter = new InMemoryRateLimiter(undefined, rateLimiterOptions);
+  const sessionService = new SessionService(sessionRepo, rateLimiter);
+  const realtimeTransport = new InMemoryRealtimeTransport();
+  const liveQuizService = new LiveQuizService(sessionRepo, rateLimiter, realtimeTransport);
+
+  setQuestionBankService(bankService);
+  setQuizService(quizService);
+  setSessionService(sessionService);
+  setRateLimiter(rateLimiter);
+  setRealtimeTransport(realtimeTransport);
+  setLiveQuizService(liveQuizService);
+
+  return {
+    sharedDb,
+    questionRepo,
+    quizRepo,
+    sessionRepo,
+    bankService,
+    quizService,
+    sessionService,
+    rateLimiter,
+    realtimeTransport,
+    liveQuizService
+  };
+}
+
+function seedMultiQuestionQuiz(
+  bankService: QuestionBankService,
+  quizService: QuizService,
+  orgId: string,
+  userId: string,
+  questionCount: number = 3
+): string {
+  setAuthorizedTeacherContext({
+    userId,
+    organizationId: orgId,
+    displayName: 'Teacher ' + userId,
+    role: 'teacher'
+  });
+
+  const questionIds: string[] = [];
+  for (let i = 1; i <= questionCount; i++) {
+    const q = bankService.createQuestion({
+      organizationId: orgId,
+      stem: `Question ${i}: What happened in Scripture on day ${i}?`,
+      type: QuestionType.MULTIPLE_CHOICE,
+      options: [`Option A for Q${i}`, `Option B for Q${i}`, `Option C for Q${i}`, `Option D for Q${i}`],
+      correctOptionIndices: [0],
+      explanation: `Scriptural explanation for Q${i}`,
+      scriptureReference: `Genesis 1:${i}`,
+      topic: 'Creation',
+      difficulty: QuestionDifficulty.EASY,
+      language: 'en'
+    });
+    bankService.transitionStatus(orgId, q.id, QuestionStatus.PENDING_REVIEW);
+    bankService.transitionStatus(orgId, q.id, QuestionStatus.APPROVED);
+    questionIds.push(q.id);
+  }
+
+  const quiz = quizService.createQuiz(orgId, {
+    organizationId: orgId,
+    title: 'Genesis Quiz',
+    description: 'Study of early Genesis',
+    defaultTimeLimitSeconds: 20,
+    scoringStyle: ScoringStyle.STANDARD
+  });
+
+  for (const qid of questionIds) {
+    quizService.addQuestion(orgId, quiz.id, qid);
+  }
+
+  const snapshot = quizService.publishQuiz(orgId, quiz.id, userId);
+  return snapshot.id;
+}
+
+test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial Boundary Tests', async (t) => {
+
+  await t.test('1. Session State Machine Transitions (LOBBY -> ACTIVE -> COMPLETED)', async () => {
+    const env = setupTestEnvironment();
+    const hostId = 'teacher_host_1';
+    const orgId = derivePersonalTenantId(hostId);
+    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 3);
+
+    const session = env.sessionService.createSession({
+      workspaceType: WorkspaceType.PERSONAL,
+      organizationId: orgId,
+      publishedQuizSnapshotId: snapshotId,
+      hostUserId: hostId,
+      participationMode: ParticipationMode.INDIVIDUAL_AUTHENTICATED,
+      admissionPolicy: AdmissionPolicy.OPEN
+    });
+
+    let liveState = env.sessionRepo.getLiveSessionState(session.id);
+    assert.ok(liveState);
+    assert.equal(liveState.sessionStatus, SessionStatus.LOBBY);
+    assert.equal(liveState.questionLifecycleState, QuestionLifecycleState.NOT_STARTED);
+    assert.equal(liveState.currentQuestionPosition, 0);
+    assert.equal(liveState.stateVersion, 1);
+
+    // Transition LOBBY -> ACTIVE
+    const { liveState: activeState } = env.liveQuizService.startLiveQuiz(session.id, hostId);
+    assert.equal(activeState.sessionStatus, SessionStatus.ACTIVE);
+    assert.equal(activeState.currentQuestionPosition, 1);
+    assert.equal(activeState.questionLifecycleState, QuestionLifecycleState.ANSWERING);
+    assert.equal(activeState.stateVersion, 2);
+
+    // Invalid transition: cannot start an already active session
+    assert.throws(() => {
+      env.liveQuizService.startLiveQuiz(session.id, hostId);
+    }, InvalidLiveStateTransitionError);
+
+    // Lock question 1
+    const { liveState: lockedQ1 } = env.liveQuizService.lockQuestion(session.id, hostId);
+    assert.equal(lockedQ1.currentQuestionPosition, 1);
+    assert.equal(lockedQ1.questionLifecycleState, QuestionLifecycleState.LOCKED);
+    assert.equal(lockedQ1.stateVersion, 3);
+
+    // Advance to question 2
+    const { liveState: advancedQ2 } = env.liveQuizService.advanceQuestion(session.id, hostId);
+    assert.equal(advancedQ2.currentQuestionPosition, 2);
+    assert.equal(advancedQ2.questionLifecycleState, QuestionLifecycleState.ANSWERING);
+    assert.equal(advancedQ2.stateVersion, 4);
+
+    // Lock question 2
+    const { liveState: lockedQ2 } = env.liveQuizService.lockQuestion(session.id, hostId);
+    assert.equal(lockedQ2.currentQuestionPosition, 2);
+    assert.equal(lockedQ2.questionLifecycleState, QuestionLifecycleState.LOCKED);
+
+    // Advance to question 3
+    const { liveState: advancedQ3 } = env.liveQuizService.advanceQuestion(session.id, hostId);
+    assert.equal(advancedQ3.currentQuestionPosition, 3);
+    assert.equal(advancedQ3.questionLifecycleState, QuestionLifecycleState.ANSWERING);
+
+    // Complete session
+    const { liveState: completedState } = env.liveQuizService.completeLiveQuiz(session.id, hostId);
+    assert.equal(completedState.sessionStatus, SessionStatus.COMPLETED);
+    assert.equal(completedState.questionLifecycleState, QuestionLifecycleState.COMPLETED);
+
+    // Completed session rejects any further mutations
+    assert.throws(() => {
+      env.liveQuizService.openQuestion(session.id, hostId);
+    }, SessionNotActiveError);
+
+    assert.throws(() => {
+      env.liveQuizService.startLiveQuiz(session.id, hostId);
+    }, InvalidLiveStateTransitionError);
+  });
+
+  await t.test('2. Host Authorization & IDOR Boundary Defense', async () => {
+    const env = setupTestEnvironment();
+    const legitHostId = 'teacher_legit';
+    const attackerHostId = 'teacher_attacker';
+    const orgId = derivePersonalTenantId(legitHostId);
+    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, legitHostId, 2);
+
+    const session = env.sessionService.createSession({
+      workspaceType: WorkspaceType.PERSONAL,
+      organizationId: orgId,
+      publishedQuizSnapshotId: snapshotId,
+      hostUserId: legitHostId,
+      participationMode: ParticipationMode.INDIVIDUAL_AUTHENTICATED,
+      admissionPolicy: AdmissionPolicy.OPEN
+    });
+
+    // Attacker teacher attempts to start legit host's session -> NotSessionHostError
+    assert.throws(() => {
+      env.liveQuizService.startLiveQuiz(session.id, attackerHostId);
+    }, NotSessionHostError);
+
+    // Attacker attempts other mutations
+    assert.throws(() => {
+      env.liveQuizService.openQuestion(session.id, attackerHostId);
+    }, NotSessionHostError);
+
+    assert.throws(() => {
+      env.liveQuizService.lockQuestion(session.id, attackerHostId);
+    }, NotSessionHostError);
+
+    assert.throws(() => {
+      env.liveQuizService.advanceQuestion(session.id, attackerHostId);
+    }, NotSessionHostError);
+
+    assert.throws(() => {
+      env.liveQuizService.completeLiveQuiz(session.id, attackerHostId);
+    }, NotSessionHostError);
+
+    assert.throws(() => {
+      env.liveQuizService.getHostLiveView(session.id, attackerHostId);
+    }, NotSessionHostError);
+
+    // Server actions also enforce host context
+    setAuthorizedTeacherContext({
+      userId: attackerHostId,
+      organizationId: derivePersonalTenantId(attackerHostId),
+      displayName: 'Attacker Teacher',
+      role: 'teacher'
+    });
+
+    const actionRes = await startLiveQuizAction(session.id);
+    assert.equal(actionRes.success, false);
+    if (!actionRes.success) {
+      assert.equal(actionRes.error.code, 'NOT_SESSION_HOST');
+      assert.equal(actionRes.error.httpStatus, 403);
+    }
+  });
+
+  await t.test('3. Server-Authoritative Time & Deadline Enforcement', async () => {
+    const env = setupTestEnvironment();
+    const hostId = 'teacher_timer';
+    const orgId = derivePersonalTenantId(hostId);
+    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
+
+    const session = env.sessionService.createSession({
+      workspaceType: WorkspaceType.PERSONAL,
+      organizationId: orgId,
+      publishedQuizSnapshotId: snapshotId,
+      hostUserId: hostId,
+      participationMode: ParticipationMode.INDIVIDUAL_AUTHENTICATED,
+      admissionPolicy: AdmissionPolicy.OPEN
+    });
+
+    const participantToken = env.sessionService.joinSession(session.id, {
+      userId: 'pupil_timer_1',
+      providerType: 'GOOGLE',
+      providerSub: 'sub_timer_1',
+      verifiedEmail: 'pupil1@test.org',
+      verifiedPhone: null,
+      displayName: 'Quick Pupil'
+    });
+
+    const beforeOpen = Date.now();
+    const { liveState } = env.liveQuizService.startLiveQuiz(session.id, hostId);
+    assert.ok(liveState.answerDeadlineAt);
+    const actualDeadline = new Date(liveState.answerDeadlineAt).getTime();
+    assert.ok(actualDeadline >= beforeOpen + 19_000);
+
+    // Valid submission before deadline
+    const sub = env.liveQuizService.submitParticipantAnswer({
+      sessionId: session.id,
+      token: participantToken.token,
+      questionPosition: 1,
+      selectedOptionIndices: [0],
+      clientTimestamp: new Date().toISOString()
+    });
+    assert.ok(sub);
+    assert.equal(sub.userId, 'pupil_timer_1');
+    assert.deepEqual(sub.selectedOptionIndices, [0]);
+    assert.equal(sub.isWithinDeadline, true);
+
+    // Late submission simulation: artifically expire deadline in DB
+    const expiredTime = new Date(Date.now() - 1000).toISOString();
+    env.sharedDb.prepare(`
+      UPDATE session_live_states
+      SET answer_deadline_at = ?
+      WHERE session_id = ?
+    `).run(expiredTime, session.id);
+
+    const latePupilToken = env.sessionService.joinSession(session.id, {
+      userId: 'pupil_late_2',
+      providerType: 'GOOGLE',
+      providerSub: 'sub_late_2',
+      verifiedEmail: 'pupil2@test.org',
+      verifiedPhone: null,
+      displayName: 'Late Pupil'
+    });
+
+    // Submitting after authoritative deadline must strictly throw AnswerDeadlineExpiredError
+    assert.throws(() => {
+      env.liveQuizService.submitParticipantAnswer({
+        sessionId: session.id,
+        token: latePupilToken.token,
+        questionPosition: 1,
+        selectedOptionIndices: [0],
+        clientTimestamp: new Date(Date.now() - 5000).toISOString() // Even if client lies about timestamp!
+      });
+    }, AnswerDeadlineExpiredError);
+  });
+
+  await t.test('4. Participant Duplicate Submission Policy & Choice Validation', async () => {
+    const env = setupTestEnvironment();
+    const hostId = 'teacher_sub';
+    const orgId = derivePersonalTenantId(hostId);
+    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
+
+    const session = env.sessionService.createSession({
+      workspaceType: WorkspaceType.PERSONAL,
+      organizationId: orgId,
+      publishedQuizSnapshotId: snapshotId,
+      hostUserId: hostId,
+      participationMode: ParticipationMode.INDIVIDUAL_AUTHENTICATED,
+      admissionPolicy: AdmissionPolicy.OPEN
+    });
+
+    const participantToken = env.sessionService.joinSession(session.id, {
+      userId: 'pupil_honest_1',
+      providerType: 'GOOGLE',
+      providerSub: 'sub_honest_1',
+      verifiedEmail: 'honest@test.org',
+      verifiedPhone: null,
+      displayName: 'Honest Pupil'
+    });
+
+    env.liveQuizService.startLiveQuiz(session.id, hostId);
+
+    // Invalid choice indices
+    assert.throws(() => {
+      env.liveQuizService.submitParticipantAnswer({
+        sessionId: session.id,
+        token: participantToken.token,
+        questionPosition: 1,
+        selectedOptionIndices: [99], // Out of bounds
+        clientTimestamp: new Date().toISOString()
+      });
+    }, InvalidQuestionChoiceError);
+
+    assert.throws(() => {
+      env.liveQuizService.submitParticipantAnswer({
+        sessionId: session.id,
+        token: participantToken.token,
+        questionPosition: 1,
+        selectedOptionIndices: [-1], // Negative
+        clientTimestamp: new Date().toISOString()
+      });
+    }, InvalidQuestionChoiceError);
+
+    assert.throws(() => {
+      env.liveQuizService.submitParticipantAnswer({
+        sessionId: session.id,
+        token: participantToken.token,
+        questionPosition: 1,
+        selectedOptionIndices: [], // Empty
+        clientTimestamp: new Date().toISOString()
+      });
+    }, InvalidQuestionChoiceError);
+
+    // First accepted answer wins
+    const firstSub = env.liveQuizService.submitParticipantAnswer({
+      sessionId: session.id,
+      token: participantToken.token,
+      questionPosition: 1,
+      selectedOptionIndices: [1],
+      clientTimestamp: new Date().toISOString()
+    });
+    assert.deepEqual(firstSub.selectedOptionIndices, [1]);
+
+    // Second submission must throw DuplicateAnswerSubmissionError
+    assert.throws(() => {
+      env.liveQuizService.submitParticipantAnswer({
+        sessionId: session.id,
+        token: participantToken.token,
+        questionPosition: 1,
+        selectedOptionIndices: [0], // Changed mind
+        clientTimestamp: new Date().toISOString()
+      });
+    }, DuplicateAnswerSubmissionError);
+  });
+
+  await t.test('5. Optimistic Concurrency & Monotonic Versioning', async () => {
+    const env = setupTestEnvironment();
+    const hostId = 'teacher_conc';
+    const orgId = derivePersonalTenantId(hostId);
+    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
+
+    const session = env.sessionService.createSession({
+      workspaceType: WorkspaceType.PERSONAL,
+      organizationId: orgId,
+      publishedQuizSnapshotId: snapshotId,
+      hostUserId: hostId,
+      participationMode: ParticipationMode.INDIVIDUAL_AUTHENTICATED,
+      admissionPolicy: AdmissionPolicy.OPEN
+    });
+
+    const { liveState: startState } = env.liveQuizService.startLiveQuiz(session.id, hostId);
+    assert.equal(startState.stateVersion, 2);
+
+    // Successful mutation with matching expectedVersion (2)
+    const { liveState: lockState } = env.liveQuizService.lockQuestion(session.id, hostId, 2);
+    assert.equal(lockState.stateVersion, 3);
+
+    // Mismatched expectedVersion throws ConcurrencyConflictError
+    assert.throws(() => {
+      env.liveQuizService.openQuestion(session.id, hostId, 2); // Expected 2, but actual is 3
+    }, ConcurrencyConflictError);
+
+    // Supplying current expectedVersion (3) succeeds
+    const { liveState: openState } = env.liveQuizService.openQuestion(session.id, hostId, 3);
+    assert.equal(openState.stateVersion, 4);
+  });
+
+  await t.test('6. Group Answer Submissions in Teacher-Controlled Group Mode', async () => {
+    const env = setupTestEnvironment();
+    const hostId = 'teacher_group';
+    const orgId = derivePersonalTenantId(hostId);
+    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
+
+    const session = env.sessionService.createSession({
+      workspaceType: WorkspaceType.PERSONAL,
+      organizationId: orgId,
+      publishedQuizSnapshotId: snapshotId,
+      hostUserId: hostId,
+      participationMode: ParticipationMode.TEACHER_GROUP,
+      admissionPolicy: AdmissionPolicy.TEACHER_ASSIGNED
+    });
+
+    // Create groups
+    const group1 = env.sessionService.createGroup(session.id, hostId, 'Lions');
+    const group2 = env.sessionService.createGroup(session.id, hostId, 'Eagles');
+
+    env.liveQuizService.startLiveQuiz(session.id, hostId);
+
+    // Teacher submits on behalf of Lions
+    const groupSub = env.liveQuizService.submitGroupAnswer({
+      sessionId: session.id,
+      hostUserId: hostId,
+      groupId: group1.id,
+      questionPosition: 1,
+      selectedOptionIndices: [0]
+    });
+
+    assert.equal(groupSub.sessionGroupId, group1.id);
+    assert.deepEqual(groupSub.selectedOptionIndices, [0]);
+
+    // Duplicate submission for group 1 rejected
+    assert.throws(() => {
+      env.liveQuizService.submitGroupAnswer({
+        sessionId: session.id,
+        hostUserId: hostId,
+        groupId: group1.id,
+        questionPosition: 1,
+        selectedOptionIndices: [1]
+      });
+    }, DuplicateAnswerSubmissionError);
+
+    // Group 2 can still submit
+    const group2Sub = env.liveQuizService.submitGroupAnswer({
+      sessionId: session.id,
+      hostUserId: hostId,
+      groupId: group2.id,
+      questionPosition: 1,
+      selectedOptionIndices: [2]
+    });
+    assert.equal(group2Sub.sessionGroupId, group2.id);
+  });
+
+  await t.test('7. Realtime Transport: Session Isolation, Replay Buffer & Subscriber Projection', async () => {
+    const env = setupTestEnvironment();
+    const transport = env.realtimeTransport;
+
+    const sessionA = 'session_alpha';
+    const sessionB = 'session_beta';
+
+    const eventsA: LiveQuizEvent[] = [];
+    const eventsB: LiveQuizEvent[] = [];
+
+    // Participant subscriber to Session A (role = 'participant')
+    const unsubA = transport.subscribe({
+      sessionId: sessionA,
+      subscriberId: 'sub_participant_a',
+      role: 'participant',
+      onEvent: (e) => eventsA.push(e)
+    });
+
+    // Host subscriber to Session A (role = 'host')
+    const hostEventsA: LiveQuizEvent[] = [];
+    transport.subscribe({
+      sessionId: sessionA,
+      subscriberId: 'sub_host_a',
+      role: 'host',
+      onEvent: (e) => hostEventsA.push(e)
+    });
+
+    // Participant subscriber to Session B (role = 'participant')
+    transport.subscribe({
+      sessionId: sessionB,
+      subscriberId: 'sub_participant_b',
+      role: 'participant',
+      onEvent: (e) => eventsB.push(e)
+    });
+
+    // Publish event on Session A with sensitive question payload
+    transport.publish({
+      eventId: 'evt_a1',
+      eventType: LiveQuizEventType.QUESTION_OPENED,
+      sessionId: sessionA,
+      stateVersion: 3,
+      timestamp: new Date().toISOString(),
+      payload: {
+        position: 1,
+        stem: 'What is the first book of the Bible?',
+        options: ['Genesis', 'Exodus'],
+        correctOptionIndices: [0], // Sensitive!
+        explanation: 'Genesis is the book of beginnings.' // Sensitive!
+      }
+    });
+
+    // Publish event on Session B
+    transport.publish({
+      eventId: 'evt_b1',
+      eventType: LiveQuizEventType.QUESTION_OPENED,
+      sessionId: sessionB,
+      stateVersion: 2,
+      timestamp: new Date().toISOString(),
+      payload: {
+        position: 1,
+        stem: 'Session B question'
+      }
+    });
+
+    // Check session isolation
+    assert.equal(eventsA.length, 1);
+    assert.equal(eventsB.length, 1);
+    assert.equal(eventsA[0].sessionId, sessionA);
+    assert.equal(eventsB[0].sessionId, sessionB);
+
+    // Check subscriber projection: participant must NOT see correctOptionIndices or explanation
+    const participantPayload = eventsA[0].payload;
+    assert.equal(participantPayload.stem, 'What is the first book of the Bible?');
+    assert.equal((participantPayload as any).correctOptionIndices, undefined);
+    assert.equal((participantPayload as any).explanation, undefined);
+
+    // Host DOES see correctOptionIndices and explanation
+    assert.equal(hostEventsA.length, 1);
+    const hostPayload = hostEventsA[0].payload;
+    assert.deepEqual((hostPayload as any).correctOptionIndices, [0]);
+    assert.equal((hostPayload as any).explanation, 'Genesis is the book of beginnings.');
+
+    // Check replay buffer / history
+    const replayEvents = transport.getHistory(sessionA, 0);
+    assert.equal(replayEvents.length, 1);
+    assert.equal(replayEvents[0].sequenceNumber, 1);
+
+    // Unsubscribe
+    unsubA();
+    assert.equal(transport.getSubscriberCount(sessionA), 1); // Host remains
+  });
+
+  await t.test('8. Participant Reconnection & State Catch-up', async () => {
+    const env = setupTestEnvironment();
+    const hostId = 'teacher_recon';
+    const orgId = derivePersonalTenantId(hostId);
+    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
+
+    const session = env.sessionService.createSession({
+      workspaceType: WorkspaceType.PERSONAL,
+      organizationId: orgId,
+      publishedQuizSnapshotId: snapshotId,
+      hostUserId: hostId,
+      participationMode: ParticipationMode.INDIVIDUAL_AUTHENTICATED,
+      admissionPolicy: AdmissionPolicy.OPEN
+    });
+
+    const participantToken = env.sessionService.joinSession(session.id, {
+      userId: 'pupil_recon_1',
+      providerType: 'GOOGLE',
+      providerSub: 'sub_recon_1',
+      verifiedEmail: 'recon@test.org',
+      verifiedPhone: null,
+      displayName: 'Travelling Pupil'
+    });
+
+    env.liveQuizService.startLiveQuiz(session.id, hostId);
+
+    // Participant submits answer
+    env.liveQuizService.submitParticipantAnswer({
+      sessionId: session.id,
+      token: participantToken.token,
+      questionPosition: 1,
+      selectedOptionIndices: [2],
+      clientTimestamp: new Date().toISOString()
+    });
+
+    // Simulate page refresh / disconnect and reconnect
+    const reconView = env.liveQuizService.getParticipantLiveView(session.id, participantToken.token);
+    assert.equal(reconView.sessionId, session.id);
+    assert.equal(reconView.currentQuestionPosition, 1);
+    assert.equal(reconView.questionLifecycleState, QuestionLifecycleState.ANSWERING);
+    assert.equal(reconView.hasAnswered, true);
+    assert.deepEqual(reconView.submittedOptionIndices, [2]);
+    assert.ok(reconView.answerDeadlineAt);
+
+    // Question projection to participant has NO secret answers
+    assert.ok(reconView.question);
+    assert.equal((reconView.question as any).correctOptionIndices, undefined);
+    assert.equal((reconView.question as any).explanation, undefined);
+  });
+
+  await t.test('9. Rate Limiting of Live Mutations', async () => {
+    const env = setupTestEnvironment({ maxLiveMutationsPer5Seconds: 4 });
+    const hostId = 'teacher_ratelimit';
+    const orgId = derivePersonalTenantId(hostId);
+    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 10);
+
+    const session = env.sessionService.createSession({
+      workspaceType: WorkspaceType.PERSONAL,
+      organizationId: orgId,
+      publishedQuizSnapshotId: snapshotId,
+      hostUserId: hostId,
+      participationMode: ParticipationMode.INDIVIDUAL_AUTHENTICATED,
+      admissionPolicy: AdmissionPolicy.OPEN
+    });
+
+    // Start session uses 1 mutation
+    env.liveQuizService.startLiveQuiz(session.id, hostId);
+
+    // 3 more mutations (total 4)
+    env.liveQuizService.lockQuestion(session.id, hostId);
+    env.liveQuizService.advanceQuestion(session.id, hostId);
+    env.liveQuizService.lockQuestion(session.id, hostId);
+
+    // 5th mutation exceeds maxLiveMutationsPer5Seconds (4) and throws RateLimitExceededError
+    assert.throws(() => {
+      env.liveQuizService.advanceQuestion(session.id, hostId);
+    }, RateLimitExceededError);
+  });
+
+  await t.test('10. Server Actions & Sanitization Boundary', async () => {
+    const env = setupTestEnvironment();
+    const hostId = 'teacher_actions';
+    const orgId = derivePersonalTenantId(hostId);
+    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 3);
+
+    setAuthorizedTeacherContext({
+      userId: hostId,
+      organizationId: orgId,
+      displayName: 'Teacher Actions',
+      role: 'teacher'
+    });
+
+    const session = env.sessionService.createSession({
+      workspaceType: WorkspaceType.PERSONAL,
+      organizationId: orgId,
+      publishedQuizSnapshotId: snapshotId,
+      hostUserId: hostId,
+      participationMode: ParticipationMode.INDIVIDUAL_AUTHENTICATED,
+      admissionPolicy: AdmissionPolicy.OPEN
+    });
+
+    const participantToken = env.sessionService.joinSession(session.id, {
+      userId: 'pupil_act_1',
+      providerType: 'GOOGLE',
+      providerSub: 'sub_act_1',
+      verifiedEmail: 'act@test.org',
+      verifiedPhone: null,
+      displayName: 'Action Pupil'
+    });
+
+    // Start live quiz via server action
+    const startRes = await startLiveQuizAction(session.id);
+    assert.equal(startRes.success, true);
+    if (startRes.success) {
+      assert.equal(startRes.data.session.status, SessionStatus.ACTIVE);
+      assert.equal(startRes.data.liveState.questionLifecycleState, QuestionLifecycleState.ANSWERING);
+    }
+
+    // Participant submit answer action
+    const submitRes = await submitAnswerAction({
+      sessionId: session.id,
+      token: participantToken.token,
+      questionPosition: 1,
+      selectedOptionIndices: [0],
+      clientTimestamp: new Date().toISOString()
+    });
+    assert.equal(submitRes.success, true);
+    if (submitRes.success) {
+      assert.ok(submitRes.data.submissionId);
+    }
+
+    // Duplicate answer submission returns DUPLICATE_ANSWER_SUBMISSION (409)
+    const dupRes = await submitAnswerAction({
+      sessionId: session.id,
+      token: participantToken.token,
+      questionPosition: 1,
+      selectedOptionIndices: [1],
+      clientTimestamp: new Date().toISOString()
+    });
+    assert.equal(dupRes.success, false);
+    if (!dupRes.success) {
+      assert.equal(dupRes.error.code, 'DUPLICATE_ANSWER_SUBMISSION');
+      assert.equal(dupRes.error.httpStatus, 409);
+    }
+
+    // Lock question
+    const lockRes = await lockQuestionAction(session.id);
+    assert.equal(lockRes.success, true);
+    if (lockRes.success) {
+      assert.equal(lockRes.data.liveState.questionLifecycleState, QuestionLifecycleState.LOCKED);
+    }
+
+    // Get Host live view
+    const hostViewRes = await getHostLiveViewAction(session.id);
+    assert.equal(hostViewRes.success, true);
+    if (hostViewRes.success) {
+      assert.equal(hostViewRes.data.totalSubmissionsForCurrentQuestion, 1);
+      assert.ok(hostViewRes.data.currentQuestion?.correctOptionIndices); // Host can see answers
+    }
+
+    // Get Participant live view
+    const partViewRes = await getParticipantLiveViewAction(session.id, participantToken.token);
+    assert.equal(partViewRes.success, true);
+    if (partViewRes.success) {
+      assert.equal(partViewRes.data.hasAnswered, true);
+      assert.equal((partViewRes.data.question as any)?.correctOptionIndices, undefined); // Hidden
+    }
+  });
+
+});

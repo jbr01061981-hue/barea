@@ -394,12 +394,43 @@ In accordance with BAREA architectural constraints (church-scale usage, cost, op
 
 ---
 
+## ADR-013: Authoritative Live Quiz State Machine, Timing & Real-Time Transport (BAREA-007)
+
+- **Status**: **ACCEPTED**
+- **Date**: 2026-09-11
+- **Context**: BAREA-007 introduces the live quiz execution engine. In live church settings, participants may face network jitter, clock discrepancies, reconnects, and varying device environments. The platform requires a strict server-authoritative state machine, tamper-proof deadlines, monotonic concurrency guarantees, session-isolated real-time transport, and leak-proof projection filters so that correct answers and explanations are never exposed to participants or projectors prior to conclusion.
+- **Decision**:
+  1. **Server-Authoritative State Machine**:
+     - Session state transitions strictly follow: `LOBBY` -> `ACTIVE` -> `COMPLETED`.
+     - Individual question lifecycle transitions strictly follow: `NOT_STARTED` -> `PREVIEW` (optional) -> `ANSWERING` -> `LOCKED` -> `COMPLETED`.
+     - All mutations are strictly server-authoritative and can only be triggered by the authenticated host who owns the session. Non-hosts and unauthenticated callers fail closed with `NotSessionHostError` (403).
+  2. **Server-Authoritative Time & Deadlines**:
+     - Client clocks are untrusted. The question deadline is determined by the server upon opening as `openedAtUtc + timeLimitSeconds * 1000`.
+     - The answer acceptance window is enforced strictly at the database/repository level using authoritative server UTC time.
+     - Any submission received after the deadline is rejected with `AnswerDeadlineExpiredError` (400), regardless of client timestamps.
+  3. **Optimistic Concurrency & Monotonic Versioning**:
+     - Every state transition increments `stateVersion` monotonically.
+     - State mutation actions accept an optional `expectedVersion`. Stale requests are rejected with `ConcurrencyConflictError` (409).
+  4. **Duplicate Submission Policy**:
+     - "First accepted submission wins." Once a valid answer is recorded for a participant or group on a question, subsequent submissions are rejected with `DuplicateAnswerSubmissionError` (409).
+  5. **Real-Time Transport & Session Isolation**:
+     - Introduced `RealtimeTransport` interface with `InMemoryRealtimeTransport` implementation and Server-Sent Events (SSE) Route Handler (`/api/session/[id]/live`).
+     - Real-time broadcasts are strictly partitioned by `sessionId`. Subscribers to Session A never receive events from Session B.
+     - Subscriber-specific projection filtering strips sensitive fields (`correctOptionIndices`, `explanation`) from events sent to participants and projectors. Only authenticated hosts receive full answer keys.
+     - Monotonic sequence numbering and a ring-buffer event history enable reconnecting participants to catch up on missed transitions without drift.
+  6. **Pupil & Group Submissions**:
+     - For teacher-controlled group mode (`TEACHER_GROUP`), the host submits answers on behalf of groups without requiring individual pupil accounts.
+- **Consequences**:
+  - **Positive**: Eliminates client clock spoofing; prevents answer leakage across network interfaces; guarantees deterministic live event ordering; seamlessly handles reconnects and page reloads.
+  - **Negative**: In-memory transport is bounded to single-process deployment. Multi-instance deployment will require a Redis/PubSub adapter when scaling horizontally.
+
+---
+
 ## Open Technical Decisions
 
 The following technical selections remain intentionally deferred:
 
-1. **Real-Time Communication Transport**: Specific protocol/library implementation.
-2. **Database & Data Layer for Distributed Environments**: Relational database engine, schema management, and live session state storage for multi-server deployment.
-3. **HTTP/API Contract**: Specific API style and validation/transport implementation.
-4. **Authentication/Authorization**: Teacher/host authentication implementation and authorization model.
-5. **Deployment/Hosting Target**: **RESOLVED — CLOUDFLARE EDGE + CLOUDFLARE TUNNEL (`cloudflared`)** (ADR-012). Physical provisioning in progress.
+1. **Database & Data Layer for Distributed Environments**: Relational database engine, schema management, and live session state storage for multi-server deployment.
+2. **HTTP/API Contract**: Specific API style and validation/transport implementation.
+3. **Authentication/Authorization**: Teacher/host authentication implementation and authorization model.
+4. **Deployment/Hosting Target**: **RESOLVED — CLOUDFLARE EDGE + CLOUDFLARE TUNNEL (`cloudflared`)** (ADR-012). Physical provisioning in progress.

@@ -98,3 +98,59 @@ export class RateLimitExceededError extends BareaDomainError {
     this.retryAfter = retryAfter;
   }
 }
+
+export class InvalidLiveStateTransitionError extends BareaDomainError {
+  readonly code = 'INVALID_STATE_TRANSITION';
+  readonly httpStatus = 409;
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+export class AnswerDeadlineExpiredError extends BareaDomainError {
+  readonly code = 'SUBMISSION_WINDOW_EXPIRED';
+  readonly httpStatus = 400;
+  constructor(message: string = 'Answer submission window has closed.') {
+    super(message);
+  }
+}
+
+export class DuplicateAnswerSubmissionError extends BareaDomainError {
+  readonly code = 'DUPLICATE_ANSWER_SUBMISSION';
+  readonly httpStatus = 409;
+  constructor(message: string = 'Answer has already been submitted for this question.') {
+    super(message);
+  }
+}
+
+export class NotSessionHostError extends BareaDomainError {
+  readonly code = 'NOT_SESSION_HOST';
+  readonly httpStatus = 403;
+  constructor(message: string = 'Unauthorized: Only the host may perform live session controls.') {
+    super(message);
+  }
+}
+
+export class SessionNotActiveError extends BareaDomainError {
+  readonly code = 'SESSION_NOT_ACTIVE';
+  readonly httpStatus = 409;
+  constructor(message: string = 'Session is not in an active live quiz state.') {
+    super(message);
+  }
+}
+
+export class InvalidQuestionChoiceError extends BareaDomainError {
+  readonly code = 'INVALID_QUESTION_CHOICE';
+  readonly httpStatus = 400;
+  constructor(message: string = 'Selected choice indices are invalid for this question.') {
+    super(message);
+  }
+}
+
+export class ConcurrencyConflictError extends BareaDomainError {
+  readonly code = 'CONCURRENCY_CONFLICT';
+  readonly httpStatus = 409;
+  constructor(message: string = 'State mutation conflict: provided state version is stale.') {
+    super(message);
+  }
+}

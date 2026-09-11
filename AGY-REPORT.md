@@ -869,3 +869,64 @@ The practical deployment contract designed to satisfy ADR-012 establishes:
 7. 50+ church NAT participants join successfully without IP exhaustion.
 8. Authenticated user join throttling (`1 / 5s / userId`) prevents duplicate mutation abuse.
 9. Zero BAREA-007 scope introduced (no WebSockets, SSE, timers, or live quiz transitions).
+
+---
+
+## 12. Milestone BAREA-007: Live Quiz Authoritative State Machine & Real-Time Transport
+
+### A. Context & Objectives
+Milestone BAREA-007 builds the live quiz execution engine for the BAREA platform, adhering strictly to:
+- Server-authoritative live state machine (`LOBBY` -> `ACTIVE` -> `COMPLETED`, question lifecycle: `NOT_STARTED` -> `PREVIEW` -> `ANSWERING` -> `LOCKED` -> `COMPLETED`).
+- Server-authoritative time & deadlines: Client clock is untrusted (display-only countdown); server UTC time strictly dictates answer window expiration.
+- Concurrency & versioning: Monotonic `stateVersion` tracking on every state mutation, with optimistic concurrency validation.
+- Host authorization & IDOR defense: Authenticated host only can control state transitions; non-hosts and unauthenticated callers are rejected with `NotSessionHostError` (403).
+- Participant answer submission policy: "First accepted submission wins"; duplicates are rejected with `DuplicateAnswerSubmissionError` (409); late submissions are rejected with `AnswerDeadlineExpiredError` (400).
+- Teacher-controlled group mode: Host submits answers on behalf of pupil groups without requiring individual pupil accounts.
+- Real-time transport contract: Session-isolated in-memory event bus and Next.js SSE Route Handler (`/api/session/[id]/live`) with subscriber-specific projection filtering (answer keys strictly stripped for participants/projectors) and catch-up replay buffers.
+- Reconnection / resume: Seamless reconnects without resetting questions, timers, or participant identities.
+
+### B. Implementation Summary
+1. **Domain Model (`src/domain/live-quiz.ts`)**:
+   - `QuestionLifecycleState`: `NOT_STARTED`, `PREVIEW`, `ANSWERING`, `LOCKED`, `COMPLETED`.
+   - `LiveSessionState`: Authoritative server state tracking current question, timestamps, deadline, and `stateVersion`.
+   - `ParticipantLiveView`: Redacted projection hiding answers and explanations.
+   - `HostLiveView`: Full live view including submission counts and full question details.
+   - `ParticipantSubmission`: Recorded answers with server UTC timestamp and deadline flag.
+   - `LiveQuizEventType` & `LiveQuizEvent`: Strongly-typed real-time event definitions.
+2. **Domain Errors (`src/domain/domain-errors.ts`)**:
+   - `InvalidLiveStateTransitionError` (400), `AnswerDeadlineExpiredError` (400), `DuplicateAnswerSubmissionError` (409), `NotSessionHostError` (403), `SessionNotActiveError` (400), `InvalidQuestionChoiceError` (400), `ConcurrencyConflictError` (409).
+3. **Persistence Engine (`src/persistence/sqlite-session-repository.ts`)**:
+   - Added tables `session_live_states` and `session_answers` with cascade deletes and unique constraints.
+   - Initialized live state row atomically on session creation.
+   - Implemented repository methods: `getLiveSessionState`, `getPublishedQuizSnapshot`, `startLiveSession`, `openQuestion`, `previewQuestion`, `lockQuestion`, `advanceQuestion`, `completeLiveSession`, `recordAnswerSubmission`, `getParticipantSubmission`, `getGroupSubmission`, `getSubmissionCountForQuestion`.
+4. **Realtime Transport (`src/transport/realtime-transport.ts`)**:
+   - `RealtimeTransport` interface with `InMemoryRealtimeTransport` implementation.
+   - Session isolation: Channels strictly separated by `sessionId`.
+   - Subscriber projection filtering: Strips `correctOptionIndices` and `explanation` from events sent to participants and projectors.
+   - Monotonic sequence numbering and ring-buffer history for catch-up replay on reconnect.
+5. **Rate Limiting (`src/service/rate-limiter.ts`)**:
+   - Added `checkLiveMutation(userId: string)` (configurable, default 20 mutations / 5s per authenticated user).
+6. **Live Quiz Service (`src/service/live-quiz-service.ts`)**:
+   - Orchestration service executing state machine transitions, validating host ownership, checking deadlines, applying rate limits, and publishing real-time events.
+7. **Server Actions (`src/app/session/live-actions.ts`)**:
+   - Host actions: `startLiveQuizAction`, `lockQuestionAction`, `openQuestionAction`, `advanceQuestionAction`, `completeLiveQuizAction`, `getHostLiveViewAction`.
+   - Participant actions: `submitAnswerAction`, `getParticipantLiveViewAction`, `reconnectLiveSessionAction`.
+   - Group action: `submitGroupAnswerAction`.
+   - Error masking: `errorResponse` sanitizes and masks unexpected errors with generic 500 while logging server-side.
+8. **SSE Streaming Route Handler (`src/app/api/session/[id]/live/route.ts`)**:
+   - Server-Sent Events endpoint streaming realtime events with client catchup support (`since` query param) and heartbeat ping.
+
+### C. Comprehensive Automated Verification
+- **Full Test Suite (`npm test`)**: **145/145 tests pass** (134 existing + 11 comprehensive BAREA-007 tests).
+- **TypeScript Typecheck (`npm run typecheck`)**: **0 errors** (`tsc --noEmit`).
+- **Build (`npm run build`)**: **0 errors** (`tsc`).
+- **Next.js Production Build (`npm run build:next`)**: **0 errors** (Turbopack, compiled successfully, `/api/session/[id]/live` dynamic route registered).
+- **Type Safety Audit (`git grep ": any" -- src/`)**: **0 occurrences**.
+- **Whitespace & Diff Hygiene (`git diff --check`)**: **Clean**.
+
+### D. Architectural Invariants Maintained
+1. **Server Authority**: Client countdown is display-only; deadlines and transitions are calculated and enforced exclusively by the server.
+2. **Host Authorization**: IDOR-resistant host checks prevent non-hosts from triggering mutations.
+3. **Information Security**: Question projections to participants/projectors strictly redact correct answer indices and explanations.
+4. **Church NAT & Rate Limiting**: Preserved BAREA-006 church Wi-Fi NAT scalability; authenticated user mutations throttled cleanly.
+5. **No Scope Creep**: Zero BAREA-008 UI, zero BAREA-009 scoring calculations, zero Cloudflare infrastructure provisioning.

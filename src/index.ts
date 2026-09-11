@@ -133,3 +133,32 @@ export {
   InMemoryRateLimiter,
   type RateLimiter
 } from './service/rate-limiter';
+
+export {
+  QuestionLifecycleState,
+  type LiveSessionState,
+  type ParticipantLiveView,
+  type HostLiveView,
+  type ParticipantSubmission,
+  LiveQuizEventType,
+  type LiveQuizEvent,
+  InvalidLiveStateTransitionError,
+  AnswerDeadlineExpiredError,
+  DuplicateAnswerSubmissionError,
+  NotSessionHostError,
+  SessionNotActiveError,
+  InvalidQuestionChoiceError,
+  ConcurrencyConflictError
+} from './domain/live-quiz';
+
+export {
+  LiveQuizService,
+  type SubmitParticipantAnswerInput,
+  type SubmitGroupAnswerInput
+} from './service/live-quiz-service';
+
+export {
+  type RealtimeSubscriber,
+  type RealtimeTransport,
+  InMemoryRealtimeTransport
+} from './transport/realtime-transport';
