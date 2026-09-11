@@ -782,3 +782,28 @@ npm notice run tsc (0 errors)
 ### E. Final Status
 - **Branch**: `barea-006-share-join`
 - **Merge Status**: Strictly paused. **NO self-merge is performed**. Awaiting ChatGPT's independent security re-review and explicit merge authorization.
+
+---
+
+## 10. Milestone BAREA-006: Deployment Infrastructure Gate & Deployment Contract Design
+
+### A. Gate Status & Context
+- **Gate Status**: **BLOCKED FOR PRODUCTION RELEASE (INFRASTRUCTURE REQUIRED)**.
+- **Audited Invariant**: In Next.js Server Actions running standalone on Node.js without an edge reverse proxy, raw TCP socket descriptors are not accessible to action handlers. Passing untrusted forwarding headers (`X-Forwarded-For`, `CF-Connecting-IP`, `X-Real-IP`, `X-Barea-*`) allows header spoofing and bucket hopping. Conversely, falling back to universal `127.0.0.1` collapses all unauthenticated clients into a single bucket, creating a shared denial-of-service vulnerability.
+- **Application Code Status**: Zero application code modified or bypassed. Application code is intentionally fail-closed and strictly remains at checkpoint commit `eb8d4160ec2f0fb99f46ffa5b2153cc477e90976`.
+- **Selected Architecture**: **ADR-012: Enforced Edge/Reverse-Proxy Trust Boundary (Option 1)** in `docs/DECISIONS.md`.
+
+### B. Deployment Contract Specification
+The practical deployment contract designed to satisfy ADR-012 establishes:
+1. **Hosting Candidates**: Cloudflare Tunnel (`cloudflared`) to loopback, AWS/GCP Private VPC with ALB ingress and private subnet origin, or Linux VM with Nginx/Caddy and OS packet filter firewall (`nftables`/`iptables`).
+2. **Origin Exposure**: Next.js origin port 3000 has zero public routing and is never reachable by arbitrary public internet clients.
+3. **Firewall Requirement**: Drops all inbound TCP traffic to port 3000 from `0.0.0.0/0` and `::/0`. Permits ingress strictly from the reverse proxy security group or internal daemon bridge.
+4. **Header Normalization**: The edge reverse proxy unconditionally strips all public client-supplied headers (`X-Forwarded-For`, `CF-Connecting-IP`, `X-Real-IP`, `X-Barea-*`), extracts client IP strictly from its connection socket, and injects internal `X-Barea-Client-IP`.
+5. **Proxy Attestation**: The proxy presents a high-entropy secret (`X-Barea-Edge-Attestation`) matching `BAREA_EDGE_SECRET` (or mTLS client certificate).
+6. **Application Enforcement**: The application verifies edge attestation in constant time before accepting `X-Barea-Client-IP`. Unauthenticated or direct requests fail closed to isolated fallback `127.0.0.1`.
+7. **Health & Observability**: `/api/health` probes operate unauthenticated; rate-limit audit logs redact client IP prefixes for privacy.
+
+### C. Infrastructure State & Release Rule
+- **Infrastructure Status**: NOT YET PROVISIONED.
+- **Merge Status**: Branch `barea-006-share-join` remains unmerged. No self-merge to `main`. Zero scope creep into BAREA-007.
+- **Production Prerequisite**: Live production release requires physical provisioning of the edge proxy, origin firewall rules, and deployment secrets before IP-based rate-limit differentiation can be activated.

@@ -296,6 +296,58 @@ Conversely, falling back to a universal constant (`127.0.0.1`) collapses all una
 6. **Application Verification**: The application verifies the edge attestation in constant time before consuming `X-Barea-Client-IP`. Requests lacking valid edge attestation are relegated to a quarantined, non-privileged fallback bucket (`127.0.0.1`), preventing spoofing and preventing collision with legitimate proxied traffic.
 7. **Application Checkpoint Preservation**: Until an active production deployment environment implements and enforces this boundary, the application code safely remains at checkpoint commit `eb8d416`, without manufacturing a fake application-only trust model.
 
+### Practical Deployment Contract Specifications
+
+To satisfy ADR-012 without coupling BAREA to a single cloud vendor, the deployment contract specifies the required behaviors across 14 operational facets:
+
+1. **Expected Production Hosting Target Candidates**:
+   - *Cloudflare Tunnel + Container/VM Origin*: `cloudflared` daemon runs in the private network/container and forwards traffic directly to Next.js port 3000 over loopback/internal bridge. Public port 3000 has no public listening binding or public IP.
+   - *AWS / GCP Private VPC*: Managed Application Load Balancer (ALB) in public subnet terminates TLS; Next.js origin task runs in private subnet with security group ingress restricted strictly to the ALB security group.
+   - *Bare Metal / Dedicated Linux VM with Reverse Proxy (Nginx / Caddy)*: Edge reverse proxy listens on public ports 80/443; Next.js listens strictly on `127.0.0.1:3000`. OS packet filter (`iptables` / `nftables`) drops all external packets targeting port 3000.
+2. **Origin Exposure Model**:
+   - The Next.js Node process binds to private interface or loopback only (or private container network).
+   - Zero public IPv4/IPv6 routing to origin port 3000.
+3. **Firewall / Security Group / Private Network Requirement**:
+   - Ingress firewall rule: Drop all traffic to port 3000 from CIDR `0.0.0.0/0` and `::/0`.
+   - Permit ingress to port 3000 exclusively from verified edge proxy security group or private subnet CIDR.
+4. **Trusted Edge Behavior**:
+   - Terminates public TLS with high-grade ciphers.
+   - Evaluates incoming request before upstream proxying.
+5. **Header Stripping / Replacement Contract**:
+   - The edge proxy MUST delete / strip any incoming client-provided instance of:
+     - `X-Forwarded-For`
+     - `CF-Connecting-IP`
+     - `X-Real-IP`
+     - `X-Barea-Client-IP`
+     - `X-Barea-Edge-Attestation`
+   - The edge proxy MUST inject:
+     - `X-Barea-Client-IP`: set strictly to the remote IP of the inbound TCP socket (`$remote_addr` or socket peer address).
+     - `X-Barea-Edge-Attestation`: set to the provisioned deployment secret (or mTLS client certificate header).
+6. **Proxy Authentication Mechanism**:
+   - Shared High-Entropy Secret: A 256-bit cryptographically secure token (`BAREA_EDGE_SECRET`) injected into proxy upstream headers and verified by the origin application using timing-safe comparison (`crypto.timingSafeEqual`).
+   - Mutual TLS (mTLS): Alternatively, reverse proxy presents an internal client certificate to origin TLS listener, verified against an internal CA.
+7. **Secret / mTLS Lifecycle**:
+   - Secrets managed via environment variables / secret manager (`BAREA_EDGE_SECRET`).
+   - Dual-secret rotation support: origin accepts `BAREA_EDGE_SECRET` and optional `BAREA_EDGE_SECRET_PREVIOUS` during rotation windows.
+8. **Health Checks**:
+   - Dedicated unauthenticated health endpoint (`/api/health` or `/`) responds `200 OK` to edge load balancer health probes without requiring edge attestation.
+   - Health check probes are exempted from participant abuse rate limits.
+9. **TLS Termination**:
+   - Public TLS terminates at the edge proxy (providing modern HTTP/2, HTTP/3, and TLS 1.3).
+   - In-transit encryption between edge proxy and origin utilizes private network VPC encryption or internal TLS.
+10. **Logging / Observability Expectations**:
+    - Edge proxy logs include connection details, client IP, edge attestation status, and request duration.
+    - Application logs record rate-limit events with redacted client IP prefix (e.g. `203.0.113.***`) for privacy while retaining security auditability.
+11. **Local Development Behavior**:
+    - When `NODE_ENV === 'development'`, if `BAREA_EDGE_SECRET` is unset, the application defaults to local fallback `127.0.0.1` or accepts loopback connections without edge attestation for developer velocity.
+12. **Test Environment Behavior**:
+    - In `NODE_ENV === 'test'`, test fixtures can supply simulated request contexts via protected test seams (`setMockRequestHeadersForTesting`, `setTrustedClientIpForTesting`), which are strictly disabled and throw `Forbidden` in production.
+13. **Failure Behavior (Missing / Invalid Proxy Credential)**:
+    - If a request reaches the application with a missing or invalid `X-Barea-Edge-Attestation`, the application fails closed for privileged IP extraction: it rejects caller-supplied `X-Barea-Client-IP` and relegates the request to the unauthenticated quarantined fallback identity (`127.0.0.1`).
+14. **How Direct-Origin Traffic Is Blocked**:
+    - Network Layer: Blocked by firewall / security group before TCP handshake completes.
+    - Application Layer (Defense-in-Depth): If a network misconfiguration allows a direct request to reach port 3000, the absence of the valid `X-Barea-Edge-Attestation` prevents the caller from forging `X-Barea-Client-IP`. All spoofed headers are ignored.
+
 ### Consequences
 - **Positive**: Eliminates IP header spoofing; provides true network provenance; maintains church-scale client isolation and NAT scalability (zero per-IP seat quotas); prevents global rate-limit bucket exhaustion.
 - **Negative**: Requires production infrastructure (private network, firewall, edge proxy configuration) to be provisioned before live internet deployment.

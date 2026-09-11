@@ -16,7 +16,7 @@ Milestones must be executed in order. No milestone may proceed into application 
 | **BAREA-003** | **AI Quiz Generation** | Structured LLM prompt pipeline, parameter inputs, structural validation | **COMPLETED** |
 | **BAREA-004** | **Teacher Review/Approval** | Production frontend foundation, staging UI, editing, Scripture review, approval gate | **COMPLETED — MERGED** |
 | **BAREA-005** | **Quiz Authoring** | Quiz playlist composition, timer & scoring configurations, publishing | **COMPLETED — MERGED** |
-| **BAREA-006** | **Share/Join** | QR generation, room access codes, URL routing, participant onboarding | NOT STARTED |
+| **BAREA-006** | **Share/Join** | QR generation, room access codes, URL routing, participant onboarding | **BLOCKED (INFRASTRUCTURE REQUIRED)** |
 | **BAREA-007** | **Live Quiz** | Authoritative state machine, timer sync, real-time transport | NOT STARTED |
 | **BAREA-008** | **Host/Participant UI** | Dual-interface UX: host control console & responsive mobile participant app | NOT STARTED |
 | **BAREA-009** | **Scoring** | Server-side validation, timestamp verification, score algorithm | NOT STARTED |
@@ -106,7 +106,7 @@ AI Generation
 - Session creation with room access codes.
 - Dynamic QR code generation for projector and mobile devices.
 - Low-friction mobile landing flow: nickname entry, duplicate name handling, session resumption.
-- **Status**: NOT STARTED.
+- **Status**: **BLOCKED (INFRASTRUCTURE REQUIRED)**. Architecture and contracts established under ADR-012 (Edge Reverse Proxy and Origin Ingress Trust Boundary). Application code is complete at checkpoint `eb8d416` with fail-closed security. Live production release is blocked pending deployment infrastructure provisioning.
 
 ### BAREA-007: Live Quiz
 - Server-authoritative state machine (LOBBY, PREVIEW, ACTIVE, RESULT, LEADERBOARD, PODIUM).
