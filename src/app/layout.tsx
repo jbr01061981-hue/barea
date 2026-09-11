@@ -35,10 +35,10 @@ export default function RootLayout({
                 How it works
               </a>
               <a
-                href="/teacher/quizzes"
+                href="/#how-it-works"
                 className="inline-flex min-h-11 items-center justify-center rounded-[var(--barea-radius-control)] bg-[var(--barea-ink)] px-4 text-sm font-semibold text-white transition-colors hover:bg-[var(--barea-ink-soft)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2"
               >
-                Teacher workspace
+                See the teacher workflow
               </a>
             </nav>
           </div>
