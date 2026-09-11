@@ -1,232 +1,216 @@
-# AGY PROMPT — BAREA-006 DEPLOYMENT INFRASTRUCTURE GATE
+# AGY PROMPT — BAREA-006 DEPLOYMENT DECISION GATE
 
 Repository: `jbr01061981-hue/barea`
 Branch: `barea-006-share-join`
-Application code baseline: `eb8d4160ec2f0fb99f46ffa5b2153cc477e90976`
-Architecture decision commit: `abfd81d`
+Current application checkpoint: `eb8d4160ec2f0fb99f46ffa5b2153cc477e90976`
+Architecture decision record: ADR-012
 
-## CURRENT STATUS — NO-GO / INFRASTRUCTURE REQUIRED
+## CURRENT STATUS
 
-**STOP. DO NOT MODIFY BAREA-006 APPLICATION CODE. DO NOT MERGE. DO NOT START BAREA-007.**
+**NO-GO FOR MERGE — INFRASTRUCTURE IS NOT PROVISIONED.**
 
-The repository audit established that BAREA currently has no deployed or configured trusted edge/reverse-proxy boundary, origin firewall, private ingress, container deployment contract, or equivalent network control.
+The repository has correctly stopped application-code changes after determining that a standalone Next.js 16.3.4 Server Action runtime cannot establish trustworthy per-client IP provenance from caller-visible forwarding headers.
 
-The current application safely ignores caller-controlled forwarding headers, but this means the current `127.0.0.1` fallback cannot provide a distinct per-client network identity for IP-based abuse controls.
+The current application fallback to `127.0.0.1` is intentionally fail-closed, but it must NOT be represented as a real per-client identity because that would collapse all unauthenticated clients into one global rate-limit bucket.
 
-Do not invent another application-only IP solution.
+Do not attempt another application-only workaround.
 
-## AUDITED DECISION
+## ARCHITECTURE DECISION
 
-The chosen architecture is **ADR-012 — Enforced Edge/Reverse-Proxy Trust Boundary**.
+ADR-012 selects an **enforced edge/reverse-proxy trust boundary**.
 
-The required production topology is:
+Required production topology:
 
 ```text
 PUBLIC INTERNET
       |
       v
-Trusted Edge / Reverse Proxy
+TRUSTED EDGE / REVERSE PROXY
       |
-      |  strips caller forwarding headers
-      |  derives client IP from its own socket
+      |  strips caller-controlled forwarding headers
+      |  derives client IP from its own connection context
       |  authenticates to origin
       v
-Private / Firewalled BAREA Origin
+PRIVATE / FIREWALLED BAREA ORIGIN
       |
-      |  Next.js / Node
       v
-Port 3000 (NOT publicly reachable)
+NEXT.JS / NODE :3000
 ```
 
-The architecture is technology-neutral. Cloudflare Tunnel, a private VPC/load balancer, an internal reverse proxy, or another equivalent design may be selected later.
+Technology remains intentionally unselected. Valid implementations may include Cloudflare Tunnel, private VPC/load balancer, or a private reverse proxy such as Nginx/Caddy, provided the same security invariants are actually enforced.
 
-Do NOT lock the product to a specific cloud provider unless the deployment decision is separately made.
+## NON-NEGOTIABLE INVARIANTS
 
-## SECURITY INVARIANTS — NON-NEGOTIABLE
+1. Public Internet clients MUST NOT be able to reach the BAREA origin directly.
+2. Only the trusted edge/proxy can reach the origin.
+3. Public caller-supplied `CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`, and `X-Barea-*` values cannot establish provenance.
+4. The edge derives the client address from its own connection context.
+5. The edge-to-origin channel is authenticated using mTLS, a secret unavailable to public callers, or equivalent enforced network identity.
+6. The edge strips caller-supplied forwarding and attestation headers and writes canonical internal values.
+7. The origin consumes the canonical client-IP value only after authenticating the trusted edge boundary.
+8. Direct-origin requests cannot impersonate the edge.
+9. `BAREA_TRUSTED_PROXY` alone is never proof of provenance.
+10. IP is an abuse-control signal only, never an authentication/authorization identity.
+11. No successful-participant-per-IP seat quota may be introduced; church NAT scalability must remain intact.
 
-1. The BAREA origin MUST NOT be directly reachable by arbitrary Internet clients in production.
-2. Only the trusted edge/proxy may reach the origin.
-3. Public clients may send arbitrary `X-Forwarded-For`, `CF-Connecting-IP`, `X-Real-IP`, or `X-Barea-*` headers, but the trusted edge must strip/replace them before forwarding.
-4. The edge derives the actual client address from its own trusted connection context.
-5. The edge authenticates itself to the origin using mTLS, a high-entropy secret protected from public clients, or equivalent network identity.
-6. The origin accepts proxy-provided client-IP information only after authenticating the proxy boundary.
-7. A direct-origin request must not be able to impersonate the proxy.
-8. A valid-looking forwarding header alone is never evidence of provenance.
-9. `BAREA_TRUSTED_PROXY` alone is never evidence of provenance.
-10. Client-provided `clientIp` values are never accepted as authoritative.
-11. IP is an abuse-control signal, not an authentication/authorization identity.
-12. Church NAT scalability must remain intact; do not impose successful-participant-per-IP seat limits.
+## WHAT HAS ALREADY BEEN ESTABLISHED
 
-## REQUIRED NEXT TASK — DESIGN THE DEPLOYMENT CONTRACT, NOT APPLICATION CODE
+The previous audit established that, in the current repository:
 
-AGY must now document the smallest practical deployment contract needed to satisfy ADR-012.
+- there is no Docker/deployment manifest;
+- there is no Nginx/Caddy/Traefik configuration;
+- there is no Cloudflare Tunnel or equivalent edge configuration;
+- production hosting is still an open technical decision;
+- Next.js Server Actions do not expose the raw Node socket to action code;
+- caller-supplied forwarding headers are forgeable when the origin is directly reachable.
 
-Do NOT implement it inside `src/` while there is no actual deployment target.
+Do not dispute or bypass these findings without concrete repository/runtime evidence.
 
-Inspect and document:
+## TASK A — DOCUMENT THE DEPLOYMENT CONTRACT
 
-- expected production hosting target candidates;
-- origin exposure model;
+Update the architecture documentation so ADR-012 records the minimum production contract.
+
+At minimum document:
+
+- production hosting target as `NOT YET SELECTED` until the user selects one;
+- edge technology as `NOT YET SELECTED` until selected;
+- origin isolation/private ingress requirements;
+- exact port 3000 exposure rule;
 - firewall/security-group/private-network requirement;
-- trusted edge behavior;
-- header stripping/replacement contract;
-- proxy authentication mechanism;
-- secret/mTLS lifecycle;
-- health checks;
+- edge header stripping/replacement behavior;
+- authoritative client-IP extraction at the edge;
+- edge-to-origin authentication;
+- secret/mTLS rotation;
 - TLS termination;
-- logging/observability expectations;
-- local development behavior;
-- test environment behavior;
-- failure behavior when the proxy credential is missing/invalid;
-- how the edge obtains the real client IP;
-- how the origin receives the canonical client IP;
-- how direct-origin traffic is blocked.
+- health checks;
+- logging/observability;
+- failure behavior;
+- local development/test behavior;
+- direct-origin attack behavior.
 
-If a concrete hosting provider is selected later, adapt the contract to that provider's documented primitives.
+Keep the contract technology-neutral unless a concrete hosting decision has been made.
 
-## PROHIBITED SHORTCUTS
+## TASK B — DOCUMENT THE IMPLEMENTATION CHECKPOINT
 
-Do NOT:
+Make it explicit that the application currently remains safely anchored at `eb8d416` with forwarding headers ignored.
 
-- trust forwarding headers directly in the application;
-- add another regex/provenance heuristic;
-- use `127.0.0.1` and claim that it is per-client identity;
-- use a signed cookie as a substitute for the required production deployment boundary without a separately approved design;
-- create a custom proxy implementation inside BAREA;
-- add fake infrastructure files that claim a production boundary exists when no deployment actually enforces it;
-- modify unrelated application functionality;
-- start BAREA-007;
-- merge.
+Do not claim that the application currently has real per-client IP differentiation.
 
-## REQUIRED DOCUMENTATION UPDATE
+Do not claim that infrastructure is provisioned.
 
-Update only documentation/architecture records as needed to record this gate, using the existing repository documentation conventions.
+Do not claim that BAREA is production-release-ready.
 
-At minimum keep synchronized:
+## TASK C — OPTIONAL FUTURE DEPLOYMENT IMPLEMENTATION
 
-- `DECISIONS.md` / ADR-012
-- `AGY-REPORT.md`
-- `ROADMAP.md` if milestone status is represented there
+Do NOT implement deployment infrastructure or application proxy-attestation code now unless the user separately selects a concrete hosting target and explicitly authorizes deployment implementation.
 
-Clearly state:
+Do NOT create fake Nginx/Cloudflare/AWS/GCP configuration merely to make the repository look deployment-ready.
 
-- BAREA-006 implementation remains blocked for production release by missing deployment infrastructure;
-- application code is intentionally fail-closed today;
-- the selected deployment architecture is ADR-012;
-- infrastructure provisioning is a prerequisite to final IP-based rate-limit identity behavior.
+## APPLICATION CODE RULE
 
-Do not claim infrastructure has been provisioned unless it actually has been provisioned and verified.
+**ZERO NEW BAREA-006 APPLICATION CODE in `src/`.**
 
-## TEST / VERIFICATION RULES
+The current application implementation must remain fail-closed until a real deployment boundary exists.
 
-The existing application tests may continue to pass with the current fail-closed fallback. That does NOT constitute proof of production per-client IP differentiation.
+Do not modify:
 
-Do not report NAT-scale IP bucket isolation as PASS unless there is a real authoritative per-client identity in the tested runtime/deployment.
+- session authorization semantics;
+- rate-limiter semantics solely to hide the infrastructure gap;
+- tenant security;
+- authentication;
+- admission policies;
+- BAREA-007 behavior.
 
-When deployment infrastructure becomes available, add integration/e2e tests that prove:
+## TWO-AGENT REVIEW
 
-### Direct-origin rejection
-
-A direct public connection to the origin is rejected at the network boundary.
-
-### Proxy authentication
-
-A request without the trusted proxy credential cannot enter the trusted path.
-
-### Header normalization
-
-Public caller-supplied forwarding/attestation headers are stripped and replaced by the edge.
-
-### Trusted client identity
-
-Two legitimate clients arriving through the trusted edge receive distinct authoritative client identities where IP-based throttling requires them.
-
-### Header spoofing
-
-Changing `X-Forwarded-For`, `CF-Connecting-IP`, `X-Real-IP`, or `X-Barea-*` at the public edge does not let a caller select the origin's client identity.
-
-### Church NAT
-
-At least 50 legitimate participants behind one church NAT can join without successful-participant-per-IP seat quotas.
-
-### Existing protections
-
-Preserve authenticated-user join throttling, room lookup throttling, tenant isolation, error sanitization, session expiry, and BAREA-007 quarantine.
-
-## TWO-AGENT REVIEW — DOCUMENTATION/ARCHITECTURE ONLY
-
-Use exactly two fresh agents for the deployment architecture review.
+Use exactly two fresh agents to review the deployment architecture documentation.
 
 ### Agent 1 — Security + Deployment Architecture
 
-Independently challenge:
+Challenge:
 
-- whether ADR-012 really establishes provenance;
-- whether direct origin access is actually blocked;
-- whether proxy authentication can be forged;
-- whether headers are normalized by the edge;
-- whether the design handles attacker-controlled public headers;
-- whether the rate-limit identity is actually authoritative;
-- whether church NAT remains safe;
-- whether infrastructure assumptions are explicit.
+- provenance guarantees;
+- direct-origin isolation;
+- proxy authentication;
+- header stripping/normalization;
+- public-header spoofing;
+- client-IP authority;
+- NAT scalability;
+- secret/mTLS security;
+- failure modes.
 
 ### Agent 2 — QA + Operations / Implementability
 
-Independently challenge:
+Challenge:
 
-- whether the deployment contract is implementable;
-- whether secrets/mTLS can be provisioned and rotated;
-- whether health checks and failure modes are defined;
-- whether direct-origin negative tests are possible;
-- whether deployment and integration tests can prove the invariants;
-- whether local/test environments remain practical;
-- whether the documentation is honest about what is and is not deployed.
+- operational feasibility;
+- secret rotation;
+- TLS/health checks;
+- deployment testing;
+- direct-origin negative testing;
+- local/CI practicality;
+- observability;
+- documentation accuracy.
 
-Both agents must issue explicit GO/NO-GO for the **deployment architecture documentation**, not for application merge.
+Both agents issue GO/NO-GO for the **architecture documentation only**.
 
-## MERGE RULE
+Do NOT use these documentation-review verdicts as application merge authorization.
 
-**Never merge BAREA-006 based solely on passing unit tests while the production deployment boundary is not provisioned.**
+## MERGE GATE
 
-The application branch remains unmergeable until:
+BAREA-006 cannot be merged into `main` until all of the following are true:
 
-1. the deployment target is selected;
-2. the trusted edge/origin boundary is actually provisioned;
-3. direct origin access is blocked;
-4. the proxy authentication contract is deployed;
-5. integration tests prove the client-IP provenance path;
-6. the application consumes that authoritative identity safely;
-7. the two-agent implementation/security review passes;
-8. ChatGPT independently reviews the final implementation and explicitly authorizes merge.
+1. A concrete production hosting/deployment target is selected.
+2. The edge/origin boundary is actually provisioned.
+3. The origin cannot be reached directly by arbitrary Internet clients.
+4. Proxy authentication is actually deployed.
+5. The edge strips/rewrites client-controlled forwarding headers.
+6. Integration/deployment tests prove direct-origin rejection and client-IP provenance.
+7. Application code consumes the authoritative identity only after verifying the trusted edge.
+8. Two fresh implementation/security reviewers pass.
+9. ChatGPT independently reviews the final code and explicitly authorizes merge.
+
+Passing the existing 134 unit tests does not satisfy this deployment gate.
+
+## REQUIRED DOCUMENTATION SYNCHRONIZATION
+
+Keep synchronized as appropriate:
+
+- `DECISIONS.md` / ADR-012
+- `ROADMAP.md`
+- `AGY-REPORT.md`
+
+State clearly:
+
+**BAREA-006 — BLOCKED FOR PRODUCTION RELEASE: INFRASTRUCTURE REQUIRED.**
 
 ## FINAL REPORT
 
-Report:
+Return:
 
-### Deployment architecture
-- selected hosting/deployment target, or state `NOT YET SELECTED`;
-- edge technology, or state `NOT YET SELECTED`;
-- origin isolation mechanism;
-- proxy authentication mechanism;
-- client-IP provenance mechanism;
-- exact trust boundary;
-- direct-origin protection;
-- current infrastructure status.
+### Deployment status
+- production target: `SELECTED` or `NOT YET SELECTED`;
+- edge technology: `SELECTED` or `NOT YET SELECTED`;
+- origin isolation status;
+- proxy authentication status;
+- client-IP provenance status;
+- direct-origin protection status.
 
 ### Documentation
-- files changed;
+- exact files changed;
 - ADR changes;
 - roadmap/report changes.
 
-### Two-agent review
+### Two-agent architecture review
 - Agent 1: GO/NO-GO + findings;
 - Agent 2: GO/NO-GO + findings.
 
-### Application code
-- confirm **ZERO new application changes** unless a later explicit implementation authorization exists.
+### Application
+- confirm whether any `src/` files changed;
+- if none, explicitly report `ZERO APPLICATION CODE CHANGED`.
 
 ## STOP CONDITION
 
-After documenting the deployment architecture gap and required infrastructure contract:
+After the deployment contract is documented and two-agent architecture review is complete:
 
-**STOP. DO NOT MERGE. DO NOT START BAREA-007. WAIT FOR A CONCRETE DEPLOYMENT DECISION AND CHATGPT REVIEW.**
+**STOP. DO NOT MERGE. DO NOT START BAREA-007. DO NOT INVENT A PROXY. WAIT FOR THE USER TO SELECT A PRODUCTION DEPLOYMENT TARGET AND FOR CHATGPT TO REVIEW THAT DECISION.**
