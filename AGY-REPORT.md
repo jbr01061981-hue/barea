@@ -965,3 +965,19 @@ Milestone BAREA-007 builds the live quiz execution engine for the BAREA platform
   - `npm run build:next`: 0 errors (Turbopack production build succeeded).
   - `git grep ": any" -- src/`: 0 occurrences.
   - `git diff --check`: Clean (0 whitespace errors).
+
+### G. PR #11 Blocker Remediation 3: SSE Reconnect & History Replay Canonical Projection Isolation
+- **Identified Defect**: In `src/app/api/session/[id]/live/route.ts`, the SSE history replay path for reconnecting subscribers (`?since=...`) performed an ad-hoc inline shallow deletion rather than passing replayed events through the canonical projection filter. Furthermore, `RealtimeTransport.getHistory()` returned unprojected event logs without role-aware projection, which could leak sensitive question fields (`correctOptionIndices`, `explanation`) to reconnecting participants.
+- **Remediation**:
+  1. **Canonical Projection Filter**: Exported `projectEventForRole(event, role)` from `src/transport/realtime-transport.ts` and `src/index.ts`. Recursively sanitizes root, nested `question`, `currentQuestion`, and array `questions` payloads, stripping `correctOptionIndices`, `explanation`, `correctOptionIndex`, and `correctAnswer` for non-host roles (`participant`, `projector`).
+  2. **Role-Aware History Replay**: Updated `RealtimeTransport.getHistory(sessionId, sinceSequence, role)` to apply `projectEventForRole(e, role)` whenever a subscriber role is specified.
+  3. **SSE Route Handler Enforcement**: Replaced ad-hoc inline deletion in `src/app/api/session/[id]/live/route.ts` with `projectEventForRole(evt, effectiveRole)` and passed `effectiveRole` to `transport.getHistory()`.
+  4. **Service Reconnection Protection**: Updated `LiveQuizService.reconnectParticipant()` to pass `'participant'` to `getHistory()`, ensuring `reconnectLiveSessionAction` is immune to data leakage.
+  5. **Adversarial Regression Test**: Added Test 13 (`SSE & Service History Replay Canonical Projection Isolation`) to `test/live-quiz.test.ts`. Asserts that reconnecting participants via SSE stream (`?token=...&since=1`) and via `reconnectLiveSessionAction` receive replayed events with zero leakage of `correctOptionIndices` or explanations, while authenticated hosts reconnecting with `?role=host` retain full access.
+- **Verification Gates**:
+  - `npm test`: 148/148 passing tests (all baseline + all live-quiz suites).
+  - `node --test dist/test/live-quiz.test.js`: 14/14 passing tests.
+  - `npm run typecheck`: 0 errors.
+  - `npm run build:next`: 0 errors (Turbopack production build succeeded).
+  - `git grep ": any" -- src/`: 0 occurrences.
+  - `git diff --check`: Clean (0 whitespace errors).

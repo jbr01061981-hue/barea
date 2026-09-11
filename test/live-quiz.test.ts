@@ -1028,4 +1028,160 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     assert.equal(getPersistedCount(), 1);
   });
 
+  await t.test('13. SSE & Service History Replay Canonical Projection Isolation (PR #11 Blocker Remediation)', async () => {
+    const env = setupTestEnvironment();
+    const hostId = 'teacher_replay_guard';
+    const orgId = derivePersonalTenantId(hostId);
+    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
+
+    const session = env.sessionService.createSession({
+      workspaceType: WorkspaceType.PERSONAL,
+      organizationId: orgId,
+      publishedQuizSnapshotId: snapshotId,
+      hostUserId: hostId,
+      participationMode: ParticipationMode.INDIVIDUAL_AUTHENTICATED,
+      admissionPolicy: AdmissionPolicy.OPEN
+    });
+
+    const participantToken = env.sessionService.joinSession(session.id, {
+      userId: 'pupil_replay_1',
+      providerType: 'GOOGLE',
+      providerSub: 'sub_replay_1',
+      verifiedEmail: 'replay1@test.org',
+      verifiedPhone: null,
+      displayName: 'Replay Pupil'
+    });
+
+    // Publish sensitive events directly to transport to build history log
+    env.realtimeTransport.publish({
+      eventId: 'evt_sensitive_1',
+      eventType: LiveQuizEventType.QUESTION_OPENED,
+      sessionId: session.id,
+      stateVersion: 2,
+      timestamp: new Date().toISOString(),
+      payload: {
+        position: 1,
+        stem: 'What is the first book?',
+        options: ['Genesis', 'Exodus'],
+        correctOptionIndices: [0], // SENSITIVE
+        explanation: 'Genesis is the book of beginnings.' // SENSITIVE
+      }
+    });
+
+    env.realtimeTransport.publish({
+      eventId: 'evt_sensitive_2',
+      eventType: LiveQuizEventType.QUESTION_ADVANCED,
+      sessionId: session.id,
+      stateVersion: 3,
+      timestamp: new Date().toISOString(),
+      payload: {
+        position: 2,
+        question: {
+          id: 'q_nested_2',
+          stem: 'Second book?',
+          options: ['Exodus', 'Leviticus'],
+          correctOptionIndices: [0], // SENSITIVE
+          explanation: 'Exodus is the second book.' // SENSITIVE
+        }
+      }
+    });
+
+    // 1. Participant reconnects via SSE with ?since=1
+    // Verify SSE stream contains replayed events but STRICTLY applies canonical projection
+    const sseReq = new NextRequest(
+      `http://localhost:3000/api/session/${session.id}/live?token=${participantToken.token}&since=1`
+    );
+    const sseRes = await liveSseRoute(sseReq, { params: Promise.resolve({ id: session.id }) });
+    assert.equal(sseRes.status, 200);
+
+    const readUntilData = async (reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> => {
+      let text = '';
+      const decoder = new TextDecoder();
+      for (let i = 0; i < 5; i++) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) text += decoder.decode(value);
+        if (text.includes('data:')) break;
+      }
+      return text;
+    };
+
+    const reader = sseRes.body?.getReader();
+    assert.ok(reader);
+    let sseText = '';
+    try {
+      sseText = await readUntilData(reader);
+    } finally {
+      await reader.cancel();
+    }
+
+    // Assert that replayed event 2 was sent
+    assert.ok(sseText.includes('evt_sensitive_2'));
+    // CRITICAL: Assert that NO sensitive field leaked in participant SSE replay stream
+    assert.strictEqual(sseText.includes('correctOptionIndices'), false);
+    assert.strictEqual(sseText.includes('Exodus is the second book.'), false);
+    assert.strictEqual(sseText.includes('Genesis is the book of beginnings.'), false);
+
+    // 2. Host reconnects via SSE with ?role=host&since=1
+    // Authenticated host DOES receive unredacted sensitive fields in replay
+    setAuthorizedTeacherContext({
+      userId: hostId,
+      organizationId: orgId,
+      displayName: 'Replay Host',
+      role: 'teacher'
+    });
+
+    const hostSseReq = new NextRequest(
+      `http://localhost:3000/api/session/${session.id}/live?role=host&since=1`
+    );
+    const hostSseRes = await liveSseRoute(hostSseReq, { params: Promise.resolve({ id: session.id }) });
+    assert.equal(hostSseRes.status, 200);
+
+    const hostReader = hostSseRes.body?.getReader();
+    assert.ok(hostReader);
+    let hostSseText = '';
+    try {
+      hostSseText = await readUntilData(hostReader);
+    } finally {
+      await hostReader.cancel();
+    }
+    setAuthorizedTeacherContext(null);
+
+    assert.ok(hostSseText.includes('evt_sensitive_2'));
+    assert.ok(hostSseText.includes('correctOptionIndices'));
+    assert.ok(hostSseText.includes('Exodus is the second book.'));
+
+    // 3. Service reconnectParticipant / reconnectLiveSessionAction replay leak defense
+    const reconnectResult = await reconnectLiveSessionAction(session.id, participantToken.token, 0);
+    assert.equal(reconnectResult.success, true);
+    if (reconnectResult.success) {
+      assert.ok(reconnectResult.data.missedEvents.length >= 2);
+      const missedJson = JSON.stringify(reconnectResult.data.missedEvents);
+      // Canonical projection filter must have sanitized all replayed events
+      assert.strictEqual(missedJson.includes('correctOptionIndices'), false);
+      assert.strictEqual(missedJson.includes('Exodus is the second book.'), false);
+      assert.strictEqual(missedJson.includes('Genesis is the book of beginnings.'), false);
+
+      for (const evt of reconnectResult.data.missedEvents) {
+        const payload = evt.payload as Record<string, unknown> | undefined;
+        assert.strictEqual(payload?.correctOptionIndices, undefined);
+        assert.strictEqual(payload?.explanation, undefined);
+        const q = payload?.question as Record<string, unknown> | undefined;
+        if (q) {
+          assert.strictEqual(q.correctOptionIndices, undefined);
+          assert.strictEqual(q.explanation, undefined);
+        }
+      }
+    }
+
+    // 4. Direct transport.getHistory with role projection
+    const participantHistory = env.realtimeTransport.getHistory(session.id, 0, 'participant');
+    const projectorHistory = env.realtimeTransport.getHistory(session.id, 0, 'projector');
+    const hostHistory = env.realtimeTransport.getHistory(session.id, 0, 'host');
+
+    assert.strictEqual(JSON.stringify(participantHistory).includes('correctOptionIndices'), false);
+    assert.strictEqual(JSON.stringify(projectorHistory).includes('correctOptionIndices'), false);
+    assert.ok(JSON.stringify(hostHistory).includes('correctOptionIndices'));
+  });
+
 });

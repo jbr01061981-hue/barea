@@ -158,7 +158,9 @@ export {
 } from './service/live-quiz-service';
 
 export {
+  type SubscriberRole,
   type RealtimeSubscriber,
   type RealtimeTransport,
-  InMemoryRealtimeTransport
+  InMemoryRealtimeTransport,
+  projectEventForRole
 } from './transport/realtime-transport';

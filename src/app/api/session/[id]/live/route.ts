@@ -5,6 +5,7 @@ import {
   getAuthorizedTeacherContext
 } from '../../../../teacher/review/db';
 import { LiveQuizEvent } from '../../../../../domain/live-quiz';
+import { projectEventForRole } from '../../../../../transport/realtime-transport';
 import {
   validateParticipantToken,
   ParticipantToken
@@ -114,28 +115,13 @@ export async function GET(
       // Send initial connection heartbeat
       controller.enqueue(encoder.encode(': connected\n\n'));
 
-      // If reconnecting with a valid since sequence number, replay missed events
+      // If reconnecting with a valid since sequence number, replay missed events via canonical projection filter
       if (Number.isInteger(sinceSequence) && sinceSequence > 0) {
-        const missedEvents = transport.getHistory(sessionId, sinceSequence);
+        const missedEvents = transport.getHistory(sessionId, sinceSequence, effectiveRole);
         for (const evt of missedEvents) {
           try {
-            // Apply subscriber projection for participant
-            const payloadToSend = (effectiveRole === 'participant' && evt.payload)
-              ? (() => {
-                  const p = { ...evt.payload };
-                  delete (p as Record<string, unknown>).correctOptionIndices;
-                  delete (p as Record<string, unknown>).explanation;
-                  if (p.question && typeof p.question === 'object') {
-                    const q = { ...(p.question as Record<string, unknown>) };
-                    delete q.correctOptionIndices;
-                    delete q.explanation;
-                    p.question = q;
-                  }
-                  return p;
-                })()
-              : evt.payload;
-
-            const projectedEvt = { ...evt, payload: payloadToSend };
+            // Apply canonical projection filter for role
+            const projectedEvt = projectEventForRole(evt, effectiveRole);
             const data = `event: ${projectedEvt.eventType}\ndata: ${JSON.stringify(projectedEvt)}\n\n`;
             controller.enqueue(encoder.encode(data));
           } catch {

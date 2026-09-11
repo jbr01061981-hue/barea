@@ -526,7 +526,7 @@ export class LiveQuizService {
     lastSeenSequence: number = 0
   ): { view: ParticipantLiveView; missedEvents: readonly LiveQuizEvent[] } {
     const view = this.getParticipantLiveView(sessionId, token);
-    const missedEvents = this.transport ? this.transport.getHistory(sessionId, lastSeenSequence) : [];
+    const missedEvents = this.transport ? this.transport.getHistory(sessionId, lastSeenSequence, 'participant') : [];
     return { view, missedEvents };
   }
 }
