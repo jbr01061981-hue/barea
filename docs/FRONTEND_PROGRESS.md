@@ -22,27 +22,29 @@
 
 **Status: IN PROGRESS**
 
-Purpose: keep the teacher entry point directly on the public homepage without inventing or simulating production authentication.
+Purpose: keep the teacher entry point directly on the public homepage, visible early in the primary hero-side information area, without inventing or simulating production authentication.
 
 Current implementation on branch `barea-008a-public-entry`:
 - Teacher sign-in CTA is available from the homepage hero.
 - Header `Sign in` navigates to the homepage teacher-entry section.
-- Homepage contains the teacher-entry panel and clearly states that production authentication is not connected.
-- No credentials are requested or simulated.
+- Homepage contains the teacher-entry panel at the top of the `The BAREA rhythm` section, before Prepare / Verify / Play.
+- The teacher-entry panel uses mobile-first stacking and a compact horizontal layout on wider screens.
+- Homepage closing CTA anchors to the same teacher-entry section.
 - The separate `/login` route was removed; teacher entry is intentionally part of the homepage experience.
+- Authentication status clearly states that production authentication is not connected; no credentials are requested or simulated.
 
 Boundary:
 - Frontend-only change.
 - No authentication API, OAuth provider, security boundary, or backend behavior was added or changed.
 - The existing backend authentication contract remains authoritative.
 
-Verification completed before this UI adjustment:
+Verification completed before this final placement adjustment:
 - `npm run typecheck` — PASS
 - `npm test` — 149/149 PASS
 - `npm run build` — PASS
 - `npm run build:next` — PASS
 - `/login` was verified before being intentionally removed in favor of the homepage-only entry.
-- Desktop visual review of homepage and teacher entry — PASS before this final placement adjustment; final homepage placement requires one local visual check.
+- Desktop visual review of the homepage and teacher entry — PASS before this final placement adjustment; one final local visual/build check is required for the latest placement change.
 
 ## BAREA-008 — Homepage
 
