@@ -302,57 +302,65 @@ To satisfy ADR-012 without coupling BAREA to a single cloud vendor, the deployme
 
 1. **Production Hosting Target & Edge Technology**:
    - Status: **SELECTED — CLOUDFLARE EDGE + CLOUDFLARE TUNNEL (`cloudflared`)**.
-   - Topology:
-     - Cloudflare Edge terminates public TLS and routes DNS.
-     - `cloudflared` connector runs on the private origin host/network and forwards traffic privately to Next.js on `localhost:3000`.
-     - Zero public listening ports, zero public IPv4/IPv6 exposure on port 3000.
+   - Concrete Deployment Topology:
+     ```text
+     PUBLIC INTERNET
+           |
+           v (HTTPS / TLS 1.3 Anycast)
+     CLOUDFLARE EDGE (DNS / TLS termination)
+           |
+           v (Encrypted outbound-only QUIC/TLS tunnel connector)
+     CLOUDFLARE TUNNEL (`cloudflared` daemon on private origin host)
+           |
+           v (Loopback HTTP: 127.0.0.1:3000)
+     PRIVATE BAREA ORIGIN (Next.js App Router on Node.js 20+)
+     ```
    - Reference Architectures Evaluated:
      - *Cloudflare Tunnel + Container/VM Origin* (Selected).
      - *AWS / GCP Private VPC* (Evaluated / Deferred).
      - *Bare Metal / Dedicated Linux VM with Reverse Proxy (Nginx / Caddy)* (Evaluated / Deferred).
 2. **Origin Exposure Model**:
-   - The Next.js Node process binds to private interface or loopback only (or private container network).
+   - The Next.js Node process binds strictly to loopback (`127.0.0.1:3000`) or a private isolated container network.
    - Zero public IPv4/IPv6 routing to origin port 3000.
-3. **Firewall / Security Group / Private Network Requirement**:
-   - Ingress firewall rule: Drop all traffic to port 3000 from CIDR `0.0.0.0/0` and `::/0`.
-   - Permit ingress to port 3000 exclusively from verified edge proxy security group or private subnet CIDR.
+   - The host requires NO inbound public listening ports and NO public IP address.
+3. **Firewall / Network Ingress Model**:
+   - For Cloudflare Tunnel, `cloudflared` initiates outbound-only connections from the private origin host to Cloudflare's Edge PoPs.
+   - **Correction Note**: Cloudflare Edge does NOT initiate direct inbound connections to origin port 3000. Therefore, a Cloudflare source-CIDR inbound firewall allowlist on port 3000 is neither required nor applicable.
+   - Host/OS packet filter (e.g. `ufw`, `nftables`, or cloud security group) drops all inbound public connections to port 3000 (`0.0.0.0/0:3000` dropped).
 4. **Trusted Edge Behavior**:
-   - Terminates public TLS with high-grade ciphers.
-   - Evaluates incoming request before upstream proxying.
-5. **Header Stripping / Replacement Contract**:
-   - The edge proxy MUST delete / strip any incoming client-provided instance of:
-     - `X-Forwarded-For`
-     - `CF-Connecting-IP`
-     - `X-Real-IP`
-     - `X-Barea-Client-IP`
-     - `X-Barea-Edge-Attestation`
-   - The edge proxy MUST inject:
-     - `X-Barea-Client-IP`: set strictly to the remote IP of the inbound TCP socket (`$remote_addr` or socket peer address).
-     - `X-Barea-Edge-Attestation`: set to the provisioned deployment secret (or mTLS client certificate header).
-6. **Proxy Authentication Mechanism**:
-   - Shared High-Entropy Secret: A 256-bit cryptographically secure token (`BAREA_EDGE_SECRET`) injected into proxy upstream headers and verified by the origin application using timing-safe comparison (`crypto.timingSafeEqual`).
-   - Mutual TLS (mTLS): Alternatively, reverse proxy presents an internal client certificate to origin TLS listener, verified against an internal CA.
-7. **Secret / mTLS Lifecycle**:
-   - Secrets managed via environment variables / secret manager (`BAREA_EDGE_SECRET`).
-   - Dual-secret rotation support: origin accepts `BAREA_EDGE_SECRET` and optional `BAREA_EDGE_SECRET_PREVIOUS` during rotation windows.
+   - Terminates public TLS with modern ciphers (TLS 1.3 / TLS 1.2).
+   - Ingests public client requests over Anycast edge PoPs.
+5. **Header Stripping & Client-IP Handling Contract**:
+   - **Native Cloudflare Mechanism**: Cloudflare Edge terminates the client TCP socket and automatically overwrites `CF-Connecting-IP` with the connecting client's true socket IP address. Any client-provided `CF-Connecting-IP` is overwritten by Cloudflare Edge before traversing the tunnel.
+   - Incoming `X-Forwarded-For` is appended or normalized by Cloudflare; caller-controlled values are untrusted.
+   - Any external caller attempts to pass `X-Barea-*` headers must be stripped at the ingress boundary or ignored.
+   - Because `cloudflared` is an authenticated, outbound-only connector that only Cloudflare Edge can route traffic to, and because the origin is unreachable from the public internet, `CF-Connecting-IP` arriving through the tunnel possesses genuine network-level provenance.
+6. **Origin Authentication & Attestation (Correction Applied)**:
+   - **No Fake HMAC**: Ordinary Cloudflare Transform Rules do NOT provide cryptographic per-request HMAC signing. A static shared secret header is not an HMAC.
+   - **Native Trust Boundary**: The primary provenance guarantee is provided by the private Tunnel architecture: the origin listens only on loopback, has no public ingress, and can only receive requests dispatched through the authenticated `cloudflared` daemon.
+   - **Optional Shared Secret (Defense-in-Depth)**: If an additional application-level attestation token (`BAREA_EDGE_SECRET`) is injected via Cloudflare HTTP Request Header Modification rules (Transform Rules) and verified by the origin application, it acts as an additional defense-in-depth barrier against accidental origin exposure. It is a static shared token, not an HMAC signature.
+7. **Secret Lifecycle**:
+   - `cloudflared` tunnel token and any optional edge secret managed via environment variables (`CLOUDFLARE_TUNNEL_TOKEN`, `BAREA_EDGE_SECRET`) strictly outside of Git.
+   - Dual-secret rotation support: origin accepts `BAREA_EDGE_SECRET` and optional `BAREA_EDGE_SECRET_PREVIOUS` during rotation windows if application-level attestation is active.
 8. **Health Checks**:
-   - Dedicated unauthenticated health endpoint (`/api/health` or `/`) responds `200 OK` to edge load balancer health probes without requiring edge attestation.
+   - Dedicated unauthenticated health endpoint (`/api/health`) responds `200 OK` to local `cloudflared` and monitoring probes.
    - Health check probes are exempted from participant abuse rate limits.
 9. **TLS Termination**:
-   - Public TLS terminates at the edge proxy (providing modern HTTP/2, HTTP/3, and TLS 1.3).
-   - In-transit encryption between edge proxy and origin utilizes private network VPC encryption or internal TLS.
+   - Public TLS terminates at Cloudflare Edge.
+   - In-transit encryption between `cloudflared` and Cloudflare PoPs is encrypted via QUIC/TLS.
+   - Connection between `cloudflared` and Next.js is private local loopback (`127.0.0.1:3000`).
 10. **Logging / Observability Expectations**:
-    - Edge proxy logs include connection details, client IP, edge attestation status, and request duration.
+    - Cloudflare dashboard and tunnel metrics provide edge connection and tunnel status monitoring.
     - Application logs record rate-limit events with redacted client IP prefix (e.g. `203.0.113.***`) for privacy while retaining security auditability.
 11. **Local Development Behavior**:
-    - When `NODE_ENV === 'development'`, if `BAREA_EDGE_SECRET` is unset, the application defaults to local fallback `127.0.0.1` or accepts loopback connections without edge attestation for developer velocity.
+    - When `NODE_ENV === 'development'`, local developers run `next dev` directly on loopback `127.0.0.1:3000` without requiring `cloudflared` or edge secrets.
 12. **Test Environment Behavior**:
-    - In `NODE_ENV === 'test'`, test fixtures can supply simulated request contexts via protected test seams (`setMockRequestHeadersForTesting`, `setTrustedClientIpForTesting`), which are strictly disabled and throw `Forbidden` in production.
-13. **Failure Behavior (Missing / Invalid Proxy Credential)**:
-    - If a request reaches the application with a missing or invalid `X-Barea-Edge-Attestation`, the application fails closed for privileged IP extraction: it rejects caller-supplied `X-Barea-Client-IP` and relegates the request to the unauthenticated quarantined fallback identity (`127.0.0.1`).
+    - In `NODE_ENV === 'test'`, automated tests use controlled in-memory fixtures and test seams (`setMockRequestHeadersForTesting`, `setTrustedClientIpForTesting`), which are strictly disabled and throw `Forbidden` in production (`NODE_ENV === 'production'`).
+13. **Failure Behavior (Direct / Unauthenticated Access)**:
+    - If a request reaches the application without valid edge provenance (or if a direct connection is attempted), the application fails closed: it ignores forwarding headers and relegates the request to the quarantined fallback identity (`127.0.0.1`).
 14. **How Direct-Origin Traffic Is Blocked**:
-    - Network Layer: Blocked by firewall / security group before TCP handshake completes.
-    - Application Layer (Defense-in-Depth): If a network misconfiguration allows a direct request to reach port 3000, the absence of the valid `X-Barea-Edge-Attestation` prevents the caller from forging `X-Barea-Client-IP`. All spoofed headers are ignored.
+    - Network Layer: Next.js binds to `127.0.0.1:3000`; no public IP or public port forwarding exists. Public packets cannot reach port 3000.
+    - Application Layer (Defense-in-Depth): Unprovenanced requests resolve strictly to `127.0.0.1`, preventing attacker-controlled rate-limit bucket evasion.
 
 ### Hosting Target Candidate Evaluation Matrix
 

@@ -796,11 +796,21 @@ npm notice run tsc (0 errors)
 ### B. Deployment Contract Specification
 The practical deployment contract designed to satisfy ADR-012 establishes:
 1. **Production Hosting Target & Edge Technology**: **SELECTED — CLOUDFLARE EDGE + CLOUDFLARE TUNNEL (`cloudflared`)**. Formally selected by user decision (commit `a6a8f3b`).
-2. **Origin Exposure**: Next.js origin port 3000 has zero public routing, binds to loopback/private interface, and is never reachable by arbitrary public internet clients.
-3. **Firewall Requirement**: Drops all inbound TCP traffic to port 3000 from `0.0.0.0/0` and `::/0`. Permits ingress strictly via `cloudflared` outbound daemon tunnel.
-4. **Header Normalization**: The edge reverse proxy unconditionally strips all public client-supplied headers (`X-Forwarded-For`, `CF-Connecting-IP`, `X-Real-IP`, `X-Barea-*`), extracts client IP strictly from its connection socket, and injects internal `X-Barea-Client-IP`.
-5. **Proxy Attestation**: The proxy presents a high-entropy secret (`X-Barea-Edge-Attestation`) matching `BAREA_EDGE_SECRET` (or mTLS client certificate).
-6. **Application Enforcement**: The application verifies edge attestation in constant time before accepting `X-Barea-Client-IP`. Unauthenticated or direct requests fail closed to isolated fallback `127.0.0.1`.
+2. **Origin Exposure**: Next.js origin port 3000 has zero public routing, binds to loopback (`127.0.0.1:3000`) or private container interface, and is never reachable by arbitrary public internet clients.
+3. **Firewall / Network Ingress Model**:
+   - `cloudflared` initiates outbound-only connections to Cloudflare Edge.
+   - Cloudflare Edge does NOT connect directly to origin port 3000, so an inbound Cloudflare source-CIDR firewall allowlist is not required.
+   - Host packet filter drops all inbound public TCP connections to port 3000 (`0.0.0.0/0:3000` dropped).
+4. **Header Normalization & Client IP Handling**:
+   - Cloudflare Edge terminates public client TLS and overwrites `CF-Connecting-IP` with the true client socket IP address. Any client-provided `CF-Connecting-IP` is overwritten before traversing the tunnel.
+   - Untrusted `X-Forwarded-For` and external `X-Barea-*` headers are stripped or ignored.
+   - Network provenance is guaranteed by the private Tunnel architecture: only Cloudflare Edge can route traffic to the authenticated `cloudflared` daemon.
+5. **Origin Authentication & Attestation (Correction Applied)**:
+   - No fake HMAC claims: ordinary Cloudflare Transform Rules do not perform cryptographic HMAC signing.
+   - The primary trust boundary is the network topology (loopback binding + private outbound tunnel).
+   - If an additional application-level attestation token (`BAREA_EDGE_SECRET`) is injected via Cloudflare Transform Rules, it serves as an optional static defense-in-depth token, not an HMAC signature.
+6. **Application Enforcement**:
+   - Direct requests without provenance fail closed to the isolated fallback bucket (`127.0.0.1`).
 7. **Health & Observability**: `/api/health` probes operate unauthenticated; rate-limit audit logs redact client IP prefixes for privacy.
 
 ### C. Hosting Candidate Evaluation & Recommendation
@@ -817,4 +827,4 @@ The practical deployment contract designed to satisfy ADR-012 establishes:
 - **Edge Technology**: **CLOUDFLARE TUNNEL / EDGE**.
 - **Application Code Status**: ZERO application code changed in `src/`. Checkpoint remains at `eb8d4160ec2f0fb99f46ffa5b2153cc477e90976`.
 - **Merge Status**: Branch `barea-006-share-join` remains unmerged. No self-merge to `main`. Zero scope creep into BAREA-007.
-- **Production Prerequisite**: Live production release requires physical provisioning of the edge proxy, origin firewall rules, and deployment secrets before IP-based rate-limit differentiation can be activated.
+- **Production Prerequisite**: Live production release requires physical provisioning of the Cloudflare Tunnel, DNS/TLS routing, and deployment secrets before IP-based rate-limit differentiation can be activated.
