@@ -838,12 +838,44 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     assert.strictEqual(JSON.stringify(leakingHostBody).includes('CRITICAL'), false);
     setAuthorizedTeacherContext(null);
 
-    // 2. Participant caller cannot obtain host SSE projection by passing ?role=host
+    // 2. Participant caller supplying ?role=host receives 200 with PARTICIPANT projection, NEVER host projection
     const participantSpoofReq = new NextRequest(
       `http://localhost:3000/api/session/${session.id}/live?role=host&token=${participantToken.token}`
     );
     const participantSpoofRes = await liveSseRoute(participantSpoofReq, { params: Promise.resolve({ id: session.id }) });
-    assert.equal(participantSpoofRes.status, 401); // Teacher auth required for host role
+    assert.equal(participantSpoofRes.status, 200); // Allowed to stream as participant
+    assert.equal(participantSpoofRes.headers.get('content-type'), 'text/event-stream');
+
+    const spoofReader = participantSpoofRes.body?.getReader();
+    assert.ok(spoofReader);
+    // Publish a sensitive live event while participant is subscribed with ?role=host
+    env.realtimeTransport.publish({
+      eventId: 'evt_spoof_check',
+      eventType: LiveQuizEventType.QUESTION_OPENED,
+      sessionId: session.id,
+      stateVersion: 10,
+      timestamp: new Date().toISOString(),
+      payload: {
+        position: 1,
+        stem: 'Spoof Check Question',
+        correctOptionIndices: [0],
+        explanation: 'Sensitive Explanation for Spoof Check'
+      }
+    });
+
+    let liveSpoofText = '';
+    const textDecoder = new TextDecoder();
+    for (let i = 0; i < 5; i++) {
+      const { value, done } = await spoofReader.read();
+      if (done) break;
+      if (value) liveSpoofText += textDecoder.decode(value);
+      if (liveSpoofText.includes('evt_spoof_check')) break;
+    }
+    await spoofReader.cancel();
+
+    assert.ok(liveSpoofText.includes('evt_spoof_check'));
+    assert.strictEqual(liveSpoofText.includes('correctOptionIndices'), false);
+    assert.strictEqual(liveSpoofText.includes('Sensitive Explanation for Spoof Check'), false);
 
     // 3. Non-host authenticated teacher cannot obtain host SSE projection (IDOR rejection)
     setAuthorizedTeacherContext({
@@ -858,13 +890,19 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const nonHostBody = await nonHostRes.json();
     assert.equal(nonHostBody.error, 'NOT_SESSION_HOST');
 
-    // 4. Authenticated session host CAN obtain host projection
+    // 4. Authenticated session host receives host projection WITHOUT needing a client ?role=host claim
     setAuthorizedTeacherContext({
       userId: hostId,
       organizationId: orgId,
       displayName: 'Legit Host',
       role: 'teacher'
     });
+    const hostNoRoleReq = new NextRequest(`http://localhost:3000/api/session/${session.id}/live`);
+    const hostNoRoleRes = await liveSseRoute(hostNoRoleReq, { params: Promise.resolve({ id: session.id }) });
+    assert.equal(hostNoRoleRes.status, 200);
+    assert.equal(hostNoRoleRes.headers.get('content-type'), 'text/event-stream');
+
+    // Host connecting with optional ?role=host also succeeds
     const hostReq = new NextRequest(`http://localhost:3000/api/session/${session.id}/live?role=host`);
     const hostRes = await liveSseRoute(hostReq, { params: Promise.resolve({ id: session.id }) });
     assert.equal(hostRes.status, 200);
@@ -888,6 +926,21 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const foreignTokenReq = new NextRequest(`http://localhost:3000/api/session/${session.id}/live?token=${foreignToken}`);
     const foreignTokenRes = await liveSseRoute(foreignTokenReq, { params: Promise.resolve({ id: session.id }) });
     assert.equal(foreignTokenRes.status, 403);
+
+    // Cross-session isolation: Session A credentials cannot subscribe to Session B
+    const sessionB = env.sessionService.createSession({
+      workspaceType: WorkspaceType.PERSONAL,
+      organizationId: orgId,
+      publishedQuizSnapshotId: snapshotId,
+      hostUserId: hostId,
+      participationMode: ParticipationMode.INDIVIDUAL_AUTHENTICATED,
+      admissionPolicy: AdmissionPolicy.OPEN
+    });
+    const crossSessionReq = new NextRequest(`http://localhost:3000/api/session/${sessionB.id}/live?token=${participantToken.token}`);
+    const crossSessionRes = await liveSseRoute(crossSessionReq, { params: Promise.resolve({ id: sessionB.id }) });
+    assert.equal(crossSessionRes.status, 403);
+    const crossSessionBody = await crossSessionRes.json();
+    assert.equal(crossSessionBody.error, 'FORBIDDEN');
 
     // Valid participant token succeeds
     const validPartReq = new NextRequest(`http://localhost:3000/api/session/${session.id}/live?token=${participantToken.token}`);
@@ -1087,7 +1140,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     });
 
     // 1. Participant reconnects via SSE with ?since=1
-    // Verify SSE stream contains replayed events but STRICTLY applies canonical projection
+    // Clear teacher context so request runs as unauthenticated teacher / authenticated participant
+    setAuthorizedTeacherContext(null);
     const sseReq = new NextRequest(
       `http://localhost:3000/api/session/${session.id}/live?token=${participantToken.token}&since=1`
     );
@@ -1122,8 +1176,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     assert.strictEqual(sseText.includes('Exodus is the second book.'), false);
     assert.strictEqual(sseText.includes('Genesis is the book of beginnings.'), false);
 
-    // 2. Host reconnects via SSE with ?role=host&since=1
-    // Authenticated host DOES receive unredacted sensitive fields in replay
+    // 2. Host reconnects via SSE without needing ?role=host query param (e.g. ?since=1)
+    // Authenticated host authoritatively receives unredacted sensitive fields in replay
     setAuthorizedTeacherContext({
       userId: hostId,
       organizationId: orgId,
@@ -1132,7 +1186,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     });
 
     const hostSseReq = new NextRequest(
-      `http://localhost:3000/api/session/${session.id}/live?role=host&since=1`
+      `http://localhost:3000/api/session/${session.id}/live?since=1`
     );
     const hostSseRes = await liveSseRoute(hostSseReq, { params: Promise.resolve({ id: session.id }) });
     assert.equal(hostSseRes.status, 200);
@@ -1150,6 +1204,27 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     assert.ok(hostSseText.includes('evt_sensitive_2'));
     assert.ok(hostSseText.includes('correctOptionIndices'));
     assert.ok(hostSseText.includes('Exodus is the second book.'));
+
+    // 2b. Participant reconnects via SSE passing ?role=host&since=1
+    // Effective role is derived as participant, replay must remain redacted
+    const participantSpoofReplayReq = new NextRequest(
+      `http://localhost:3000/api/session/${session.id}/live?role=host&token=${participantToken.token}&since=1`
+    );
+    const participantSpoofReplayRes = await liveSseRoute(participantSpoofReplayReq, { params: Promise.resolve({ id: session.id }) });
+    assert.equal(participantSpoofReplayRes.status, 200);
+
+    const participantSpoofReader = participantSpoofReplayRes.body?.getReader();
+    assert.ok(participantSpoofReader);
+    let participantSpoofSseText = '';
+    try {
+      participantSpoofSseText = await readUntilData(participantSpoofReader);
+    } finally {
+      await participantSpoofReader.cancel();
+    }
+
+    assert.ok(participantSpoofSseText.includes('evt_sensitive_2'));
+    assert.strictEqual(participantSpoofSseText.includes('correctOptionIndices'), false);
+    assert.strictEqual(participantSpoofSseText.includes('Exodus is the second book.'), false);
 
     // 3. Service reconnectParticipant / reconnectLiveSessionAction replay leak defense
     const reconnectResult = await reconnectLiveSessionAction(session.id, participantToken.token, 0);

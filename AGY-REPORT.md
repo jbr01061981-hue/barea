@@ -981,3 +981,37 @@ Milestone BAREA-007 builds the live quiz execution engine for the BAREA platform
   - `npm run build:next`: 0 errors (Turbopack production build succeeded).
   - `git grep ": any" -- src/`: 0 occurrences.
   - `git diff --check`: Clean (0 whitespace errors).
+
+### H. PR #11 Final Security Remediation: Server-Derived Realtime Subscription Role & Projection Authorization
+- **Remaining SSE Authorization Issue**:
+  In `src/app/api/session/[id]/live/route.ts`, client query parameters (`?role=host`) previously influenced authentication routing. A caller could dictate the host authentication path by supplying `?role=host`, while an authenticated host connecting without `?role=host` was treated as an unauthenticated participant. Furthermore, a non-host participant who passed `?role=host&token=...` would be erroneously challenged for teacher credentials rather than being authoritatively recognized as a participant and served with canonical data redaction.
+- **Root Cause**:
+  Client-supplied role claims were evaluated as control input for routing authentication, violating the architectural invariant that subscription roles and projection privileges must be derived strictly on the server from authenticated session context.
+- **Exact Server-Derived Role Remediation**:
+  1. **Authoritative Host Derivation**: `src/app/api/session/[id]/live/route.ts` first queries `getAuthorizedTeacherContext()`. If an authenticated teacher context exists and `teacher.userId === session.hostUserId`, the server sets `isHost = true` and `effectiveRole = 'host'`. The host receives host projection authoritatively without needing to supply `?role=host`.
+  2. **Non-Host Participant Derivation**: If the caller is not the session host, the route requires valid participant session credentials (`token` in search params, `x-participant-token`, or `Bearer` token). The token is parsed and validated via `validateParticipantToken(rawToken)`, then verified against the session via `repo.resumeSession(sessionId, validatedToken)`. Upon successful verification, `effectiveRole` is authoritatively assigned as `'participant'`. Even if the caller passed `?role=host`, the server-derived role remains `'participant'`, ensuring that live events and replayed history undergo canonical projection filtering.
+  3. **IDOR & Cross-Session Isolation**:
+     - A non-host authenticated teacher without a participant token is rejected with 403 `NOT_SESSION_HOST`.
+     - An unauthenticated caller without credentials is rejected with 401 `UNAUTHORIZED`.
+     - A participant token issued for Session A attempting to subscribe to Session B's live stream is rejected by `repo.resumeSession` with 403 `FORBIDDEN`.
+  4. **Exception Masking**: Server-side error masking and logging (`[SSE HostAuth Error]:`) are strictly preserved, preventing disclosure of internal paths, database state, or runtime strings.
+- **Mandatory Regression Tests**:
+  Updated and expanded Test 11 and Test 13 in `test/live-quiz.test.ts` proving all required security boundaries:
+  1. Unauthenticated request with `?role=host` cannot receive host projection (401 `UNAUTHORIZED`).
+  2. Non-host authenticated user with `?role=host` cannot receive host projection (403 `NOT_SESSION_HOST`).
+  3. Authenticated host receives host projection without needing a client role claim (200 host stream with unredacted answer keys).
+  4. Non-host participant supplying `?role=host&token=...` receives 200 with participant projection; live events published during the connection strictly redact `correctOptionIndices` and `explanation`.
+  5. Cross-session isolation: Token from Session A connecting to Session B returns 403 `FORBIDDEN`.
+  6. Invalid or missing participant credentials fail closed (401 missing, 400 invalid format, 403 invalid token).
+  7. Reconnecting host without `?role=host` (e.g. `?since=1`) receives full unredacted history replay.
+  8. Reconnecting participant supplying `?role=host&token=...&since=1` receives strictly redacted history replay.
+  9. Non-current question submissions, expired deadlines, and client-clock manipulation remain strictly rejected without creating database records.
+- **Verification Gates**:
+  - `npm test`: 148/148 tests pass.
+  - `node --test dist/test/live-quiz.test.js`: 14/14 tests pass.
+  - `npm run typecheck`: 0 errors.
+  - `npm run build`: 0 errors.
+  - `npm run build:next`: 0 errors (Turbopack production build succeeded).
+  - `git grep ": any" -- src/`: 0 occurrences.
+  - `git diff --check`: Clean (0 whitespace errors).
+  - Out-of-scope milestones: Zero BAREA-008 UI, zero BAREA-009 scoring, zero Cloudflare infrastructure provisioning.

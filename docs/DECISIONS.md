@@ -416,7 +416,9 @@ In accordance with BAREA architectural constraints (church-scale usage, cost, op
   5. **Real-Time Transport & Session Isolation**:
      - Introduced `RealtimeTransport` interface with `InMemoryRealtimeTransport` implementation and Server-Sent Events (SSE) Route Handler (`/api/session/[id]/live`).
      - Real-time broadcasts are strictly partitioned by `sessionId`. Subscribers to Session A never receive events from Session B.
-     - Subscriber-specific projection filtering strips sensitive fields (`correctOptionIndices`, `explanation`) from events sent to participants and projectors. Only authenticated hosts receive full answer keys.
+     - **Server-Authoritative Role & Projection**: Host projection is available exclusively after server-side authentication and verification that the caller is the session's `hostUserId`. A client-supplied role claim (e.g. `?role=host`) is never authoritative and is never trusted.
+     - Canonical projection filtering (`projectEventForRole`) strictly strips sensitive fields (`correctOptionIndices`, `explanation`, `correctOptionIndex`, `correctAnswer`) from live events and history replay for participants and projectors. Only verified, server-authorized hosts receive unredacted answer keys.
+     - Participant subscriptions must be authorized through validated session membership tokens (`ParticipantToken`).
      - Monotonic sequence numbering and a ring-buffer event history enable reconnecting participants to catch up on missed transitions without drift.
   6. **Pupil & Group Submissions**:
      - For teacher-controlled group mode (`TEACHER_GROUP`), the host submits answers on behalf of groups without requiring individual pupil accounts.

@@ -32,39 +32,45 @@ export async function GET(
     return NextResponse.json({ error: 'SESSION_NOT_FOUND', message: 'Session not found or unavailable' }, { status: 404 });
   }
 
-  const requestedRole = request.nextUrl.searchParams.get('role');
+  let isHost = false;
   let effectiveRole: 'host' | 'participant';
   let authenticatedUserId: string | undefined;
 
-  if (requestedRole === 'host') {
-    // 1. Host authorization: must be an authenticated teacher context and match session hostUserId
-    try {
-      const teacher = await getAuthorizedTeacherContext();
-      if (!teacher || !teacher.userId) {
-        return NextResponse.json(
-          { error: 'UNAUTHORIZED', message: 'Teacher authentication required to subscribe to host live stream.' },
-          { status: 401 }
-        );
+  let teacherAuthFailed = false;
+  let teacherAuthStatus = 401;
+  let teacherAuthErrorCode = 'UNAUTHORIZED';
+  let teacherAuthErrorMessage = 'Teacher authentication failed.';
+
+  // 1. Check if caller is authenticated teacher context matching session.hostUserId
+  try {
+    const teacher = await getAuthorizedTeacherContext();
+    if (teacher && teacher.userId) {
+      if (teacher.userId === session.hostUserId) {
+        isHost = true;
+        effectiveRole = 'host';
+        authenticatedUserId = teacher.userId;
+      } else {
+        teacherAuthFailed = true;
+        teacherAuthStatus = 403;
+        teacherAuthErrorCode = 'NOT_SESSION_HOST';
+        teacherAuthErrorMessage = 'Forbidden: only the session host can obtain the host live stream projection.';
       }
-      if (teacher.userId !== session.hostUserId) {
-        return NextResponse.json(
-          { error: 'NOT_SESSION_HOST', message: 'Forbidden: only the session host can obtain the host live stream projection.' },
-          { status: 403 }
-        );
-      }
-      effectiveRole = 'host';
-      authenticatedUserId = teacher.userId;
-    } catch (err: unknown) {
-      // Security Remediation: Never leak raw exception messages, internal runtime strings,
-      // or database details to the caller. Log full error details server-side only.
-      console.error('[SSE HostAuth Error]:', err);
-      return NextResponse.json(
-        { error: 'UNAUTHORIZED', message: 'Teacher authentication failed.' },
-        { status: 401 }
-      );
     }
+  } catch (err: unknown) {
+    // Security Remediation: Never leak raw exception messages, internal runtime strings,
+    // or database details to the caller. Log full error details server-side only.
+    console.error('[SSE HostAuth Error]:', err);
+    teacherAuthFailed = true;
+    teacherAuthStatus = 401;
+    teacherAuthErrorCode = 'UNAUTHORIZED';
+    teacherAuthErrorMessage = 'Teacher authentication failed.';
+  }
+
+  if (isHost) {
+    // Authenticated host receives host projection authoritatively without relying on client role claims
+    effectiveRole = 'host';
   } else {
-    // 2. Participant authorization: must provide a valid participant token belonging to this session
+    // 2. Non-host: must provide a valid participant token belonging to this session
     const authHeader = request.headers.get('authorization');
     const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7).trim() : null;
     const rawToken = request.nextUrl.searchParams.get('token')?.trim() ||
@@ -72,8 +78,20 @@ export async function GET(
       bearerToken;
 
     if (!rawToken) {
+      if (teacherAuthFailed && teacherAuthStatus === 403) {
+        return NextResponse.json(
+          { error: teacherAuthErrorCode, message: teacherAuthErrorMessage },
+          { status: teacherAuthStatus }
+        );
+      }
+      if (request.nextUrl.searchParams.get('role') === 'host') {
+        return NextResponse.json(
+          { error: 'UNAUTHORIZED', message: 'Teacher authentication failed.' },
+          { status: 401 }
+        );
+      }
       return NextResponse.json(
-        { error: 'UNAUTHORIZED', message: 'Participant token is required to subscribe to participant live stream.' },
+        { error: 'UNAUTHORIZED', message: 'Authentication required to subscribe to live stream.' },
         { status: 401 }
       );
     }
