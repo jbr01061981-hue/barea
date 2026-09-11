@@ -7,7 +7,7 @@
 | **BAREA-004** | **Teacher Review/Approval** | Production frontend foundation, staging UI, editing, Scripture review, approval gate | **COMPLETED — MERGED** |
 | **BAREA-005** | **Quiz Authoring** | Quiz playlist composition, timer & scoring configurations, publishing | **COMPLETED — MERGED** |
 | **BAREA-006** | **Share/Join** | Session creation, QR/access-code sharing, admission policies, participant onboarding | **COMPLETED — MERGED** |
-| **BAREA-007** | **Live Quiz** | Authoritative state machine, timer sync, real-time transport | **COMPLETED — PENDING REVIEW** |
+| **BAREA-007** | **Live Quiz** | Authoritative state machine, timer sync, real-time transport | **COMPLETED — MERGED** |
 | **BAREA-008** | **Host/Participant UI** | Dual-interface UX: host control console & responsive mobile participant app | NOT STARTED |
 | **BAREA-009** | **Scoring** | Server-side validation, timestamp verification, score algorithm | NOT STARTED |
 | **BAREA-010** | **Results/Leaderboard** | Intermediate standings, final podium, celebration animations | NOT STARTED |
