@@ -71,8 +71,8 @@ export default function HomePage() {
             <a href="#login" className="inline-flex min-h-10 items-center justify-center rounded-[var(--barea-radius-control)] bg-[var(--barea-gold)] px-4 text-xs font-bold uppercase tracking-wider text-[var(--barea-midnight)] transition-transform hover:-translate-y-0.5 hover:bg-[var(--barea-gold-light)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)]">
               Log in
             </a>
-            <a href="#explore-barea" className="hidden min-h-10 items-center justify-center rounded-[var(--barea-radius-control)] border border-[var(--barea-gold-muted)] px-4 text-xs font-bold uppercase tracking-wider text-white transition-colors hover:border-[var(--barea-gold)] sm:inline-flex">
-              Explore BAREA <span aria-hidden="true" className="ml-2 text-[var(--barea-gold)]">→</span>
+            <a href="#explore-barea" className="hidden min-h-10 items-center justify-center px-4 text-xs font-bold uppercase tracking-wider text-[var(--barea-gold-light)] transition-colors hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] sm:inline-flex">
+              Explore BAREA <span aria-hidden="true" className="ml-2">→</span>
             </a>
           </div>
         </div>
@@ -86,10 +86,10 @@ export default function HomePage() {
             <ScriptureTypewriter />
             <p className="mt-7 text-xs font-bold uppercase tracking-[0.34em] text-[var(--barea-ivory-muted)] sm:text-sm">Prepare. Learn. Share.</p>
             <div className="mt-10 flex w-full max-w-sm flex-col gap-3 sm:max-w-none sm:flex-row sm:justify-center">
-              <a href="#explore-barea" className="inline-flex min-h-12 items-center justify-center rounded-[var(--barea-radius-control)] bg-[var(--barea-gold)] px-7 text-sm font-bold text-[var(--barea-midnight)] transition-all hover:-translate-y-0.5 hover:bg-[var(--barea-gold-light)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--barea-midnight)]">
+              <a href="#explore-barea" className="inline-flex min-h-12 items-center justify-center px-3 text-sm font-bold text-[var(--barea-gold-light)] transition-all hover:-translate-y-0.5 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--barea-midnight)]">
                 Explore BAREA <span aria-hidden="true" className="ml-2 transition-transform">→</span>
               </a>
-              <a href="#login" className="inline-flex min-h-12 items-center justify-center rounded-[var(--barea-radius-control)] border border-[var(--barea-slate-border)] bg-[var(--barea-slate-card)] px-7 text-sm font-semibold text-white transition-all hover:-translate-y-0.5 hover:border-[var(--barea-gold-muted)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--barea-midnight)]">
+              <a href="#login" className="inline-flex min-h-12 items-center justify-center rounded-[var(--barea-radius-control)] bg-[var(--barea-gold)] px-7 text-sm font-bold text-[var(--barea-midnight)] transition-all hover:-translate-y-0.5 hover:bg-[var(--barea-gold-light)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--barea-midnight)]">
                 Log in
               </a>
             </div>
@@ -219,8 +219,8 @@ export default function HomePage() {
             <h2 className="mt-8 font-serif text-3xl leading-tight text-white sm:text-5xl">Bring your church together around the Word.</h2>
             <p className="mt-5 max-w-lg text-sm leading-6 text-[var(--barea-ivory-muted)]">Explore Scripture-centered quizzes built for shared learning and fellowship.</p>
             <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-              <a href="#explore-barea" className="inline-flex min-h-11 items-center justify-center rounded-[var(--barea-radius-control)] bg-[var(--barea-gold)] px-6 text-sm font-bold text-[var(--barea-midnight)] transition-all hover:-translate-y-0.5 hover:bg-[var(--barea-gold-light)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)]">Explore BAREA <span aria-hidden="true" className="ml-2">→</span></a>
-              <a href="#login" className="inline-flex min-h-11 items-center justify-center rounded-[var(--barea-radius-control)] border border-[var(--barea-slate-border)] px-6 text-sm font-semibold text-white transition-colors hover:border-[var(--barea-gold-muted)]">Log in</a>
+              <a href="#explore-barea" className="inline-flex min-h-11 items-center justify-center px-3 text-sm font-bold text-[var(--barea-gold-light)] transition-all hover:-translate-y-0.5 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)]">Explore BAREA <span aria-hidden="true" className="ml-2">→</span></a>
+              <a href="#login" className="inline-flex min-h-11 items-center justify-center rounded-[var(--barea-radius-control)] bg-[var(--barea-gold)] px-6 text-sm font-bold text-[var(--barea-midnight)] transition-all hover:-translate-y-0.5 hover:bg-[var(--barea-gold-light)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)]">Log in</a>
             </div>
           </div>
         </section>
