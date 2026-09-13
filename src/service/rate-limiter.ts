@@ -180,6 +180,23 @@ export class InMemoryRateLimiter implements RateLimiter {
     }
   }
 
+  /**
+   * Records a failed login attempt.
+   *
+   * ARCHITECTURAL SPECIFICATION:
+   * This is a local in-memory MVP guardrail keyed by normalized email to protect
+   * against rapid brute-force password guessing against single accounts (even across
+   * shared congregation Wi-Fi/NAT IPs).
+   *
+   * Consecutive-failure lockout semantics:
+   * - Tracks failures within a sliding window.
+   * - Once the failure threshold (maxFailedLogins) is reached or exceeded, each subsequent
+   *   failure resets the lockout duration from the time of the latest attempt.
+   *
+   * PRODUCTION DEPLOYMENT NOTE:
+   * In a multi-instance or clustered production deployment, a distributed store (such as
+   * Redis or PostgreSQL) must be substituted to maintain shared lockout state across instances.
+   */
   recordFailedLogin(targetEmail: string, clientIp?: string | null): void {
     if (!targetEmail) return;
     const key = targetEmail.trim().toLowerCase();
@@ -192,8 +209,8 @@ export class InMemoryRateLimiter implements RateLimiter {
       this.failedLogins.set(key, { count: 1, resetAt: now + (this.loginLockoutSeconds * 1000) });
     } else {
       bucket.count++;
-      // Extend or maintain lockout window
-      if (bucket.count >= this.maxFailedLogins && bucket.resetAt <= now) {
+      if (bucket.count >= this.maxFailedLogins) {
+        // Enforce true consecutive-failure lockout extending from the current failure timestamp
         bucket.resetAt = now + (this.loginLockoutSeconds * 1000);
       }
     }

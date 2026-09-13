@@ -501,6 +501,49 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(res1.user.id, res2.user.id);
   });
 
+  await t.test('ATOMIC PROVISIONING: session creation is atomic with identity provisioning in transaction', async () => {
+    const nonce = 'nonce-atomic';
+    const idToken = await createSignedIdToken({
+      sub: 'atomic-sub-1',
+      email: 'atomic@church.org',
+      email_verified: true,
+      nonce
+    });
+
+    // Mock createSession to throw an error simulating unexpected failure during session issuance
+    const originalCreateSession = authRepo.createSession.bind(authRepo);
+    let shouldFailSession = true;
+    authRepo.createSession = (userId: string, options?: any) => {
+      if (shouldFailSession) {
+        throw new Error('Simulated failure during session creation');
+      }
+      return originalCreateSession(userId, options);
+    };
+
+    try {
+      await assert.rejects(
+        async () =>
+          authService.handleGoogleCallback({
+            code: 'code-1',
+            expectedState: 'state-1',
+            receivedState: 'state-1',
+            codeVerifier: 'verifier-1',
+            expectedNonce: nonce,
+            idTokenForTesting: idToken
+          }),
+        /simulated failure during session creation/i
+      );
+
+      // Verify that transaction rolled back completely: user and federated identity do NOT exist!
+      const userAfterRollback = authRepo.findUserByEmail('atomic@church.org');
+      assert.equal(userAfterRollback, null, 'User creation must roll back atomically if session creation fails');
+      const fedAfterRollback = authRepo.findFederatedIdentity('GOOGLE', 'atomic-sub-1');
+      assert.equal(fedAfterRollback, null, 'Federated identity creation must roll back atomically if session creation fails');
+    } finally {
+      authRepo.createSession = originalCreateSession;
+    }
+  });
+
   await t.test('15. nonce mismatch fails', async () => {
     const idToken = await createSignedIdToken({
       sub: 'google-sub-nonce-mismatch',
@@ -708,12 +751,43 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
 
   await t.test('30. authenticated identity cannot be replaced through client input', async () => {
     const genuineUser = authRepo.createUser({ email: 'genuine@church.org', displayName: 'Genuine' });
-    const { rawToken } = authRepo.createSession(genuineUser.id);
+    const { rawToken } = authRepo.createSession(genuineUser.id, {
+      authProvider: 'LOCAL_PASSWORD',
+      providerSub: genuineUser.id
+    });
     setSessionTokenForTesting(rawToken);
 
     // Server-side context derivation strictly ignores any client-supplied identity
     const context = await getAuthenticatedUserContext();
     assert.equal(context.userId, genuineUser.id);
+    assert.equal(context.providerType, 'LOCAL_PASSWORD');
+    assert.equal(context.providerSub, genuineUser.id);
+  });
+
+  await t.test('PROVIDER BINDING: getAuthenticatedUserContext() returns exact provider identity bound to current session, not arbitrary first identity', async () => {
+    const multiUser = authRepo.createUser({ email: 'multi@church.org', displayName: 'Multi User' });
+    authRepo.createFederatedIdentity({ userId: multiUser.id, providerType: 'GOOGLE', providerSub: 'google-sub-first' });
+    authRepo.createFederatedIdentity({ userId: multiUser.id, providerType: 'APPLE', providerSub: 'apple-sub-second' });
+
+    // Session authenticated via APPLE
+    const { rawToken: appleSessionToken } = authRepo.createSession(multiUser.id, {
+      authProvider: 'APPLE',
+      providerSub: 'apple-sub-second'
+    });
+    setSessionTokenForTesting(appleSessionToken);
+    const contextApple = await getAuthenticatedUserContext();
+    assert.equal(contextApple.providerType, 'APPLE', 'Must reflect provider from current session');
+    assert.equal(contextApple.providerSub, 'apple-sub-second', 'Must reflect providerSub from current session');
+
+    // Session authenticated via GOOGLE
+    const { rawToken: googleSessionToken } = authRepo.createSession(multiUser.id, {
+      authProvider: 'GOOGLE',
+      providerSub: 'google-sub-first'
+    });
+    setSessionTokenForTesting(googleSessionToken);
+    const contextGoogle = await getAuthenticatedUserContext();
+    assert.equal(contextGoogle.providerType, 'GOOGLE');
+    assert.equal(contextGoogle.providerSub, 'google-sub-first');
   });
 
   // ============================================================
@@ -745,33 +819,71 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
   });
 
-  await t.test('34. password hash is not exposed', async () => {
+  await t.test('34. password hash is not exposed on domain User shape', async () => {
     const hash = await hashPassword('SecretPass123');
     const user = authRepo.createUser({ email: 'secrethash@church.org', passwordHash: hash, displayName: 'Secret' });
-    const { rawToken } = await authService.loginWithPassword({ email: 'secrethash@church.org', password: 'SecretPass123' });
+    assert.equal('passwordHash' in user, false, 'User domain shape must not contain passwordHash');
 
+    const userById = authRepo.findUserById(user.id);
+    assert.ok(userById !== null);
+    assert.equal('passwordHash' in userById!, false, 'findUserById must not expose passwordHash');
+
+    const userByEmail = authRepo.findUserByEmail('secrethash@church.org');
+    assert.ok(userByEmail !== null);
+    assert.equal('passwordHash' in userByEmail!, false, 'findUserByEmail must not expose passwordHash');
+
+    const { rawToken } = await authService.loginWithPassword({ email: 'secrethash@church.org', password: 'SecretPass123' });
     const session = authService.resolveSession(rawToken);
-    // Verified user session object does not leak password hash
     assert.equal(session?.user.displayName, 'Secret');
-    assert.equal(session?.user.email, 'secrethash@church.org');
+    assert.equal('passwordHash' in (session?.user as any), false, 'Session user must not expose passwordHash');
   });
 
-  await t.test('35. repeated password failures are rate limited', async () => {
+  await t.test('35. repeated password failures are rate limited with consecutive failure lockout window', async () => {
+    let currentTime = 1000000;
+    const stepRateLimiter = new InMemoryRateLimiter(() => currentTime, {
+      maxFailedLogins: 5,
+      loginLockoutSeconds: 60
+    });
+    const stepAuthService = new AuthService(authRepo, {
+      rateLimiter: stepRateLimiter
+    });
+
     const hash = await hashPassword('TargetPassword123');
     authRepo.createUser({ email: 'ratelimit@church.org', passwordHash: hash, displayName: 'RateLimited' });
 
-    // 5 failures
+    // 5 failures at T=1,000,000
     for (let i = 0; i < 5; i++) {
       await assert.rejects(
-        async () => authService.loginWithPassword({ email: 'ratelimit@church.org', password: 'BadPassword' }),
+        async () => stepAuthService.loginWithPassword({ email: 'ratelimit@church.org', password: 'BadPassword' }),
         InvalidCredentialsError
       );
     }
 
-    // 6th attempt is throttled by rate limiter before password evaluation
+    // 6th attempt is throttled
     await assert.rejects(
-      async () => authService.loginWithPassword({ email: 'ratelimit@church.org', password: 'BadPassword' }),
+      async () => stepAuthService.loginWithPassword({ email: 'ratelimit@church.org', password: 'BadPassword' }),
       RateLimitExceededError
+    );
+
+    // Advance time by 30 seconds (still within initial 60s lockout)
+    currentTime += 30000;
+    // Another failed attempt extends lockout by 60s from current time
+    stepRateLimiter.recordFailedLogin('ratelimit@church.org');
+
+    // Advance time by 40 seconds (total 70 seconds from start, but only 40 seconds since last failure)
+    currentTime += 40000;
+    // Still throttled because consecutive failure extended the window
+    await assert.rejects(
+      async () => stepAuthService.loginWithPassword({ email: 'ratelimit@church.org', password: 'BadPassword' }),
+      RateLimitExceededError
+    );
+
+    // Advance time past the extended window (65 seconds later)
+    currentTime += 65000;
+    // Now permitted again to evaluate credentials
+    await assert.rejects(
+      async () => stepAuthService.loginWithPassword({ email: 'ratelimit@church.org', password: 'BadPassword' }),
+      InvalidCredentialsError
     );
   });
 

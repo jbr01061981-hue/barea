@@ -53,7 +53,7 @@ export class AuthService {
   ) {}
 
   /**
-   * Registers or updates a user with email and password.
+   * Registers a user with email and password and creates an initial session atomically.
    */
   async registerWithPassword(input: {
     email: string;
@@ -77,14 +77,24 @@ export class AuthService {
     }
 
     const passwordHash = await hashPassword(input.password);
-    const user = this.repo.createUser({
-      email,
-      emailVerified: false,
-      passwordHash,
-      displayName: input.displayName.trim()
+
+    // Atomically create user and initial session inside a transaction boundary
+    const { user, rawToken } = this.repo.transaction(() => {
+      const user = this.repo.createUser({
+        email,
+        emailVerified: false,
+        passwordHash,
+        displayName: input.displayName.trim()
+      });
+
+      const { rawToken } = this.repo.createSession(user.id, {
+        authProvider: 'LOCAL_PASSWORD',
+        providerSub: user.id
+      });
+
+      return { user, rawToken };
     });
 
-    const { rawToken } = this.repo.createSession(user.id);
     return { user, rawToken };
   }
 
@@ -107,8 +117,8 @@ export class AuthService {
       this.options.rateLimiter.checkLoginAttempt(email, input.clientIp);
     }
 
-    const user = this.repo.findUserByEmail(email);
-    if (!user || !user.passwordHash) {
+    const credentials = this.repo.findUserCredentialsByEmail(email);
+    if (!credentials || !credentials.passwordHash) {
       // Execute dummy verification to preserve constant-time characteristics against user enumeration
       await verifyPassword(input.password, DUMMY_SCRYPT_HASH);
       if (this.options.rateLimiter) {
@@ -117,7 +127,7 @@ export class AuthService {
       throw new InvalidCredentialsError();
     }
 
-    const isValid = await verifyPassword(input.password, user.passwordHash);
+    const isValid = await verifyPassword(input.password, credentials.passwordHash);
     if (!isValid) {
       if (this.options.rateLimiter) {
         this.options.rateLimiter.recordFailedLogin(email, input.clientIp);
@@ -130,8 +140,11 @@ export class AuthService {
       this.options.rateLimiter.resetLoginAttempts(email);
     }
 
-    const { rawToken } = this.repo.createSession(user.id);
-    return { user, rawToken };
+    const { rawToken } = this.repo.createSession(credentials.user.id, {
+      authProvider: 'LOCAL_PASSWORD',
+      providerSub: credentials.user.id
+    });
+    return { user: credentials.user, rawToken };
   }
 
   /**
@@ -241,7 +254,8 @@ export class AuthService {
 
   /**
    * Exchanges Google auth code for tokens, cryptographically verifies ID token,
-   * validates state, PKCE, and nonce, and resolves or links BAREA user atomically.
+   * validates state, PKCE, and nonce, and resolves or links BAREA user atomically
+   * together with session creation inside a single transaction.
    */
   async handleGoogleCallback(input: {
     code: string;
@@ -305,8 +319,10 @@ export class AuthService {
     // Presentation display name fallback
     const displayName = verified.name || (verified.email ? verified.email.split('@')[0] : 'Participant');
 
-    // Atomic account linking / provisioning within repository transaction
-    const user = this.repo.transaction(() => {
+    // Atomic account linking / provisioning AND session creation within repository transaction
+    const { user, rawToken } = this.repo.transaction(() => {
+      let resolvedUser: User;
+
       // Rule A: Check if (GOOGLE, sub) already exists
       const existingFederated = this.repo.findFederatedIdentity('GOOGLE', verified.sub);
       if (existingFederated) {
@@ -314,11 +330,9 @@ export class AuthService {
         if (!foundUser) {
           throw new AccountNotFoundError('User bound to Google account not found.');
         }
-        return foundUser;
-      }
-
-      // Rule B: New Google identity + existing BAREA email
-      if (verified.email && verified.emailVerified) {
+        resolvedUser = foundUser;
+      } else if (verified.email && verified.emailVerified) {
+        // Rule B: New Google identity + existing BAREA email
         const existingUserByEmail = this.repo.findUserByEmail(verified.email);
         if (existingUserByEmail) {
           // Safe linking: provider cryptographically verified email ownership
@@ -327,7 +341,7 @@ export class AuthService {
             providerType: 'GOOGLE',
             providerSub: verified.sub
           });
-          return existingUserByEmail;
+          resolvedUser = existingUserByEmail;
         } else {
           // Create new BAREA user with verified email
           const newUser = this.repo.createUser({
@@ -340,7 +354,7 @@ export class AuthService {
             providerType: 'GOOGLE',
             providerSub: verified.sub
           });
-          return newUser;
+          resolvedUser = newUser;
         }
       } else {
         // Google email is unverified or missing
@@ -363,11 +377,18 @@ export class AuthService {
           providerType: 'GOOGLE',
           providerSub: verified.sub
         });
-        return newUser;
+        resolvedUser = newUser;
       }
+
+      // Session creation is atomic with identity provisioning
+      const { rawToken } = this.repo.createSession(resolvedUser.id, {
+        authProvider: 'GOOGLE',
+        providerSub: verified.sub
+      });
+
+      return { user: resolvedUser, rawToken };
     });
 
-    const { rawToken } = this.repo.createSession(user.id);
     return { user, rawToken };
   }
 

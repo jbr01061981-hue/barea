@@ -327,19 +327,10 @@ export async function getAuthenticatedUserContext(): Promise<AuthenticatedUserCo
     const authService = getAuthService();
     const sessionContext = authService.resolveSession(sessionToken);
     if (sessionContext) {
-      const authRepo = getAuthRepository();
-      // Check federated identity if any
-      const fedIdentities = authRepo.getDatabase().prepare(`
-        SELECT provider_type, provider_sub FROM federated_identities WHERE user_id = ?
-      `).all(sessionContext.user.id) as any[];
-
-      const providerType = fedIdentities[0]?.provider_type || 'LOCAL_PASSWORD';
-      const providerSub = fedIdentities[0]?.provider_sub || sessionContext.user.id;
-
       return {
         userId: sessionContext.user.id,
-        providerType,
-        providerSub,
+        providerType: sessionContext.session.authProvider || 'LOCAL_PASSWORD',
+        providerSub: sessionContext.session.providerSub || sessionContext.user.id,
         email: sessionContext.user.email,
         emailVerified: sessionContext.user.emailVerified,
         phone: null,

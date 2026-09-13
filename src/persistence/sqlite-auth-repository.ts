@@ -7,14 +7,9 @@ import type {
   OrganizationMembership,
   AuthenticatedSessionContext
 } from '../domain/auth';
-import {
-  InvalidCredentialsError,
-  AccountNotFoundError,
-  AuthenticationRequiredError
-} from '../domain/domain-errors';
 
 export interface AuthRepository {
-  // Users
+  // Users (Public Safe Domain Model)
   createUser(data: {
     email: string | null;
     emailVerified?: boolean;
@@ -23,6 +18,7 @@ export interface AuthRepository {
   }): User;
   findUserById(id: string): User | null;
   findUserByEmail(email: string): User | null;
+  findUserCredentialsByEmail(email: string): { user: User; passwordHash: string | null } | null;
   updateUserPassword(id: string, passwordHash: string): void;
 
   // Federated Identity
@@ -34,7 +30,14 @@ export interface AuthRepository {
   }): FederatedIdentity;
 
   // Sessions
-  createSession(userId: string, ttlSeconds?: number): { rawToken: string; session: UserSession };
+  createSession(
+    userId: string,
+    ttlOrOptions?: number | {
+      ttlSeconds?: number;
+      authProvider?: string;
+      providerSub?: string;
+    }
+  ): { rawToken: string; session: UserSession };
   findSessionByToken(rawToken: string): AuthenticatedSessionContext | null;
   deleteSession(rawToken: string): void;
   deleteUserSessions(userId: string): void;
@@ -90,6 +93,8 @@ export class SqliteAuthRepository implements AuthRepository {
       CREATE TABLE IF NOT EXISTS user_sessions (
         id TEXT PRIMARY KEY, -- SHA-256 hash of raw token
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        auth_provider TEXT NOT NULL DEFAULT 'LOCAL_PASSWORD',
+        provider_sub TEXT,
         expires_at TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
@@ -106,6 +111,18 @@ export class SqliteAuthRepository implements AuthRepository {
       CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
       CREATE INDEX IF NOT EXISTS idx_org_memberships_user ON organization_memberships(user_id);
     `);
+
+    // Migration helper for existing databases: ensure auth_provider and provider_sub exist
+    try {
+      const sessionCols = this.db.prepare(`PRAGMA table_info(user_sessions)`).all() as any[];
+      const hasAuthProvider = sessionCols.some((c) => c.name === 'auth_provider');
+      if (!hasAuthProvider) {
+        this.db.exec(`ALTER TABLE user_sessions ADD COLUMN auth_provider TEXT NOT NULL DEFAULT 'LOCAL_PASSWORD';`);
+        this.db.exec(`ALTER TABLE user_sessions ADD COLUMN provider_sub TEXT;`);
+      }
+    } catch {
+      // Ignore if table was just created above
+    }
   }
 
   createUser(data: {
@@ -134,7 +151,6 @@ export class SqliteAuthRepository implements AuthRepository {
       id,
       email: normalizedEmail,
       emailVerified: Boolean(data.emailVerified),
-      passwordHash: data.passwordHash ?? null,
       displayName: data.displayName.trim(),
       createdAt: now
     };
@@ -142,7 +158,7 @@ export class SqliteAuthRepository implements AuthRepository {
 
   findUserById(id: string): User | null {
     const row = this.db.prepare(`
-      SELECT id, email, email_verified, password_hash, display_name, created_at
+      SELECT id, email, email_verified, display_name, created_at
       FROM users
       WHERE id = ?
     `).get(id) as any;
@@ -152,13 +168,31 @@ export class SqliteAuthRepository implements AuthRepository {
       id: row.id,
       email: row.email,
       emailVerified: Boolean(row.email_verified),
-      passwordHash: row.password_hash,
       displayName: row.display_name,
       createdAt: row.created_at
     };
   }
 
   findUserByEmail(email: string): User | null {
+    if (!email) return null;
+    const normalizedEmail = email.trim().toLowerCase();
+    const row = this.db.prepare(`
+      SELECT id, email, email_verified, display_name, created_at
+      FROM users
+      WHERE email = ?
+    `).get(normalizedEmail) as any;
+
+    if (!row) return null;
+    return {
+      id: row.id,
+      email: row.email,
+      emailVerified: Boolean(row.email_verified),
+      displayName: row.display_name,
+      createdAt: row.created_at
+    };
+  }
+
+  findUserCredentialsByEmail(email: string): { user: User; passwordHash: string | null } | null {
     if (!email) return null;
     const normalizedEmail = email.trim().toLowerCase();
     const row = this.db.prepare(`
@@ -169,12 +203,14 @@ export class SqliteAuthRepository implements AuthRepository {
 
     if (!row) return null;
     return {
-      id: row.id,
-      email: row.email,
-      emailVerified: Boolean(row.email_verified),
-      passwordHash: row.password_hash,
-      displayName: row.display_name,
-      createdAt: row.created_at
+      user: {
+        id: row.id,
+        email: row.email,
+        emailVerified: Boolean(row.email_verified),
+        displayName: row.display_name,
+        createdAt: row.created_at
+      },
+      passwordHash: row.password_hash ?? null
     };
   }
 
@@ -189,7 +225,7 @@ export class SqliteAuthRepository implements AuthRepository {
       SELECT id, user_id, provider_type, provider_sub, created_at
       FROM federated_identities
       WHERE provider_type = ? AND provider_sub = ?
-    `).get(providerType, providerSub) as any;
+    `).get(providerType.toUpperCase(), providerSub.trim()) as any;
 
     if (!row) return null;
     return {
@@ -208,22 +244,36 @@ export class SqliteAuthRepository implements AuthRepository {
   }): FederatedIdentity {
     const id = 'fid_' + crypto.randomBytes(16).toString('hex');
     const now = new Date().toISOString();
+    const normalizedType = data.providerType.toUpperCase();
+    const normalizedSub = data.providerSub.trim();
 
     this.db.prepare(`
       INSERT INTO federated_identities (id, user_id, provider_type, provider_sub, created_at)
       VALUES (?, ?, ?, ?, ?)
-    `).run(id, data.userId, data.providerType, data.providerSub, now);
+    `).run(id, data.userId, normalizedType, normalizedSub, now);
 
     return {
       id,
       userId: data.userId,
-      providerType: data.providerType,
-      providerSub: data.providerSub,
+      providerType: normalizedType,
+      providerSub: normalizedSub,
       createdAt: now
     };
   }
 
-  createSession(userId: string, ttlSeconds: number = 60 * 60 * 24 * 7): { rawToken: string; session: UserSession } {
+  createSession(
+    userId: string,
+    ttlOrOptions?: number | {
+      ttlSeconds?: number;
+      authProvider?: string;
+      providerSub?: string;
+    }
+  ): { rawToken: string; session: UserSession } {
+    const opts = typeof ttlOrOptions === 'number' ? { ttlSeconds: ttlOrOptions } : ttlOrOptions;
+    const ttlSeconds = opts?.ttlSeconds ?? 60 * 60 * 24 * 7;
+    const authProvider = opts?.authProvider || 'LOCAL_PASSWORD';
+    const providerSub = opts?.providerSub || userId;
+
     const rawToken = 'bst_' + crypto.randomBytes(32).toString('base64url');
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     const now = new Date();
@@ -231,15 +281,17 @@ export class SqliteAuthRepository implements AuthRepository {
     const createdAt = now.toISOString();
 
     this.db.prepare(`
-      INSERT INTO user_sessions (id, user_id, expires_at, created_at)
-      VALUES (?, ?, ?, ?)
-    `).run(tokenHash, userId, expiresAt, createdAt);
+      INSERT INTO user_sessions (id, user_id, auth_provider, provider_sub, expires_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(tokenHash, userId, authProvider, providerSub, expiresAt, createdAt);
 
     return {
       rawToken,
       session: {
         id: tokenHash,
         userId,
+        authProvider,
+        providerSub,
         expiresAt,
         createdAt
       }
@@ -252,7 +304,7 @@ export class SqliteAuthRepository implements AuthRepository {
     const now = new Date().toISOString();
 
     const sessionRow = this.db.prepare(`
-      SELECT id, user_id, expires_at, created_at
+      SELECT id, user_id, auth_provider, provider_sub, expires_at, created_at
       FROM user_sessions
       WHERE id = ? AND expires_at > ?
     `).get(tokenHash, now) as any;
@@ -269,6 +321,8 @@ export class SqliteAuthRepository implements AuthRepository {
       session: {
         id: sessionRow.id,
         userId: sessionRow.user_id,
+        authProvider: sessionRow.auth_provider,
+        providerSub: sessionRow.provider_sub || sessionRow.user_id,
         expiresAt: sessionRow.expires_at,
         createdAt: sessionRow.created_at
       },
@@ -304,7 +358,7 @@ export class SqliteAuthRepository implements AuthRepository {
       WHERE user_id = ?
     `).all(userId) as any[];
 
-    return rows.map(r => ({
+    return rows.map((r) => ({
       organizationId: r.organization_id,
       userId: r.user_id,
       role: r.role
