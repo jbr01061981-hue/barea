@@ -195,3 +195,19 @@ export class OAuthCallbackError extends BareaDomainError {
   }
 }
 
+export class TeacherUnauthorizedError extends BareaDomainError {
+  readonly code = 'TEACHER_UNAUTHORIZED';
+  readonly httpStatus = 401;
+  constructor(message: string = 'Unauthorized: explicit teacher authentication is required.') {
+    super(message);
+  }
+}
+
+export class TeacherForbiddenError extends BareaDomainError {
+  readonly code = 'TEACHER_FORBIDDEN';
+  readonly httpStatus = 403;
+  constructor(message: string = 'Forbidden: Authenticated user is not authorized as a teacher or admin for any organization.') {
+    super(message);
+  }
+}
+
