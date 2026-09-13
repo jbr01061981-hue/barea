@@ -10,14 +10,34 @@ BAREA bridges biblical education and interactive engagement. It empowers teacher
 
 ### Key Pillars
 
-1. **Biblical Faithfulness & Content Verification**: Human-in-the-loop review ensures that every AI-generated or manually authored question is verified by a teacher for scriptural accuracy and church-level appropriateness. Structural validation by the system checks formatting and schema integrity, but cannot replace human theological review.
-2. **Dedicated Church Modes**:
-   - **Teacher / Host View**: Controls for question approval, quiz assembly, live session pacing, and participant roster oversight.
-   - **Mobile Participant Experience**: Responsive web experience accessible via smartphones with zero install friction.
-   - **Projector / Presentation View**: Big-screen display in sanctuaries, auditoriums, and classrooms showing questions, timers, leaderboards, and celebratory feedback.
-3. **Frictionless Joining**: Rapid participation via QR code, direct URL, or room access code without requiring participant app store downloads.
-4. **Server-Authoritative Live State & Scoring**: Tamper-proof scoring, synchronized timers, and live leaderboard calculations driven by an authoritative server state machine.
-5. **AI-Powered Generation with Teacher Control**: AI generates questions based on topic, difficulty, question type, and language. AI questions are never published directly without explicit structural validation and teacher review, editing, and approval.
+1. **Biblical Faithfulness & Content Verification**: Human-in-the-loop review ensures that every AI-generated or manually authored question is verified by a teacher for scriptural accuracy and church-level appropriateness.
+2. **Unified Account & Access**: BAREA uses one canonical authenticated user identity with real email/password and Google OAuth/OIDC authentication, secure OAuth state/PKCE/nonce protection, safe account linking, and server-authoritative persisted sessions.
+3. **Separate Teacher Capability**: An authenticated account is not automatically a teacher account. Teacher/Host capability is a separate server-authoritative capability and is disabled by default for newly registered users. Organization membership and personal workspace ownership are separate authorization concepts.
+4. **Dedicated Church Modes**:
+   - **Teacher / Host View**: Controls for question approval, quiz assembly, live session pacing, and participant roster oversight when the required capability is available.
+   - **Mobile Participant Experience**: Responsive web experience for authenticated individual participation.
+   - **Projector / Presentation View**: Big-screen display in sanctuaries, auditoriums, and classrooms.
+5. **Frictionless Joining**: Rapid participation via QR code, direct URL, or room access code, subject to server-side admission and authentication requirements.
+6. **Server-Authoritative Live State & Scoring**: Tamper-resistant scoring, synchronized timers, and live leaderboard calculations driven by authoritative server state.
+7. **AI-Powered Generation with Teacher Control**: AI generates questions based on topic, difficulty, question type, and language. AI questions are never published directly without structural validation and human review/approval.
+
+---
+
+## Authentication Foundation — Completed
+
+PR #15 established the real authentication foundation now used by subsequent BAREA work:
+
+- Email/password registration and authentication.
+- Google OAuth / OpenID Connect.
+- Cryptographic OIDC ID-token verification and required claim validation.
+- OAuth state, S256 PKCE, and nonce protection.
+- Safe account provisioning and account linking.
+- Server-authoritative persisted sessions using secure HttpOnly cookies.
+- Server-side identity binding; client-supplied user IDs or roles do not establish authorization.
+- Logout/session revocation.
+- Production callback configuration and environment separation.
+
+Authentication proves account identity. It does not by itself grant teacher/host capability.
 
 ---
 
@@ -37,28 +57,30 @@ AI generates
 
 ## Project Documentation
 
-Conceptual architecture, product requirements, and design specifications are located in the docs/ directory:
+Conceptual architecture, product requirements, roadmap, and design specifications are located in the docs/ directory:
 
 - [**docs/PRODUCT.md**](./docs/PRODUCT.md): Product vision, user personas, roles, and core experiences.
-- [**docs/REQUIREMENTS.md**](./docs/REQUIREMENTS.md): Functional and non-functional requirements and conceptual boundaries.
-- [**docs/ARCHITECTURE.md**](./docs/ARCHITECTURE.md): Conceptual system architecture, state machine, and server-authoritative scoring models.
-- [**docs/ROADMAP.md**](./docs/ROADMAP.md): Milestone tracker from Foundation (BAREA-001) through Pilot (BAREA-013).
-- [**docs/DECISIONS.md**](./docs/DECISIONS.md): Architecture Decision Records (ADRs) capturing architectural principles and open decisions.
-- [**AGENTS.md**](./AGENTS.md): Development guidance, guardrails, and instructions for AI agents working in this repository.
+- [**docs/REQUIREMENTS.md**](./docs/REQUIREMENTS.md): Functional and non-functional requirements, including authentication and authorization boundaries.
+- [**docs/ARCHITECTURE.md**](./docs/ARCHITECTURE.md): Conceptual system architecture, identity/capability/workspace model, state machine, and server-authoritative scoring.
+- [**docs/ROADMAP.md**](./docs/ROADMAP.md): Current product roadmap, including the completed Unified Account & Access phase.
+- [**docs/DECISIONS.md**](./docs/DECISIONS.md): Architecture Decision Records capturing architectural principles and open decisions.
+- [**docs/FRONTEND_PROGRESS.md**](./docs/FRONTEND_PROGRESS.md): Frontend implementation sequence and verified frontend progress.
+- [**AGENTS.md**](./AGENTS.md): Development guidance and guardrails for AI agents working in this repository.
 
 ---
 
-## Implementation Status
+## Current Implementation Status
 
-**Completed through BAREA-004.**
+**Authentication foundation is complete and merged through PR #15.**
 
 - BAREA-001 Foundation — COMPLETED
 - BAREA-002 Question Bank — COMPLETED
 - BAREA-002A TypeScript Migration Gate — COMPLETED
 - BAREA-003 AI Quiz Generation — COMPLETED
-- BAREA-004 Teacher Review & Approval — COMPLETED and merged into `main`
-- BAREA-005 Quiz Authoring — NOT STARTED
+- BAREA-004 Teacher Review & Approval — COMPLETED and merged
+- BAREA-005 Quiz Authoring — COMPLETED and merged
+- BAREA-006 Share/Join foundation — COMPLETED and merged
+- BAREA-007 Live Quiz foundation — COMPLETED and merged
+- PR #15 Unified Account & Access / real authentication foundation — COMPLETED and merged
 
-BAREA-004 was merged into `main` in commit `1faff33235378c6061a902a89454e5d62b097b0b`.
-
-The current implementation provides the AI generation, structural validation, Question Bank, and teacher review/approval workflow. Quiz authoring, sharing/joining, live gameplay, scoring, leaderboard, presentation, church validation, and pilot milestones remain future work according to the roadmap.
+The next product phase is Share, Join & Live Quiz completion. See `docs/ROADMAP.md` for the authoritative sequence and `docs/FRONTEND_PROGRESS.md` for the frontend sequence.
