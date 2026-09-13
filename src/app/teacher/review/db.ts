@@ -14,6 +14,7 @@ import { InMemoryRealtimeTransport } from '../../../transport/realtime-transport
 
 import { SqliteAuthRepository } from '../../../persistence/sqlite-auth-repository';
 import { AuthService } from '../../../service/auth-service';
+import { TeacherUnauthorizedError, TeacherForbiddenError } from '../../../domain/domain-errors';
 
 let globalRepo: SqliteQuestionRepository | null = null;
 let globalBankService: QuestionBankService | null = null;
@@ -234,10 +235,10 @@ export async function getAuthorizedTeacherContext(): Promise<TeacherContext> {
   // Test fixture override (permitted only in test or development environments)
   if (mockTeacherContext !== null) {
     if (!isTestEnvironment() && !isDevelopmentEnvironment()) {
-      throw new Error('Forbidden: test authorization overrides are disabled in non-test/production environments.');
+      throw new TeacherForbiddenError('Forbidden: test authorization overrides are disabled in non-test/production environments.');
     }
     if (!mockTeacherContext.organizationId || !mockTeacherContext.organizationId.trim() || !mockTeacherContext.userId) {
-      throw new Error('Unauthorized: missing or invalid teacher identity.');
+      throw new TeacherUnauthorizedError('Unauthorized: missing or invalid teacher identity.');
     }
     return mockTeacherContext;
   }
@@ -259,7 +260,7 @@ export async function getAuthorizedTeacherContext(): Promise<TeacherContext> {
         };
       }
       // User is authenticated but has no teacher/admin role -> fail closed
-      throw new Error('Forbidden: Authenticated user is not authorized as a teacher or admin for any organization.');
+      throw new TeacherForbiddenError('Forbidden: Authenticated user is not authorized as a teacher or admin for any organization.');
     }
   }
 
@@ -267,16 +268,16 @@ export async function getAuthorizedTeacherContext(): Promise<TeacherContext> {
   if (!isDevelopmentEnvironment()) {
     const env = process.env.NODE_ENV;
     if (env === 'production') {
-      throw new Error('Unauthorized: production teacher authentication is required. Development teacher context is disabled in production.');
+      throw new TeacherUnauthorizedError('Unauthorized: production teacher authentication is required. Development teacher context is disabled in production.');
     }
-    throw new Error(`Unauthorized: runtime environment (${env || 'unset'}) is not authorized for development teacher context. Explicit trusted teacher authentication is required.`);
+    throw new TeacherUnauthorizedError(`Unauthorized: runtime environment (${env || 'unset'}) is not authorized for development teacher context. Explicit trusted teacher authentication is required.`);
   }
 
   // In explicit development mode, require explicit BAREA_DEV_ORG_ID configuration (no silent fallback)
   const devOrgId = process.env.BAREA_DEV_ORG_ID ? process.env.BAREA_DEV_ORG_ID.trim() : '';
 
   if (!devOrgId) {
-    throw new Error('Unauthorized: BAREA_DEV_ORG_ID is missing or empty. Development teacher context requires an explicit organization configuration and fails closed.');
+    throw new TeacherUnauthorizedError('Unauthorized: BAREA_DEV_ORG_ID is missing or empty. Development teacher context requires an explicit organization configuration and fails closed.');
   }
 
   return {

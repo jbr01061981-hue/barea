@@ -1,6 +1,7 @@
 import './teacher-workspace.css';
 
 export default function TeacherLayout({ children }: { children: React.ReactNode }) {
+
   return (
     <div className="teacher-workspace-shell">
       <aside className="teacher-workspace-sidebar" aria-label="Teacher workspace navigation">

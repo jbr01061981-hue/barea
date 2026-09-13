@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
-import { getQuizService, getQuestionBankService, getAuthorizedTeacherContext } from '../../review/db';
+import { getQuizService, getQuestionBankService } from '../../review/db';
+import { ensureAuthorizedTeacherPage } from '../../auth-guard';
 import { QuizStatus } from '../../../../domain/quiz';
 import { QuestionStatus } from '../../../../domain/question';
 import { QuizEditorClient } from './editor-client';
@@ -13,7 +14,7 @@ export default async function TeacherQuizDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id: quizId } = await params;
-  const teacherContext = await getAuthorizedTeacherContext();
+  const teacherContext = await ensureAuthorizedTeacherPage(`/teacher/quizzes/${quizId}`);
   const quizService = getQuizService();
 
   const quiz = quizService.getQuiz(teacherContext.organizationId, quizId);
