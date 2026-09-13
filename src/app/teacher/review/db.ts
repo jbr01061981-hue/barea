@@ -40,7 +40,9 @@ export function setAuthRepository(repo: SqliteAuthRepository | null): void {
 
 export function getAuthService(): AuthService {
   if (!globalAuthService) {
-    globalAuthService = new AuthService(getAuthRepository());
+    globalAuthService = new AuthService(getAuthRepository(), {
+      rateLimiter: getRateLimiter()
+    });
   }
   return globalAuthService;
 }

@@ -3,7 +3,8 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getAuthService } from '../teacher/review/db';
-import { InvalidCredentialsError } from '../../domain/domain-errors';
+import { InvalidCredentialsError, RateLimitExceededError } from '../../domain/domain-errors';
+import { sanitizeReturnTo } from './url-utils';
 
 export interface AuthActionResult<T = unknown> {
   success: boolean;
@@ -11,16 +12,15 @@ export interface AuthActionResult<T = unknown> {
   error?: string;
 }
 
-import { sanitizeReturnTo } from './url-utils';
-
 export { sanitizeReturnTo };
-
 
 /**
  * Server Action: Authenticates via email/password, establishes a server session,
  * sets the secure HttpOnly session cookie, and returns safe user data.
  */
-export async function loginWithPasswordAction(formData: FormData): Promise<AuthActionResult<{ userId: string; displayName: string; returnTo: string }>> {
+export async function loginWithPasswordAction(
+  formData: FormData
+): Promise<AuthActionResult<{ userId: string; displayName: string; returnTo: string }>> {
   const email = formData.get('email') as string;
   const password = formData.get('password') as string;
   const returnToParam = formData.get('returnTo') as string | null;
@@ -59,16 +59,23 @@ export async function loginWithPasswordAction(formData: FormData): Promise<AuthA
       }
     };
   } catch (err: unknown) {
+    if (err instanceof RateLimitExceededError) {
+      return {
+        success: false,
+        error: `Too many failed login attempts. Please wait ${err.retryAfter} seconds before trying again.`
+      };
+    }
     if (err instanceof InvalidCredentialsError) {
       return {
         success: false,
         error: 'Invalid email or password. Please check your credentials.'
       };
     }
-    const message = err instanceof Error ? err.message : 'An unexpected error occurred during login.';
+    // Generic error boundary: never leak database, SQLite, or stack trace internals
+    console.error('[Login Error]:', err instanceof Error ? err.name : 'UnknownError');
     return {
       success: false,
-      error: message
+      error: 'Sign-in failed. Please try again.'
     };
   }
 }

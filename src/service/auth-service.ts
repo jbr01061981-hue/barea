@@ -1,6 +1,7 @@
 import * as crypto from 'crypto';
 import type { AuthRepository } from '../persistence/sqlite-auth-repository';
 import type { User, AuthenticatedSessionContext } from '../domain/auth';
+import type { RateLimiter } from './rate-limiter';
 import {
   InvalidCredentialsError,
   AccountNotFoundError,
@@ -9,10 +10,40 @@ import {
 } from '../domain/domain-errors';
 import { hashPassword, verifyPassword } from './password-hasher';
 
+export type JwksKeyResolver = (protectedHeader?: any, token?: any) => Promise<any> | any;
+
 export interface AuthServiceOptions {
   googleClientId?: string;
   googleClientSecret?: string;
   googleRedirectUri?: string;
+  rateLimiter?: RateLimiter;
+  jwksResolver?: JwksKeyResolver;
+}
+
+// Pre-computed valid scrypt hash used for constant-time evaluation on missing accounts
+const DUMMY_SCRYPT_HASH =
+  'scrypt$16384$8$1$0123456789abcdef0123456789abcdef$0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+const GOOGLE_JWKS_URL = new URL('https://www.googleapis.com/oauth2/v3/certs');
+let defaultGoogleRemoteJwks: JwksKeyResolver | null = null;
+let joseModulePromise: Promise<any> | null = null;
+
+async function getJose(): Promise<any> {
+  if (!joseModulePromise) {
+    joseModulePromise = Function('return import("jose")')() as Promise<any>;
+  }
+  return joseModulePromise;
+}
+
+async function getDefaultGoogleJwks(): Promise<JwksKeyResolver> {
+  if (!defaultGoogleRemoteJwks) {
+    const { createRemoteJWKSet } = await getJose();
+    defaultGoogleRemoteJwks = createRemoteJWKSet(GOOGLE_JWKS_URL, {
+      cacheMaxAge: 3600 * 1000, // 1 hour HTTP cache semantics
+      cooldownDuration: 30 * 1000 // Rate-limit refresh on unknown kid
+    });
+  }
+  return defaultGoogleRemoteJwks!;
 }
 
 export class AuthService {
@@ -58,25 +89,45 @@ export class AuthService {
   }
 
   /**
-   * Validates credentials and returns a session rawToken.
+   * Validates credentials, checks brute-force rate limits, and returns a session rawToken.
+   * Responds generically to nonexistent accounts, missing passwords, or wrong passwords.
    */
   async loginWithPassword(input: {
     email: string;
     password: string;
+    clientIp?: string | null;
   }): Promise<{ user: User; rawToken: string }> {
     const email = input.email ? input.email.trim().toLowerCase() : '';
     if (!email || !input.password) {
       throw new InvalidCredentialsError();
     }
 
+    // Rate limiting: prevent rapid guessing against the account
+    if (this.options.rateLimiter) {
+      this.options.rateLimiter.checkLoginAttempt(email, input.clientIp);
+    }
+
     const user = this.repo.findUserByEmail(email);
     if (!user || !user.passwordHash) {
+      // Execute dummy verification to preserve constant-time characteristics against user enumeration
+      await verifyPassword(input.password, DUMMY_SCRYPT_HASH);
+      if (this.options.rateLimiter) {
+        this.options.rateLimiter.recordFailedLogin(email, input.clientIp);
+      }
       throw new InvalidCredentialsError();
     }
 
     const isValid = await verifyPassword(input.password, user.passwordHash);
     if (!isValid) {
+      if (this.options.rateLimiter) {
+        this.options.rateLimiter.recordFailedLogin(email, input.clientIp);
+      }
       throw new InvalidCredentialsError();
+    }
+
+    // Reset rate limiter on successful login
+    if (this.options.rateLimiter) {
+      this.options.rateLimiter.resetLoginAttempts(email);
     }
 
     const { rawToken } = this.repo.createSession(user.id);
@@ -84,12 +135,13 @@ export class AuthService {
   }
 
   /**
-   * Generates Google OAuth authorization URL with state and PKCE challenge.
+   * Generates Google OAuth authorization URL with state, PKCE challenge, and OIDC nonce.
    */
   generateGoogleOAuthUrl(redirectUri?: string): {
     url: string;
     state: string;
     codeVerifier: string;
+    nonce: string;
   } {
     const clientId = this.options.googleClientId || process.env.GOOGLE_CLIENT_ID;
     if (!clientId) {
@@ -103,6 +155,7 @@ export class AuthService {
 
     const state = crypto.randomBytes(24).toString('base64url');
     const codeVerifier = crypto.randomBytes(32).toString('base64url');
+    const nonce = crypto.randomBytes(24).toString('base64url');
     const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
 
     const params = new URLSearchParams({
@@ -111,6 +164,7 @@ export class AuthService {
       response_type: 'code',
       scope: 'openid email profile',
       state,
+      nonce,
       code_challenge: codeChallenge,
       code_challenge_method: 'S256',
       prompt: 'select_account'
@@ -119,25 +173,93 @@ export class AuthService {
     return {
       url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`,
       state,
-      codeVerifier
+      codeVerifier,
+      nonce
     };
   }
 
   /**
-   * Exchanges Google auth code for tokens and resolves BAREA user.
+   * Cryptographically verifies a Google ID Token using standard JWKS verification.
+   * Rejects unsigned or incorrectly signed tokens, verifies JWS kid against JWKS,
+   * enforces RS256 algorithm restriction, validates issuer, audience, expiration,
+   * non-empty subject, and nonce.
+   */
+  async verifyGoogleIdToken(
+    idToken: string,
+    expectedNonce: string,
+    clientId: string
+  ): Promise<{
+    sub: string;
+    email: string | null;
+    emailVerified: boolean;
+    name: string | null;
+  }> {
+    if (!idToken || typeof idToken !== 'string') {
+      throw new OAuthCallbackError('Missing or empty ID token.');
+    }
+
+    const { jwtVerify } = await getJose();
+    const keyResolver = this.options.jwksResolver || (await getDefaultGoogleJwks());
+
+    let verifyResult;
+    try {
+      verifyResult = await jwtVerify(idToken, keyResolver, {
+        issuer: ['https://accounts.google.com', 'accounts.google.com'],
+        audience: clientId,
+        algorithms: ['RS256'],
+        clockTolerance: 5
+      });
+    } catch (err: unknown) {
+      throw new OAuthCallbackError(
+        `Cryptographic verification of Google ID token failed: ${err instanceof Error ? err.message : 'Invalid signature'}`
+      );
+    }
+
+    const { payload } = verifyResult;
+
+    // Validate non-empty subject claim
+    if (!payload.sub || typeof payload.sub !== 'string' || !payload.sub.trim()) {
+      throw new OAuthCallbackError('Google ID token is missing or has empty subject (sub) claim.');
+    }
+
+    // Validate OIDC nonce claim strictly against expectedNonce after signature verification
+    if (!payload.nonce || typeof payload.nonce !== 'string' || payload.nonce !== expectedNonce) {
+      throw new OAuthCallbackError('OIDC nonce mismatch: token does not match OAuth transaction.');
+    }
+
+    const email = typeof payload.email === 'string' && payload.email.trim() ? payload.email.trim().toLowerCase() : null;
+    const emailVerified = Boolean(payload.email_verified);
+    const name = typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim() : null;
+
+    return {
+      sub: payload.sub.trim(),
+      email,
+      emailVerified,
+      name
+    };
+  }
+
+  /**
+   * Exchanges Google auth code for tokens, cryptographically verifies ID token,
+   * validates state, PKCE, and nonce, and resolves or links BAREA user atomically.
    */
   async handleGoogleCallback(input: {
     code: string;
     expectedState: string;
     receivedState: string;
     codeVerifier: string;
+    expectedNonce: string;
     redirectUri?: string;
+    idTokenForTesting?: string;
   }): Promise<{ user: User; rawToken: string }> {
     if (!input.receivedState || input.receivedState !== input.expectedState) {
       throw new OAuthStateError();
     }
     if (!input.code || !input.codeVerifier) {
       throw new OAuthCallbackError('Missing authorization code or PKCE code verifier.');
+    }
+    if (!input.expectedNonce) {
+      throw new OAuthCallbackError('Missing expected OIDC nonce.');
     }
 
     const clientId = this.options.googleClientId || process.env.GOOGLE_CLIENT_ID;
@@ -148,95 +270,102 @@ export class AuthService {
       throw new Error('Google OAuth credentials not configured on the server.');
     }
 
-    // Exchange authorization code for tokens
-    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        code: input.code,
-        code_verifier: input.codeVerifier,
-        grant_type: 'authorization_code',
-        redirect_uri: targetRedirectUri
-      })
-    });
-
-    if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
-      throw new OAuthCallbackError(`Google token exchange failed (${tokenResponse.status}): ${errorText}`);
-    }
-
-    const tokenData = await tokenResponse.json() as { id_token?: string; access_token?: string };
-    if (!tokenData.id_token) {
-      throw new OAuthCallbackError('Google did not return an ID token.');
-    }
-
-    // Decode & verify ID token payload
-    // Note: in high-security production, verify signature against Google JWKS (https://www.googleapis.com/oauth2/v3/certs)
-    const idTokenParts = tokenData.id_token.split('.');
-    if (idTokenParts.length !== 3) {
-      throw new OAuthCallbackError('Malformed Google ID token.');
-    }
-
-    const payloadJson = Buffer.from(idTokenParts[1], 'base64url').toString('utf-8');
-    const claims = JSON.parse(payloadJson) as {
-      sub?: string;
-      email?: string;
-      email_verified?: boolean;
-      name?: string;
-      iss?: string;
-      aud?: string;
-    };
-
-    if (!claims.sub) {
-      throw new OAuthCallbackError('Google ID token is missing subject (sub) claim.');
-    }
-    if (claims.iss !== 'https://accounts.google.com' && claims.iss !== 'accounts.google.com') {
-      throw new OAuthCallbackError('Invalid Google ID token issuer.');
-    }
-    if (claims.aud !== clientId) {
-      throw new OAuthCallbackError('Google ID token audience mismatch.');
-    }
-
-    const providerSub = claims.sub;
-    const email = claims.email ? claims.email.trim().toLowerCase() : null;
-    const emailVerified = Boolean(claims.email_verified);
-    const displayName = claims.name || (email ? email.split('@')[0] : 'Participant');
-
-    // Resolve or provision user
-    let user: User;
-    const existingFederated = this.repo.findFederatedIdentity('GOOGLE', providerSub);
-
-    if (existingFederated) {
-      const foundUser = this.repo.findUserById(existingFederated.userId);
-      if (!foundUser) {
-        throw new AccountNotFoundError('User bound to Google account not found.');
-      }
-      user = foundUser;
+    let idToken: string;
+    if (input.idTokenForTesting) {
+      idToken = input.idTokenForTesting;
     } else {
-      // Check if user exists by verified email for safe linking
-      let targetUserId: string;
-      const existingUserByEmail = email && emailVerified ? this.repo.findUserByEmail(email) : null;
+      // Exchange authorization code for tokens
+      const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          code: input.code,
+          code_verifier: input.codeVerifier,
+          grant_type: 'authorization_code',
+          redirect_uri: targetRedirectUri
+        })
+      });
 
-      if (existingUserByEmail) {
-        targetUserId = existingUserByEmail.id;
-        user = existingUserByEmail;
+      if (!tokenResponse.ok) {
+        throw new OAuthCallbackError('Google token exchange failed.');
+      }
+
+      const tokenData = (await tokenResponse.json()) as { id_token?: string };
+      if (!tokenData.id_token) {
+        throw new OAuthCallbackError('Google did not return an ID token.');
+      }
+      idToken = tokenData.id_token;
+    }
+
+    // Cryptographically verify ID token
+    const verified = await this.verifyGoogleIdToken(idToken, input.expectedNonce, clientId);
+
+    // Presentation display name fallback
+    const displayName = verified.name || (verified.email ? verified.email.split('@')[0] : 'Participant');
+
+    // Atomic account linking / provisioning within repository transaction
+    const user = this.repo.transaction(() => {
+      // Rule A: Check if (GOOGLE, sub) already exists
+      const existingFederated = this.repo.findFederatedIdentity('GOOGLE', verified.sub);
+      if (existingFederated) {
+        const foundUser = this.repo.findUserById(existingFederated.userId);
+        if (!foundUser) {
+          throw new AccountNotFoundError('User bound to Google account not found.');
+        }
+        return foundUser;
+      }
+
+      // Rule B: New Google identity + existing BAREA email
+      if (verified.email && verified.emailVerified) {
+        const existingUserByEmail = this.repo.findUserByEmail(verified.email);
+        if (existingUserByEmail) {
+          // Safe linking: provider cryptographically verified email ownership
+          this.repo.createFederatedIdentity({
+            userId: existingUserByEmail.id,
+            providerType: 'GOOGLE',
+            providerSub: verified.sub
+          });
+          return existingUserByEmail;
+        } else {
+          // Create new BAREA user with verified email
+          const newUser = this.repo.createUser({
+            email: verified.email,
+            emailVerified: true,
+            displayName
+          });
+          this.repo.createFederatedIdentity({
+            userId: newUser.id,
+            providerType: 'GOOGLE',
+            providerSub: verified.sub
+          });
+          return newUser;
+        }
       } else {
-        user = this.repo.createUser({
-          email,
-          emailVerified,
+        // Google email is unverified or missing
+        if (verified.email) {
+          const existingUserByEmail = this.repo.findUserByEmail(verified.email);
+          if (existingUserByEmail) {
+            // Strictly reject linking unverified provider email to an existing account
+            throw new OAuthCallbackError('Cannot link unverified Google email to an existing account.');
+          }
+        }
+
+        // Create separate account without email linking
+        const newUser = this.repo.createUser({
+          email: null,
+          emailVerified: false,
           displayName
         });
-        targetUserId = user.id;
+        this.repo.createFederatedIdentity({
+          userId: newUser.id,
+          providerType: 'GOOGLE',
+          providerSub: verified.sub
+        });
+        return newUser;
       }
-
-      this.repo.createFederatedIdentity({
-        userId: targetUserId,
-        providerType: 'GOOGLE',
-        providerSub
-      });
-    }
+    });
 
     const { rawToken } = this.repo.createSession(user.id);
     return { user, rawToken };
