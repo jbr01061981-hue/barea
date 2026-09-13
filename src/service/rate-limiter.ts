@@ -6,6 +6,9 @@ export interface RateLimiter {
   checkUnauthenticatedRequest(clientIp?: string | null): void;
   checkJoinMutation(userId: string): void;
   checkLiveMutation(userId: string): void;
+  checkLoginAttempt(targetEmail: string, clientIp?: string | null): void;
+  recordFailedLogin(targetEmail: string, clientIp?: string | null): void;
+  resetLoginAttempts(targetEmail: string): void;
   reset(): void;
 }
 
@@ -20,12 +23,15 @@ export class InMemoryRateLimiter implements RateLimiter {
   private unauthRequests = new Map<string, WindowBucket>();
   private userJoins = new Map<string, WindowBucket>();
   private userLiveMutations = new Map<string, WindowBucket>();
+  private failedLogins = new Map<string, WindowBucket>();
 
   private maxFailedLookupsPerMinute: number = 15;
   private maxSubnetFailedLookupsPerMinute: number = 60;
   private maxUnauthRequestsPer10Seconds: number = 100;
   private minSecondsBetweenUserJoins: number = 5;
   private maxLiveMutationsPer5Seconds: number = 20;
+  private maxFailedLogins: number = 5;
+  private loginLockoutSeconds: number = 300; // 5 minutes lockout
 
   private nowProvider: () => number;
 
@@ -37,6 +43,8 @@ export class InMemoryRateLimiter implements RateLimiter {
       maxUnauthRequestsPer10Seconds?: number;
       minSecondsBetweenUserJoins?: number;
       maxLiveMutationsPer5Seconds?: number;
+      maxFailedLogins?: number;
+      loginLockoutSeconds?: number;
     }
   ) {
     this.nowProvider = nowProvider;
@@ -45,6 +53,8 @@ export class InMemoryRateLimiter implements RateLimiter {
     if (options?.maxUnauthRequestsPer10Seconds !== undefined) this.maxUnauthRequestsPer10Seconds = options.maxUnauthRequestsPer10Seconds;
     if (options?.minSecondsBetweenUserJoins !== undefined) this.minSecondsBetweenUserJoins = options.minSecondsBetweenUserJoins;
     if (options?.maxLiveMutationsPer5Seconds !== undefined) this.maxLiveMutationsPer5Seconds = options.maxLiveMutationsPer5Seconds;
+    if (options?.maxFailedLogins !== undefined) this.maxFailedLogins = options.maxFailedLogins;
+    if (options?.loginLockoutSeconds !== undefined) this.loginLockoutSeconds = options.loginLockoutSeconds;
   }
 
   resetUserJoin(userId: string): void {
@@ -158,12 +168,85 @@ export class InMemoryRateLimiter implements RateLimiter {
     }
   }
 
+  checkLoginAttempt(targetEmail: string, clientIp?: string | null): void {
+    if (!targetEmail) return;
+    const key = targetEmail.trim().toLowerCase();
+    const now = this.nowProvider();
+    const bucket = this.failedLogins.get(key);
+
+    if (bucket && bucket.resetAt > now && bucket.count >= this.maxFailedLogins) {
+      const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
+      throw new RateLimitExceededError(Math.max(1, retryAfter));
+    }
+  }
+
+  /**
+   * Records a failed login attempt.
+   *
+   * ARCHITECTURAL SPECIFICATION:
+   * This is a local in-memory MVP guardrail keyed by normalized email to protect
+   * against rapid brute-force password guessing against single accounts (even across
+   * shared congregation Wi-Fi/NAT IPs).
+   *
+   * Consecutive-failure lockout semantics:
+   * - Tracks failures within a sliding window.
+   * - Once the failure threshold (maxFailedLogins) is reached or exceeded, each subsequent
+   *   failure resets the lockout duration from the time of the latest attempt.
+   *
+   * PRODUCTION DEPLOYMENT NOTE:
+   * In a multi-instance or clustered production deployment, a distributed store (such as
+   * Redis or PostgreSQL) must be substituted to maintain shared lockout state across instances.
+   */
+  recordFailedLogin(targetEmail: string, clientIp?: string | null): void {
+    if (!targetEmail) return;
+    const key = targetEmail.trim().toLowerCase();
+    const now = this.nowProvider();
+
+    this.pruneMapIfFull(this.failedLogins);
+
+    const bucket = this.failedLogins.get(key);
+    if (!bucket || bucket.resetAt <= now) {
+      this.failedLogins.set(key, { count: 1, resetAt: now + (this.loginLockoutSeconds * 1000) });
+    } else {
+      bucket.count++;
+      if (bucket.count >= this.maxFailedLogins) {
+        // Enforce true consecutive-failure lockout extending from the current failure timestamp
+        bucket.resetAt = now + (this.loginLockoutSeconds * 1000);
+      }
+    }
+  }
+
+  resetLoginAttempts(targetEmail: string): void {
+    if (!targetEmail) return;
+    const key = targetEmail.trim().toLowerCase();
+    this.failedLogins.delete(key);
+  }
+
   reset(): void {
     this.failedLookups.clear();
     this.subnetFailedLookups.clear();
     this.unauthRequests.clear();
     this.userJoins.clear();
     this.userLiveMutations.clear();
+    this.failedLogins.clear();
+  }
+
+  private pruneMapIfFull(map: Map<string, WindowBucket>, maxCapacity = 2000): void {
+    if (map.size < maxCapacity) return;
+    const now = this.nowProvider();
+    for (const [key, bucket] of map.entries()) {
+      if (bucket.resetAt <= now) {
+        map.delete(key);
+      }
+    }
+    // If still above threshold, drop oldest entries to prevent DoS memory leak
+    if (map.size >= maxCapacity) {
+      let countToDrop = Math.floor(maxCapacity * 0.2);
+      for (const key of map.keys()) {
+        map.delete(key);
+        if (--countToDrop <= 0) break;
+      }
+    }
   }
 
   private normalizeRoomCode(roomCode: string): string {

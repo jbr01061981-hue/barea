@@ -26,7 +26,7 @@ export default function HomePage() {
             <a href="#explore-barea" className="inline-flex min-h-12 items-center justify-center rounded-[var(--barea-radius-control)] bg-[var(--barea-gold)] px-7 text-sm font-bold text-[var(--barea-midnight)] transition-colors hover:bg-[var(--barea-gold-light)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--barea-midnight)]">
               Explore BAREA <span aria-hidden="true" className="ml-2">→</span>
             </a>
-            <a href="#login" className="inline-flex min-h-12 items-center justify-center rounded-[var(--barea-radius-control)] border border-[var(--barea-slate-border)] bg-[var(--barea-slate-card)] px-7 text-sm font-semibold text-white transition-colors hover:border-[var(--barea-gold)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--barea-midnight)]">
+            <a href="/login" className="inline-flex min-h-12 items-center justify-center rounded-[var(--barea-radius-control)] border border-[var(--barea-slate-border)] bg-[var(--barea-slate-card)] px-7 text-sm font-semibold text-white transition-colors hover:border-[var(--barea-gold)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--barea-midnight)]">
               Log in
             </a>
           </div>
@@ -48,9 +48,9 @@ export default function HomePage() {
               </div>
               <div id="login" className="scroll-mt-24">
                 <span className="sr-only">Login</span>
-                <button type="button" disabled aria-disabled="true" className="inline-flex min-h-11 cursor-not-allowed items-center justify-center rounded-[var(--barea-radius-control)] bg-[var(--barea-gold)] px-6 text-sm font-bold text-[var(--barea-midnight)] opacity-55">
+                <a href="/login" className="inline-flex min-h-11 items-center justify-center rounded-[var(--barea-radius-control)] bg-[var(--barea-gold)] px-6 text-sm font-bold text-[var(--barea-midnight)] transition-colors hover:bg-[var(--barea-gold-light)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--barea-midnight)]">
                   Log in
-                </button>
+                </a>
               </div>
             </div>
           </div>

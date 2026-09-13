@@ -12,6 +12,9 @@ import { InMemoryRateLimiter } from '../../../service/rate-limiter';
 import { LiveQuizService } from '../../../service/live-quiz-service';
 import { InMemoryRealtimeTransport } from '../../../transport/realtime-transport';
 
+import { SqliteAuthRepository } from '../../../persistence/sqlite-auth-repository';
+import { AuthService } from '../../../service/auth-service';
+
 let globalRepo: SqliteQuestionRepository | null = null;
 let globalBankService: QuestionBankService | null = null;
 let globalQuizRepo: SqliteQuizRepository | null = null;
@@ -20,6 +23,34 @@ let globalAIService: AIGenerationService | null = null;
 let globalSessionRepo: SqliteSessionRepository | null = null;
 let globalSessionService: SessionService | null = null;
 let globalRateLimiter: InMemoryRateLimiter | null = null;
+let globalAuthRepo: SqliteAuthRepository | null = null;
+let globalAuthService: AuthService | null = null;
+
+export function getAuthRepository(): SqliteAuthRepository {
+  if (!globalAuthRepo) {
+    const dbPath = process.env.BAREA_DB_PATH || path.join(process.cwd(), 'barea.db');
+    globalAuthRepo = new SqliteAuthRepository(dbPath);
+  }
+  return globalAuthRepo;
+}
+
+export function setAuthRepository(repo: SqliteAuthRepository | null): void {
+  globalAuthRepo = repo;
+}
+
+export function getAuthService(): AuthService {
+  if (!globalAuthService) {
+    globalAuthService = new AuthService(getAuthRepository(), {
+      rateLimiter: getRateLimiter()
+    });
+  }
+  return globalAuthService;
+}
+
+export function setAuthService(service: AuthService | null): void {
+  globalAuthService = service;
+}
+
 
 export function getQuestionBankService(): QuestionBankService {
   if (!globalBankService) {
@@ -159,15 +190,44 @@ export function isTestEnvironment(): boolean {
   return process.env.NODE_ENV === 'test';
 }
 
+let mockSessionTokenForTesting: string | null = null;
+
+export function setSessionTokenForTesting(token: string | null): void {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Forbidden: session token test overrides cannot be executed in production.');
+  }
+  mockSessionTokenForTesting = token;
+}
+
+/**
+ * Resolves the raw session token from the barea_session cookie.
+ * Gracefully handles contexts where Next.js cookies() is unavailable (e.g. tests).
+ */
+export async function getSessionTokenFromRequest(): Promise<string | null> {
+  if (mockSessionTokenForTesting !== null) {
+    return mockSessionTokenForTesting;
+  }
+  try {
+    // Dynamic load to allow node --test runner without Next.js headers compilation failure
+    const nextHeadersModule = await (Function('return import("next/headers")')() as Promise<any>);
+    const cookieStore = await nextHeadersModule.cookies();
+    const sessionCookie = cookieStore.get('barea_session');
+    return sessionCookie?.value || null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Derives the authenticated teacher context strictly on the server.
  * Never accepts organization identity or credentials from untrusted client input.
  *
  * Security Boundary:
  * 1. Test fixture override (mockTeacherContext) is evaluated first (strictly permitted only in test or development).
- * 2. Default development context is permitted ONLY when NODE_ENV is explicitly 'development'.
+ * 2. If a valid barea_session cookie is present, resolves user and verifies teacher/admin organization membership.
+ * 3. Default development context is permitted ONLY when NODE_ENV is explicitly 'development'.
  *    Unset, unknown, or production NODE_ENV strictly FAILS CLOSED.
- * 3. In development mode, requires an explicit, non-empty BAREA_DEV_ORG_ID.
+ * 4. In development mode, requires an explicit, non-empty BAREA_DEV_ORG_ID.
  *    There is NO silent fallback to 'church-berea-default'; missing or empty configuration FAILS CLOSED.
  */
 export async function getAuthorizedTeacherContext(): Promise<TeacherContext> {
@@ -180,6 +240,27 @@ export async function getAuthorizedTeacherContext(): Promise<TeacherContext> {
       throw new Error('Unauthorized: missing or invalid teacher identity.');
     }
     return mockTeacherContext;
+  }
+
+  // Check real authenticated server session from cookie
+  const sessionToken = await getSessionTokenFromRequest();
+  if (sessionToken) {
+    const authService = getAuthService();
+    const sessionContext = authService.resolveSession(sessionToken);
+    if (sessionContext) {
+      // Find teacher or admin membership
+      const teacherMembership = sessionContext.memberships.find(m => m.role === 'teacher' || m.role === 'admin');
+      if (teacherMembership) {
+        return {
+          userId: sessionContext.user.id,
+          organizationId: teacherMembership.organizationId,
+          displayName: sessionContext.user.displayName,
+          role: teacherMembership.role
+        };
+      }
+      // User is authenticated but has no teacher/admin role -> fail closed
+      throw new Error('Forbidden: Authenticated user is not authorized as a teacher or admin for any organization.');
+    }
   }
 
   // Non-development / production / unset / unknown environment guard: must fail closed
@@ -240,6 +321,25 @@ export async function getAuthenticatedUserContext(): Promise<AuthenticatedUserCo
     return mockUserContext;
   }
 
+  // Check real authenticated server session from cookie
+  const sessionToken = await getSessionTokenFromRequest();
+  if (sessionToken) {
+    const authService = getAuthService();
+    const sessionContext = authService.resolveSession(sessionToken);
+    if (sessionContext) {
+      return {
+        userId: sessionContext.user.id,
+        providerType: sessionContext.session.authProvider || 'LOCAL_PASSWORD',
+        providerSub: sessionContext.session.providerSub || sessionContext.user.id,
+        email: sessionContext.user.email,
+        emailVerified: sessionContext.user.emailVerified,
+        phone: null,
+        phoneVerified: false,
+        displayName: sessionContext.user.displayName
+      };
+    }
+  }
+
   if (!isDevelopmentEnvironment()) {
     throw new Error('Unauthorized: participant authentication is required.');
   }
@@ -255,6 +355,7 @@ export async function getAuthenticatedUserContext(): Promise<AuthenticatedUserCo
     displayName: 'Dev Participant'
   };
 }
+
 
 export function setAuthenticatedUserContext(context: AuthenticatedUserContext | null): void {
   if (process.env.NODE_ENV === 'production' || (!isTestEnvironment() && !isDevelopmentEnvironment())) {

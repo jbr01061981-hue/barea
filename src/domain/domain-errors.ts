@@ -154,3 +154,44 @@ export class ConcurrencyConflictError extends BareaDomainError {
     super(message);
   }
 }
+
+export class InvalidCredentialsError extends BareaDomainError {
+  readonly code = 'INVALID_CREDENTIALS';
+  readonly httpStatus = 401;
+  constructor(message: string = 'Invalid email or password.') {
+    super(message);
+  }
+}
+
+export class AccountNotFoundError extends BareaDomainError {
+  readonly code = 'ACCOUNT_NOT_FOUND';
+  readonly httpStatus = 404;
+  constructor(message: string = 'Account not found.') {
+    super(message);
+  }
+}
+
+export class AuthenticationRequiredError extends BareaDomainError {
+  readonly code = 'AUTHENTICATION_REQUIRED';
+  readonly httpStatus = 401;
+  constructor(message: string = 'Authentication required.') {
+    super(message);
+  }
+}
+
+export class OAuthStateError extends BareaDomainError {
+  readonly code = 'OAUTH_STATE_INVALID';
+  readonly httpStatus = 400;
+  constructor(message: string = 'Invalid or expired OAuth state.') {
+    super(message);
+  }
+}
+
+export class OAuthCallbackError extends BareaDomainError {
+  readonly code = 'OAUTH_CALLBACK_ERROR';
+  readonly httpStatus = 400;
+  constructor(message: string = 'OAuth authentication callback failed.') {
+    super(message);
+  }
+}
+

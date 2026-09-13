@@ -1,5 +1,6 @@
 import { getQuizService, getAuthorizedTeacherContext } from '../review/db';
 import { QuizzesClient } from './quizzes-client';
+import { logoutAction } from '../../login/actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,8 +23,17 @@ export default async function TeacherQuizzesPage() {
           <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-stone-100 text-stone-700 border border-stone-300">
             {teacherContext.displayName}
           </span>
+          <form action={logoutAction}>
+            <button
+              type="submit"
+              className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium text-stone-600 hover:text-stone-900 border border-stone-300 hover:border-stone-400 bg-white transition"
+            >
+              Log out
+            </button>
+          </form>
         </div>
       </div>
+
 
       <QuizzesClient initialQuizzes={quizzes} organizationId={teacherContext.organizationId} />
     </main>

@@ -32,7 +32,7 @@ export default function RootLayout({
                 How it works
               </a>
               <a
-                href="/#login"
+                href="/login"
                 className="inline-flex min-h-11 items-center justify-center rounded-sm px-3 text-sm font-semibold text-white hover:text-[var(--barea-gold-light)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] sm:px-2"
               >
                 Log in
