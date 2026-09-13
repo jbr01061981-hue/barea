@@ -311,9 +311,10 @@ export class AuthService {
   /**
    * Atomically provisions or links a BAREA user from verified Google claims
    * and creates a server session bound to (GOOGLE, verified.sub).
-   * Note: Identity claims must be cryptographically verified prior to calling.
+   * Note: Private internal method. Only invoked following successful cryptographic verification
+   * within handleGoogleCallback. Untrusted caller claims cannot bypass verification.
    */
-  provisionGoogleUserSession(verified: VerifiedGoogleClaims): { user: User; rawToken: string } {
+  private provisionGoogleUserSession(verified: VerifiedGoogleClaims): { user: User; rawToken: string } {
     const displayName = verified.name || (verified.email ? verified.email.split('@')[0] : 'Participant');
 
     // Atomic account linking / provisioning AND session creation within repository transaction

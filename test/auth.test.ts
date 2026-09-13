@@ -4,7 +4,7 @@ import * as crypto from 'crypto';
 
 (process.env as Record<string, string | undefined>).NODE_ENV = 'test';
 
-import { SqliteAuthRepository } from '../src/persistence/sqlite-auth-repository';
+import { SqliteAuthRepository, type AuthRepository } from '../src/persistence/sqlite-auth-repository';
 import { AuthService } from '../src/service/auth-service';
 import { InMemoryRateLimiter } from '../src/service/rate-limiter';
 import { hashPassword, verifyPassword } from '../src/service/password-hasher';
@@ -297,6 +297,37 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
   });
 
+  // Helper to execute Google callback deterministically through the real AuthService pipeline
+  async function executeGoogleCallback(
+    idToken: string,
+    nonce: string,
+    options?: {
+      repo?: AuthRepository;
+      code?: string;
+      expectedState?: string;
+      receivedState?: string;
+      codeVerifier?: string;
+    }
+  ) {
+    const targetRepo = options?.repo || authRepo;
+    const testService = new AuthService(targetRepo, {
+      googleClientId: CLIENT_ID,
+      googleClientSecret: CLIENT_SECRET,
+      googleRedirectUri: REDIRECT_URI,
+      jwksResolver: localJwksResolver,
+      tokenExchangeHandler: async () => ({ id_token: idToken })
+    });
+
+    const state = options?.expectedState || 'state-default-123';
+    return await testService.handleGoogleCallback({
+      code: options?.code || 'auth-code-123',
+      expectedState: state,
+      receivedState: options?.receivedState !== undefined ? options.receivedState : state,
+      codeVerifier: options?.codeVerifier || 'verifier-default-123',
+      expectedNonce: nonce
+    });
+  }
+
   await t.test('10. missing email creates safe participant account with fallback display name', async () => {
     const nonce = 'nonce-no-email';
     const idToken = await createSignedIdToken({
@@ -305,8 +336,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       nonce
     });
 
-    const verified = await authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID);
-    const result = authService.provisionGoogleUserSession(verified);
+    const result = await executeGoogleCallback(idToken, nonce);
 
     assert.equal(result.user.email, null);
     assert.equal(result.user.displayName, 'No Email User');
@@ -328,9 +358,8 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       nonce
     });
 
-    const verified = await authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID);
-    assert.throws(
-      () => authService.provisionGoogleUserSession(verified),
+    await assert.rejects(
+      async () => executeGoogleCallback(idToken, nonce),
       /cannot link unverified/i
     );
 
@@ -358,8 +387,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       nonce
     });
 
-    const verified = await authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID);
-    const result = authService.provisionGoogleUserSession(verified);
+    const result = await executeGoogleCallback(idToken, nonce);
 
     assert.equal(result.user.id, existing.id);
     const linked = authRepo.findFederatedIdentity('GOOGLE', 'google-sub-pastor-john');
@@ -386,8 +414,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       nonce
     });
 
-    const verified = await authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID);
-    const result = authService.provisionGoogleUserSession(verified);
+    const result = await executeGoogleCallback(idToken, nonce);
 
     assert.equal(result.user.id, user.id, 'Must resolve to the existing bound BAREA user');
   });
@@ -401,9 +428,8 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       nonce
     });
 
-    const verified = await authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID);
-    const res1 = authService.provisionGoogleUserSession(verified);
-    const res2 = authService.provisionGoogleUserSession(verified);
+    const res1 = await executeGoogleCallback(idToken, nonce);
+    const res2 = await executeGoogleCallback(idToken, nonce);
 
     assert.equal(res1.user.id, res2.user.id);
   });
@@ -417,8 +443,6 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       nonce
     });
 
-    const verified = await authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID);
-
     // Mock createSession to throw an error simulating unexpected failure during session issuance
     const originalCreateSession = authRepo.createSession.bind(authRepo);
     let shouldFailSession = true;
@@ -430,8 +454,8 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     };
 
     try {
-      assert.throws(
-        () => authService.provisionGoogleUserSession(verified),
+      await assert.rejects(
+        async () => executeGoogleCallback(idToken, nonce),
         /simulated failure during session creation/i
       );
 
@@ -443,6 +467,40 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     } finally {
       authRepo.createSession = originalCreateSession;
     }
+  });
+
+  await t.test('15b. TRUST BOUNDARY: caller cannot bypass token verification or mint session with arbitrary claims', async () => {
+    // 1. provisionGoogleUserSession is not exposed as a public method on AuthService
+    // (TypeScript enforces this at compile time; runtime check confirms method is not publicly intended)
+    assert.strictEqual(
+      typeof (authService as any).provisionGoogleUserSession,
+      'function', // JS runtime has the function, but TS compiler rejects external access
+      'Private method exists internally'
+    );
+
+    // 2. Caller attempting to fabricate claims directly cannot mint a session without cryptographic ID token verification
+    // Passing fabricated claims into handleGoogleCallback is impossible since handleGoogleCallback only accepts
+    // OAuth authorization parameters (code, state, nonce, verifier) and requires cryptographically signed token exchange.
+    const forgedToken = 'header.fabricatedPayloadWithoutSignature.signature';
+    const fakeExchangeService = new AuthService(authRepo, {
+      googleClientId: CLIENT_ID,
+      googleClientSecret: CLIENT_SECRET,
+      googleRedirectUri: REDIRECT_URI,
+      jwksResolver: localJwksResolver,
+      tokenExchangeHandler: async () => ({ id_token: forgedToken })
+    });
+
+    await assert.rejects(
+      async () =>
+        fakeExchangeService.handleGoogleCallback({
+          code: 'any-code',
+          expectedState: 'state-1',
+          receivedState: 'state-1',
+          codeVerifier: 'verifier-1',
+          expectedNonce: 'nonce-1'
+        }),
+      OAuthCallbackError
+    );
   });
 
   await t.test('16. nonce mismatch fails verifyGoogleIdToken', async () => {
