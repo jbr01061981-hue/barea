@@ -42,22 +42,59 @@ The system exposes three distinct user experiences:
    - Large-screen display tailored for sanctuary, auditorium, and classroom visibility.
    - Synchronized countdown timer, active question stem, answer breakdown chart, and celebratory leaderboard.
 
-### 2.2 Application & State Management Layer
+### 2.2 Identity, Authorization & Workspace Model
+BAREA separates **account identity**, **capability/entitlement**, **workspace membership**, and **quiz participation**. A BAREA account is not inherently a teacher account and does not require organization membership merely to exist or participate individually.
+
+#### Canonical Account Identity
+- Every authenticated person has one canonical BAREA user identity.
+- Email/password and federated identities authenticate the BAREA user; provider stable subjects are used as federated identity anchors.
+- Display name is presentation data and is never an authorization credential.
+- A user may authenticate and participate individually without belonging to a church or organization workspace.
+
+#### Teacher / Host Capability
+- Teacher/Host is an **authorized capability**, not the default identity of every BAREA user.
+- A user becomes eligible for teacher/host functionality only when the applicable BAREA qualification, entitlement, payment, approval, or other product rule grants that capability.
+- The exact commercial/eligibility mechanism is a product decision separate from the authentication system.
+- Authorization checks must derive the capability from trusted server-side state; a client-selected role, route, organization ID, or UI state cannot grant teacher authority.
+
+#### Workspace / Tenant Model
+- BAREA supports both **organization workspaces** and **personal workspaces**.
+- A teacher operating in an organization workspace must have an authoritative membership/role granting access to that workspace.
+- A teacher-capable user may also create and manage quizzes in a personal workspace without requiring organization membership.
+- Personal workspaces use an isolated deterministic tenant identity derived server-side from the authenticated user (for example, `usr_ten_<user_id>`), compatible with the existing tenant/`organization_id` persistence model.
+- Every quiz, published snapshot, and derived live session belongs to exactly one authoritative tenant/workspace identity.
+- Cross-tenant access fails closed regardless of whether the tenant is personal or organizational.
+
+#### Participation Modes
+BAREA distinguishes how a quiz is played from who is admitted:
+
+1. **Teacher-Controlled Group Mode** (`TEACHER_GROUP`):
+   - A qualified/authorized teacher or host operates the quiz.
+   - Pupils do not need BAREA accounts, OAuth/social login, or individual devices.
+   - Groups and pupil membership are controlled by the authorized host boundary.
+2. **Authenticated Individual Mode** (`INDIVIDUAL_AUTHENTICATED`):
+   - Each participant authenticates as a BAREA user.
+   - The server binds the participant to the authenticated BAREA identity, not a nickname or client-supplied user identifier.
+
+Admission policy (`TEACHER_ASSIGNED`, `OPEN`, or `RESTRICTED`) is a separate authorization decision and must not be conflated with participation mode.
+
+### 2.3 Application & State Management Layer
 - **Core Application Service**:
-  - Handles authentication, question curation, AI generation requests, and quiz configuration.
+  - Handles authentication, capability/authorization checks, question curation, AI generation requests, workspace/tenant ownership, and quiz configuration.
 - **Authoritative Live Quiz Engine**:
   - Implements a deterministic finite state machine (FSM) governing game progression.
   - Enforces synchronized timers and coordinates real-time event broadcasting.
   - Protects answer secrets: correct choices are withheld from participants until the answer reveal state.
 
-### 2.3 AI Generation & Content Review Pipeline
+### 2.4 AI Generation & Content Review Pipeline
 - Generates structured draft questions based on teacher-selected topics, scriptures, question types, and difficulty levels.
 - Executes structural validation to ensure response integrity before placing items into pending review.
 - Distinguishes structural system validation from human theological review: content is not approved until a teacher reviews and confirms biblical faithfulness.
 
-### 2.4 Data Persistence & Session State
-- Persistent storage for user accounts, question bank items, quizzes, and session history.
+### 2.5 Data Persistence & Session State
+- Persistent storage for user accounts, federated identities, sessions, workspaces/tenants, question bank items, quizzes, and session history.
 - Live session state store managing active room memberships, connection mappings, and live timer ticks.
+- Tenant/workspace identity is server-authoritative and must be derived from authenticated ownership/membership state rather than request-body values.
 - Specific database engines, ORMs, and caching technologies remain open decisions deferred to future milestones.
 
 ---
@@ -116,8 +153,12 @@ To ensure fairness, tamper resistance, and timing accuracy:
 
 ## 5. Security & Boundary Principles
 
+- **Identity Binding**: Individual authenticated participation is bound to the server-resolved BAREA user and federated provider subject where applicable; display names are never identity or authorization credentials.
+- **Capability Authorization**: Authentication proves who the user is; it does not by itself grant teacher/host authority. Teacher capability and workspace membership/ownership are separate server-authoritative checks.
+- **Tenant Isolation**: Personal and organization workspaces use the same fail-closed tenant isolation guarantees. Client-supplied tenant, organization, creator, role, group, or participant identifiers cannot establish authorization.
 - **Secret Isolation**: AI provider credentials and backend secrets remain strictly on the server.
 - **Answer Secrecy**: Correct answers are never sent to participants during the answering window.
-- **Participant Simplicity**: Participants join with a room code and nickname; no personal account registration required for casual participation.
+- **Teacher-Controlled Groups**: Child/pupil participation may occur without child accounts, but group membership and teacher-entered group answers are controlled exclusively through the authorized host boundary.
+- **Admission Separation**: Participation mode and admission policy are independent. QR codes, links, room codes, and future invite codes are entry mechanisms, not authorization grants.
 - **Quiz Snapshot Integrity**: Live quiz sessions run from immutable frozen snapshots to prevent unexpected behavior during active gameplay.
 - **Input Sanitization**: Display names and user-authored content are sanitized against injection and inappropriate language.
