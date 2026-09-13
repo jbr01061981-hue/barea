@@ -12,12 +12,28 @@ import { hashPassword, verifyPassword } from './password-hasher';
 
 export type JwksKeyResolver = (protectedHeader?: any, token?: any) => Promise<any> | any;
 
+export type TokenExchangeHandler = (params: {
+  code: string;
+  codeVerifier: string;
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+}) => Promise<{ id_token: string }>;
+
 export interface AuthServiceOptions {
   googleClientId?: string;
   googleClientSecret?: string;
   googleRedirectUri?: string;
   rateLimiter?: RateLimiter;
   jwksResolver?: JwksKeyResolver;
+  tokenExchangeHandler?: TokenExchangeHandler;
+}
+
+export interface VerifiedGoogleClaims {
+  sub: string;
+  email: string | null;
+  emailVerified: boolean;
+  name: string | null;
 }
 
 // Pre-computed valid scrypt hash used for constant-time evaluation on missing accounts
@@ -193,20 +209,21 @@ export class AuthService {
 
   /**
    * Cryptographically verifies a Google ID Token using standard JWKS verification.
-   * Rejects unsigned or incorrectly signed tokens, verifies JWS kid against JWKS,
-   * enforces RS256 algorithm restriction, validates issuer, audience, expiration,
-   * non-empty subject, and nonce.
+   * Enforces OIDC/Google claim contract:
+   * 1. Valid JWS signature against Google JWKS.
+   * 2. alg strictly RS256.
+   * 3. Valid Google issuer (https://accounts.google.com or accounts.google.com).
+   * 4. Audience matches configured GOOGLE_CLIENT_ID (with azp enforcement for multi-audience).
+   * 5. Valid expiration (exp).
+   * 6. Valid numeric issued-at (iat) within clock tolerance.
+   * 7. Non-empty subject (sub).
+   * 8. Nonce matches expected transaction nonce strictly after signature verification.
    */
   async verifyGoogleIdToken(
     idToken: string,
     expectedNonce: string,
     clientId: string
-  ): Promise<{
-    sub: string;
-    email: string | null;
-    emailVerified: boolean;
-    name: string | null;
-  }> {
+  ): Promise<VerifiedGoogleClaims> {
     if (!idToken || typeof idToken !== 'string') {
       throw new OAuthCallbackError('Missing or empty ID token.');
     }
@@ -214,13 +231,15 @@ export class AuthService {
     const { jwtVerify } = await getJose();
     const keyResolver = this.options.jwksResolver || (await getDefaultGoogleJwks());
 
+    const CLOCK_TOLERANCE_SECONDS = 5;
+
     let verifyResult;
     try {
       verifyResult = await jwtVerify(idToken, keyResolver, {
         issuer: ['https://accounts.google.com', 'accounts.google.com'],
         audience: clientId,
         algorithms: ['RS256'],
-        clockTolerance: 5
+        clockTolerance: CLOCK_TOLERANCE_SECONDS
       });
     } catch (err: unknown) {
       throw new OAuthCallbackError(
@@ -229,6 +248,43 @@ export class AuthService {
     }
 
     const { payload } = verifyResult;
+
+    // Audience / Authorized Party (azp) verification
+    const aud = payload.aud;
+    if (typeof aud === 'string') {
+      if (aud !== clientId) {
+        throw new OAuthCallbackError('Google ID token audience mismatch.');
+      }
+      if (payload.azp !== undefined && payload.azp !== clientId) {
+        throw new OAuthCallbackError('Google ID token authorized party (azp) mismatch.');
+      }
+    } else if (Array.isArray(aud)) {
+      if (!aud.includes(clientId)) {
+        throw new OAuthCallbackError('Configured GOOGLE_CLIENT_ID is not present in token audience.');
+      }
+      if (aud.length > 1) {
+        // Multi-audience token requires azp to be present and exactly equal to clientId
+        if (!payload.azp || typeof payload.azp !== 'string' || payload.azp !== clientId) {
+          throw new OAuthCallbackError(
+            'Multi-audience Google ID token requires azp claim exactly matching configured GOOGLE_CLIENT_ID.'
+          );
+        }
+      } else if (payload.azp !== undefined && payload.azp !== clientId) {
+        throw new OAuthCallbackError('Google ID token authorized party (azp) mismatch.');
+      }
+    } else {
+      throw new OAuthCallbackError('Missing or invalid audience (aud) claim.');
+    }
+
+    // Issued-At (iat) verification: must be a finite numeric Unix timestamp not in future beyond skew
+    if (typeof payload.iat !== 'number' || !Number.isFinite(payload.iat)) {
+      throw new OAuthCallbackError('Google ID token missing or invalid numeric issued-at (iat) claim.');
+    }
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (payload.iat > nowSeconds + CLOCK_TOLERANCE_SECONDS) {
+      throw new OAuthCallbackError('Google ID token issued-at (iat) timestamp is in the future.');
+    }
 
     // Validate non-empty subject claim
     if (!payload.sub || typeof payload.sub !== 'string' || !payload.sub.trim()) {
@@ -253,74 +309,15 @@ export class AuthService {
   }
 
   /**
-   * Exchanges Google auth code for tokens, cryptographically verifies ID token,
-   * validates state, PKCE, and nonce, and resolves or links BAREA user atomically
-   * together with session creation inside a single transaction.
+   * Atomically provisions or links a BAREA user from verified Google claims
+   * and creates a server session bound to (GOOGLE, verified.sub).
+   * Note: Identity claims must be cryptographically verified prior to calling.
    */
-  async handleGoogleCallback(input: {
-    code: string;
-    expectedState: string;
-    receivedState: string;
-    codeVerifier: string;
-    expectedNonce: string;
-    redirectUri?: string;
-    idTokenForTesting?: string;
-  }): Promise<{ user: User; rawToken: string }> {
-    if (!input.receivedState || input.receivedState !== input.expectedState) {
-      throw new OAuthStateError();
-    }
-    if (!input.code || !input.codeVerifier) {
-      throw new OAuthCallbackError('Missing authorization code or PKCE code verifier.');
-    }
-    if (!input.expectedNonce) {
-      throw new OAuthCallbackError('Missing expected OIDC nonce.');
-    }
-
-    const clientId = this.options.googleClientId || process.env.GOOGLE_CLIENT_ID;
-    const clientSecret = this.options.googleClientSecret || process.env.GOOGLE_CLIENT_SECRET;
-    const targetRedirectUri = input.redirectUri || this.options.googleRedirectUri || process.env.GOOGLE_REDIRECT_URI;
-
-    if (!clientId || !clientSecret || !targetRedirectUri) {
-      throw new Error('Google OAuth credentials not configured on the server.');
-    }
-
-    let idToken: string;
-    if (input.idTokenForTesting) {
-      idToken = input.idTokenForTesting;
-    } else {
-      // Exchange authorization code for tokens
-      const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: clientId,
-          client_secret: clientSecret,
-          code: input.code,
-          code_verifier: input.codeVerifier,
-          grant_type: 'authorization_code',
-          redirect_uri: targetRedirectUri
-        })
-      });
-
-      if (!tokenResponse.ok) {
-        throw new OAuthCallbackError('Google token exchange failed.');
-      }
-
-      const tokenData = (await tokenResponse.json()) as { id_token?: string };
-      if (!tokenData.id_token) {
-        throw new OAuthCallbackError('Google did not return an ID token.');
-      }
-      idToken = tokenData.id_token;
-    }
-
-    // Cryptographically verify ID token
-    const verified = await this.verifyGoogleIdToken(idToken, input.expectedNonce, clientId);
-
-    // Presentation display name fallback
+  provisionGoogleUserSession(verified: VerifiedGoogleClaims): { user: User; rawToken: string } {
     const displayName = verified.name || (verified.email ? verified.email.split('@')[0] : 'Participant');
 
     // Atomic account linking / provisioning AND session creation within repository transaction
-    const { user, rawToken } = this.repo.transaction(() => {
+    return this.repo.transaction(() => {
       let resolvedUser: User;
 
       // Rule A: Check if (GOOGLE, sub) already exists
@@ -388,8 +385,87 @@ export class AuthService {
 
       return { user: resolvedUser, rawToken };
     });
+  }
 
-    return { user, rawToken };
+  /**
+   * Exchanges Google auth code for tokens, cryptographically verifies ID token,
+   * validates state, PKCE, and nonce, and resolves or links BAREA user atomically
+   * together with session creation inside a single transaction.
+   *
+   * SECURITY NOTICE:
+   * The production authentication path obtains the ID token strictly from the
+   * authorization code token exchange. No caller-controlled ID-token parameter exists.
+   */
+  async handleGoogleCallback(input: {
+    code: string;
+    expectedState: string;
+    receivedState: string;
+    codeVerifier: string;
+    expectedNonce: string;
+    redirectUri?: string;
+  }): Promise<{ user: User; rawToken: string }> {
+    if (!input.receivedState || input.receivedState !== input.expectedState) {
+      throw new OAuthStateError();
+    }
+    if (!input.code || !input.codeVerifier) {
+      throw new OAuthCallbackError('Missing authorization code or PKCE code verifier.');
+    }
+    if (!input.expectedNonce) {
+      throw new OAuthCallbackError('Missing expected OIDC nonce.');
+    }
+
+    const clientId = this.options.googleClientId || process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = this.options.googleClientSecret || process.env.GOOGLE_CLIENT_SECRET;
+    const targetRedirectUri = input.redirectUri || this.options.googleRedirectUri || process.env.GOOGLE_REDIRECT_URI;
+
+    if (!clientId || !clientSecret || !targetRedirectUri) {
+      throw new Error('Google OAuth credentials not configured on the server.');
+    }
+
+    let idToken: string;
+    if (this.options.tokenExchangeHandler) {
+      const exchangeResult = await this.options.tokenExchangeHandler({
+        code: input.code,
+        codeVerifier: input.codeVerifier,
+        clientId,
+        clientSecret,
+        redirectUri: targetRedirectUri
+      });
+      if (!exchangeResult || !exchangeResult.id_token) {
+        throw new OAuthCallbackError('Google token exchange did not return an ID token.');
+      }
+      idToken = exchangeResult.id_token;
+    } else {
+      // Exchange authorization code for tokens
+      const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          code: input.code,
+          code_verifier: input.codeVerifier,
+          grant_type: 'authorization_code',
+          redirect_uri: targetRedirectUri
+        })
+      });
+
+      if (!tokenResponse.ok) {
+        throw new OAuthCallbackError('Google token exchange failed.');
+      }
+
+      const tokenData = (await tokenResponse.json()) as { id_token?: string };
+      if (!tokenData?.id_token) {
+        throw new OAuthCallbackError('Google did not return an ID token.');
+      }
+      idToken = tokenData.id_token;
+    }
+
+    // Cryptographically verify ID token
+    const verified = await this.verifyGoogleIdToken(idToken, input.expectedNonce, clientId);
+
+    // Atomically provision user and session from verified claims
+    return this.provisionGoogleUserSession(verified);
   }
 
   /**

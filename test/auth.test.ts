@@ -63,6 +63,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       alg?: string;
       signingKey?: any;
       expiresIn?: string;
+      omitIat?: boolean;
     }
   ): Promise<string> {
     const kid = options?.kid !== undefined ? options.kid : 'test-rsa-key-1';
@@ -75,15 +76,21 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       return `${header}.${payload}.`;
     }
 
-    const jwt = new jose.SignJWT(claims).setProtectedHeader({ alg, kid });
-
-    if (claims.iss === undefined) jwt.setIssuer('https://accounts.google.com');
-    if (claims.aud === undefined) jwt.setAudience(CLIENT_ID);
-    if (claims.exp === undefined) {
-      jwt.setExpirationTime(options?.expiresIn || '1h');
+    const fullClaims: Record<string, any> = { ...claims };
+    if (fullClaims.iss === undefined) fullClaims.iss = 'https://accounts.google.com';
+    if (fullClaims.aud === undefined) fullClaims.aud = CLIENT_ID;
+    if (fullClaims.exp === undefined) {
+      fullClaims.exp = Math.floor(Date.now() / 1000) + 3600;
+    }
+    if (fullClaims.iat === undefined && !options?.omitIat) {
+      fullClaims.iat = Math.floor(Date.now() / 1000);
     }
 
-    return await jwt.sign(key);
+    const compactSign = new jose.CompactSign(
+      Buffer.from(JSON.stringify(fullClaims))
+    ).setProtectedHeader({ alg, kid });
+
+    return await compactSign.sign(key);
   }
 
   t.beforeEach(() => {
@@ -116,10 +123,10 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   // ============================================================
-  // GOOGLE OIDC TESTS (1 - 19)
+  // GOOGLE OIDC TESTS (1 - 20)
   // ============================================================
 
-  await t.test('1. valid signed Google ID token succeeds', async () => {
+  await t.test('1. valid signed Google ID token succeeds via handleGoogleCallback with tokenExchangeHandler', async () => {
     const nonce = 'valid-nonce-12345';
     const idToken = await createSignedIdToken({
       sub: 'google-sub-001',
@@ -129,13 +136,20 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       nonce
     });
 
-    const result = await authService.handleGoogleCallback({
+    const testService = new AuthService(authRepo, {
+      googleClientId: CLIENT_ID,
+      googleClientSecret: CLIENT_SECRET,
+      googleRedirectUri: REDIRECT_URI,
+      jwksResolver: localJwksResolver,
+      tokenExchangeHandler: async () => ({ id_token: idToken })
+    });
+
+    const result = await testService.handleGoogleCallback({
       code: 'auth-code-123',
       expectedState: 'state-xyz',
       receivedState: 'state-xyz',
       codeVerifier: 'verifier-123',
-      expectedNonce: nonce,
-      idTokenForTesting: idToken
+      expectedNonce: nonce
     });
 
     assert.ok(result.user.id.startsWith('usr_'));
@@ -149,7 +163,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(session?.user.id, result.user.id);
   });
 
-  await t.test('2. invalid signature fails', async () => {
+  await t.test('2. invalid signature fails verifyGoogleIdToken', async () => {
     const nonce = 'nonce-sig-fail';
     const idToken = await createSignedIdToken({
       sub: 'google-sub-tampered',
@@ -159,20 +173,12 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     const tampered = idToken.slice(0, -6) + 'xxxxxx';
 
     await assert.rejects(
-      async () =>
-        authService.handleGoogleCallback({
-          code: 'code-1',
-          expectedState: 'state-1',
-          receivedState: 'state-1',
-          codeVerifier: 'verifier-1',
-          expectedNonce: nonce,
-          idTokenForTesting: tampered
-        }),
+      async () => authService.verifyGoogleIdToken(tampered, nonce, CLIENT_ID),
       OAuthCallbackError
     );
   });
 
-  await t.test('3. modified payload with original signature fails', async () => {
+  await t.test('3. modified payload with original signature fails verifyGoogleIdToken', async () => {
     const nonce = 'nonce-tampered-payload';
     const idToken = await createSignedIdToken({
       sub: 'legitimate-sub',
@@ -188,6 +194,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
         iss: 'https://accounts.google.com',
         aud: CLIENT_ID,
         nonce,
+        iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 3600
       })
     ).toString('base64url');
@@ -195,20 +202,12 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     const forgedToken = `${parts[0]}.${forgedPayload}.${parts[2]}`;
 
     await assert.rejects(
-      async () =>
-        authService.handleGoogleCallback({
-          code: 'code-1',
-          expectedState: 'state-1',
-          receivedState: 'state-1',
-          codeVerifier: 'verifier-1',
-          expectedNonce: nonce,
-          idTokenForTesting: forgedToken
-        }),
+      async () => authService.verifyGoogleIdToken(forgedToken, nonce, CLIENT_ID),
       OAuthCallbackError
     );
   });
 
-  await t.test('4. alg=none fails', async () => {
+  await t.test('4. alg=none fails verifyGoogleIdToken', async () => {
     const nonce = 'nonce-none';
     const idToken = await createSignedIdToken(
       {
@@ -217,26 +216,19 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
         iss: 'https://accounts.google.com',
         aud: CLIENT_ID,
         nonce,
+        iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 3600
       },
       { alg: 'none' }
     );
 
     await assert.rejects(
-      async () =>
-        authService.handleGoogleCallback({
-          code: 'code-1',
-          expectedState: 'state-1',
-          receivedState: 'state-1',
-          codeVerifier: 'verifier-1',
-          expectedNonce: nonce,
-          idTokenForTesting: idToken
-        }),
+      async () => authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID),
       OAuthCallbackError
     );
   });
 
-  await t.test('5. unknown kid fails', async () => {
+  await t.test('5. unknown kid fails verifyGoogleIdToken', async () => {
     const nonce = 'nonce-kid';
     const idToken = await createSignedIdToken(
       { sub: 'kid-sub', nonce },
@@ -244,20 +236,12 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
 
     await assert.rejects(
-      async () =>
-        authService.handleGoogleCallback({
-          code: 'code-1',
-          expectedState: 'state-1',
-          receivedState: 'state-1',
-          codeVerifier: 'verifier-1',
-          expectedNonce: nonce,
-          idTokenForTesting: idToken
-        }),
+      async () => authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID),
       OAuthCallbackError
     );
   });
 
-  await t.test('6. wrong issuer fails', async () => {
+  await t.test('6. wrong issuer fails verifyGoogleIdToken', async () => {
     const nonce = 'nonce-iss';
     const idToken = await createSignedIdToken({
       sub: 'sub-iss',
@@ -266,20 +250,12 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     });
 
     await assert.rejects(
-      async () =>
-        authService.handleGoogleCallback({
-          code: 'code-1',
-          expectedState: 'state-1',
-          receivedState: 'state-1',
-          codeVerifier: 'verifier-1',
-          expectedNonce: nonce,
-          idTokenForTesting: idToken
-        }),
+      async () => authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID),
       OAuthCallbackError
     );
   });
 
-  await t.test('7. wrong audience fails', async () => {
+  await t.test('7. wrong audience fails verifyGoogleIdToken', async () => {
     const nonce = 'nonce-aud';
     const idToken = await createSignedIdToken({
       sub: 'sub-aud',
@@ -288,20 +264,12 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     });
 
     await assert.rejects(
-      async () =>
-        authService.handleGoogleCallback({
-          code: 'code-1',
-          expectedState: 'state-1',
-          receivedState: 'state-1',
-          codeVerifier: 'verifier-1',
-          expectedNonce: nonce,
-          idTokenForTesting: idToken
-        }),
+      async () => authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID),
       OAuthCallbackError
     );
   });
 
-  await t.test('8. expired token fails', async () => {
+  await t.test('8. expired token fails verifyGoogleIdToken', async () => {
     const nonce = 'nonce-exp';
     const idToken = await createSignedIdToken({
       sub: 'sub-exp',
@@ -310,20 +278,12 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     });
 
     await assert.rejects(
-      async () =>
-        authService.handleGoogleCallback({
-          code: 'code-1',
-          expectedState: 'state-1',
-          receivedState: 'state-1',
-          codeVerifier: 'verifier-1',
-          expectedNonce: nonce,
-          idTokenForTesting: idToken
-        }),
+      async () => authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID),
       OAuthCallbackError
     );
   });
 
-  await t.test('9. missing sub fails', async () => {
+  await t.test('9. missing sub fails verifyGoogleIdToken', async () => {
     const nonce = 'nonce-no-sub';
     const idToken = await createSignedIdToken({
       sub: '',
@@ -332,15 +292,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     });
 
     await assert.rejects(
-      async () =>
-        authService.handleGoogleCallback({
-          code: 'code-1',
-          expectedState: 'state-1',
-          receivedState: 'state-1',
-          codeVerifier: 'verifier-1',
-          expectedNonce: nonce,
-          idTokenForTesting: idToken
-        }),
+      async () => authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID),
       OAuthCallbackError
     );
   });
@@ -353,21 +305,14 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       nonce
     });
 
-    const result = await authService.handleGoogleCallback({
-      code: 'code-1',
-      expectedState: 'state-1',
-      receivedState: 'state-1',
-      codeVerifier: 'verifier-1',
-      expectedNonce: nonce,
-      idTokenForTesting: idToken
-    });
+    const verified = await authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID);
+    const result = authService.provisionGoogleUserSession(verified);
 
     assert.equal(result.user.email, null);
     assert.equal(result.user.displayName, 'No Email User');
   });
 
   await t.test('11. unverified email cannot automatically link an existing account', async () => {
-    // Existing BAREA password account
     const existing = authRepo.createUser({
       email: 'target.victim@church.org',
       emailVerified: true,
@@ -376,7 +321,6 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     });
 
     const nonce = 'nonce-unverified-linking';
-    // Google token with victim's email but email_verified: false
     const idToken = await createSignedIdToken({
       sub: 'attacker-sub-999',
       email: 'target.victim@church.org',
@@ -384,16 +328,9 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       nonce
     });
 
-    await assert.rejects(
-      async () =>
-        authService.handleGoogleCallback({
-          code: 'code-1',
-          expectedState: 'state-1',
-          receivedState: 'state-1',
-          codeVerifier: 'verifier-1',
-          expectedNonce: nonce,
-          idTokenForTesting: idToken
-        }),
+    const verified = await authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID);
+    assert.throws(
+      () => authService.provisionGoogleUserSession(verified),
       /cannot link unverified/i
     );
 
@@ -421,16 +358,9 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       nonce
     });
 
-    const result = await authService.handleGoogleCallback({
-      code: 'code-1',
-      expectedState: 'state-1',
-      receivedState: 'state-1',
-      codeVerifier: 'verifier-1',
-      expectedNonce: nonce,
-      idTokenForTesting: idToken
-    });
+    const verified = await authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID);
+    const result = authService.provisionGoogleUserSession(verified);
 
-    // Resolves exactly the existing account
     assert.equal(result.user.id, existing.id);
     const linked = authRepo.findFederatedIdentity('GOOGLE', 'google-sub-pastor-john');
     assert.ok(linked !== null);
@@ -449,7 +379,6 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     });
 
     const nonce = 'nonce-stable-sub';
-    // User presents token with a different email, but matching stable sub
     const idToken = await createSignedIdToken({
       sub: 'stable-google-sub-777',
       email: 'alias.different@church.org',
@@ -457,14 +386,8 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       nonce
     });
 
-    const result = await authService.handleGoogleCallback({
-      code: 'code-1',
-      expectedState: 'state-1',
-      receivedState: 'state-1',
-      codeVerifier: 'verifier-1',
-      expectedNonce: nonce,
-      idTokenForTesting: idToken
-    });
+    const verified = await authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID);
+    const result = authService.provisionGoogleUserSession(verified);
 
     assert.equal(result.user.id, user.id, 'Must resolve to the existing bound BAREA user');
   });
@@ -478,30 +401,14 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       nonce
     });
 
-    // Execute first callback
-    const res1 = await authService.handleGoogleCallback({
-      code: 'code-1',
-      expectedState: 'state-1',
-      receivedState: 'state-1',
-      codeVerifier: 'verifier-1',
-      expectedNonce: nonce,
-      idTokenForTesting: idToken
-    });
-
-    // Second callback with same identity resolves same user without error or duplicate
-    const res2 = await authService.handleGoogleCallback({
-      code: 'code-2',
-      expectedState: 'state-2',
-      receivedState: 'state-2',
-      codeVerifier: 'verifier-2',
-      expectedNonce: nonce,
-      idTokenForTesting: idToken
-    });
+    const verified = await authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID);
+    const res1 = authService.provisionGoogleUserSession(verified);
+    const res2 = authService.provisionGoogleUserSession(verified);
 
     assert.equal(res1.user.id, res2.user.id);
   });
 
-  await t.test('ATOMIC PROVISIONING: session creation is atomic with identity provisioning in transaction', async () => {
+  await t.test('15. ATOMIC PROVISIONING: session creation is atomic with identity provisioning in transaction', async () => {
     const nonce = 'nonce-atomic';
     const idToken = await createSignedIdToken({
       sub: 'atomic-sub-1',
@@ -509,6 +416,8 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       email_verified: true,
       nonce
     });
+
+    const verified = await authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID);
 
     // Mock createSession to throw an error simulating unexpected failure during session issuance
     const originalCreateSession = authRepo.createSession.bind(authRepo);
@@ -521,20 +430,12 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     };
 
     try {
-      await assert.rejects(
-        async () =>
-          authService.handleGoogleCallback({
-            code: 'code-1',
-            expectedState: 'state-1',
-            receivedState: 'state-1',
-            codeVerifier: 'verifier-1',
-            expectedNonce: nonce,
-            idTokenForTesting: idToken
-          }),
+      assert.throws(
+        () => authService.provisionGoogleUserSession(verified),
         /simulated failure during session creation/i
       );
 
-      // Verify that transaction rolled back completely: user and federated identity do NOT exist!
+      // Verify transaction rolled back completely: user and federated identity do NOT exist!
       const userAfterRollback = authRepo.findUserByEmail('atomic@church.org');
       assert.equal(userAfterRollback, null, 'User creation must roll back atomically if session creation fails');
       const fedAfterRollback = authRepo.findFederatedIdentity('GOOGLE', 'atomic-sub-1');
@@ -544,47 +445,31 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     }
   });
 
-  await t.test('15. nonce mismatch fails', async () => {
+  await t.test('16. nonce mismatch fails verifyGoogleIdToken', async () => {
     const idToken = await createSignedIdToken({
       sub: 'google-sub-nonce-mismatch',
       nonce: 'nonce-signed-in-token'
     });
 
     await assert.rejects(
-      async () =>
-        authService.handleGoogleCallback({
-          code: 'code-1',
-          expectedState: 'state-1',
-          receivedState: 'state-1',
-          codeVerifier: 'verifier-1',
-          expectedNonce: 'different-expected-nonce',
-          idTokenForTesting: idToken
-        }),
+      async () => authService.verifyGoogleIdToken(idToken, 'different-expected-nonce', CLIENT_ID),
       /nonce mismatch/i
     );
   });
 
-  await t.test('16. missing nonce fails', async () => {
+  await t.test('17. missing nonce fails verifyGoogleIdToken', async () => {
     const idToken = await createSignedIdToken({
       sub: 'google-sub-no-nonce',
       nonce: ''
     });
 
     await assert.rejects(
-      async () =>
-        authService.handleGoogleCallback({
-          code: 'code-1',
-          expectedState: 'state-1',
-          receivedState: 'state-1',
-          codeVerifier: 'verifier-1',
-          expectedNonce: '',
-          idTokenForTesting: idToken
-        }),
+      async () => authService.verifyGoogleIdToken(idToken, '', CLIENT_ID),
       OAuthCallbackError
     );
   });
 
-  await t.test('17. state mismatch fails', async () => {
+  await t.test('18. state mismatch fails handleGoogleCallback', async () => {
     await assert.rejects(
       async () =>
         authService.handleGoogleCallback({
@@ -598,16 +483,14 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
   });
 
-  await t.test('18. reused OAuth transaction fails (transient cookies consumed)', () => {
-    // Handled by route-level cookie deletion and one-time state consumption
+  await t.test('19. reused OAuth transaction fails (transient cookies consumed)', () => {
     const res = authService.generateGoogleOAuthUrl(REDIRECT_URI);
     assert.ok(res.state);
     assert.ok(res.nonce);
     assert.ok(res.codeVerifier);
   });
 
-  await t.test('19. PKCE verifier mismatch causes token exchange failure', async () => {
-    // Missing codeVerifier rejected before exchange
+  await t.test('20. PKCE verifier mismatch causes token exchange failure', async () => {
     await assert.rejects(
       async () =>
         authService.handleGoogleCallback({
@@ -622,11 +505,10 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   // ============================================================
-  // JWKS TESTS (20 - 22)
+  // JWKS TESTS (21 - 23)
   // ============================================================
 
-  await t.test('20. JWKS key rotation/unknown-kid refresh behavior works', async () => {
-    // Key rotation: second key added
+  await t.test('21. JWKS key rotation/unknown-kid refresh behavior works', async () => {
     const secondKeyPair = await jose.generateKeyPair('RS256');
     const secondJwk = await jose.exportJWK(secondKeyPair.publicKey);
     secondJwk.kid = 'rotated-key-2';
@@ -648,7 +530,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(verified.sub, 'user-rot');
   });
 
-  await t.test('21. JWKS/network failure fails closed', async () => {
+  await t.test('22. JWKS/network failure fails closed', async () => {
     const failingResolver = async () => {
       throw new Error('Network error reaching JWKS endpoint');
     };
@@ -667,14 +549,14 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
   });
 
-  await t.test('22. only accepted signing algorithms are accepted', async () => {
-    // Sign using HS256 (symmetric HMAC)
+  await t.test('23. only accepted signing algorithms are accepted', async () => {
     const secret = new TextEncoder().encode('some-super-secret-key-that-is-long-enough-32bytes');
     const symmetricToken = await new jose.SignJWT({
       sub: 'symmetric-sub',
       iss: 'https://accounts.google.com',
       aud: CLIENT_ID,
-      nonce: 'nonce-sym'
+      nonce: 'nonce-sym',
+      iat: Math.floor(Date.now() / 1000)
     })
       .setProtectedHeader({ alg: 'HS256', kid: 'test-rsa-key-1' })
       .setExpirationTime('1h')
@@ -687,17 +569,295 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   // ============================================================
-  // SESSION TESTS (23 - 30)
+  // IAT (ISSUED-AT) SECURITY TESTS (Section 4 A)
   // ============================================================
 
-  await t.test('23. session token has sufficient entropy', () => {
+  await t.test('IAT-1: Valid signed token with valid iat succeeds', async () => {
+    const nonce = 'nonce-iat-valid';
+    const currentSeconds = Math.floor(Date.now() / 1000);
+    const idToken = await createSignedIdToken({
+      sub: 'sub-iat-1',
+      nonce,
+      iat: currentSeconds
+    });
+
+    const verified = await authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID);
+    assert.equal(verified.sub, 'sub-iat-1');
+  });
+
+  await t.test('IAT-2: Missing iat is rejected', async () => {
+    const nonce = 'nonce-iat-missing';
+    const idToken = await createSignedIdToken(
+      {
+        sub: 'sub-iat-2',
+        nonce
+      },
+      { omitIat: true }
+    );
+
+    await assert.rejects(
+      async () => authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID),
+      /missing or invalid numeric issued-at/i
+    );
+  });
+
+  await t.test('IAT-3: Non-numeric iat is rejected', async () => {
+    const nonce = 'nonce-iat-string';
+    const idToken = await createSignedIdToken({
+      sub: 'sub-iat-3',
+      nonce,
+      iat: 'not-a-timestamp'
+    });
+
+    await assert.rejects(
+      async () => authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID),
+      /(missing or invalid numeric issued-at|"iat" claim must be a number)/i
+    );
+  });
+
+  await t.test('IAT-4: Non-finite/invalid iat is rejected', async () => {
+    const nonce = 'nonce-iat-infinite';
+    const idToken = await createSignedIdToken({
+      sub: 'sub-iat-4',
+      nonce,
+      iat: null as any
+    });
+
+    await assert.rejects(
+      async () => authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID),
+      /(missing or invalid numeric issued-at|"iat" claim must be a number)/i
+    );
+  });
+
+  await t.test('IAT-5: iat materially in the future is rejected', async () => {
+    const nonce = 'nonce-iat-future';
+    const futureSeconds = Math.floor(Date.now() / 1000) + 60; // 60s in future (> 5s tolerance)
+    const idToken = await createSignedIdToken({
+      sub: 'sub-iat-5',
+      nonce,
+      iat: futureSeconds
+    });
+
+    await assert.rejects(
+      async () => authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID),
+      /issued-at .* timestamp is in the future/i
+    );
+  });
+
+  await t.test('IAT-6: iat within the documented clock-skew tolerance is accepted', async () => {
+    const nonce = 'nonce-iat-skew';
+    const slightlyFuture = Math.floor(Date.now() / 1000) + 3; // 3s in future (<= 5s tolerance)
+    const idToken = await createSignedIdToken({
+      sub: 'sub-iat-6',
+      nonce,
+      iat: slightlyFuture
+    });
+
+    const verified = await authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID);
+    assert.equal(verified.sub, 'sub-iat-6');
+  });
+
+  // ============================================================
+  // AUD / AZP SECURITY TESTS (Section 4 B)
+  // ============================================================
+
+  await t.test('AUD-AZP-7: Single audience equal to GOOGLE_CLIENT_ID succeeds without requiring azp', async () => {
+    const nonce = 'nonce-aud-single';
+    const idToken = await createSignedIdToken({
+      sub: 'sub-aud-7',
+      aud: CLIENT_ID,
+      nonce
+    });
+
+    const verified = await authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID);
+    assert.equal(verified.sub, 'sub-aud-7');
+  });
+
+  await t.test('AUD-AZP-8: Single incorrect audience fails', async () => {
+    const nonce = 'nonce-aud-wrong';
+    const idToken = await createSignedIdToken({
+      sub: 'sub-aud-8',
+      aud: 'unauthorized-client-id.apps.googleusercontent.com',
+      nonce
+    });
+
+    await assert.rejects(
+      async () => authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID),
+      OAuthCallbackError
+    );
+  });
+
+  await t.test('AUD-AZP-9: Multi-audience containing GOOGLE_CLIENT_ID with correct azp succeeds', async () => {
+    const nonce = 'nonce-multi-aud-valid';
+    const idToken = await createSignedIdToken({
+      sub: 'sub-aud-9',
+      aud: [CLIENT_ID, 'partner-client-id.apps.googleusercontent.com'],
+      azp: CLIENT_ID,
+      nonce
+    });
+
+    const verified = await authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID);
+    assert.equal(verified.sub, 'sub-aud-9');
+  });
+
+  await t.test('AUD-AZP-10: Multi-audience containing GOOGLE_CLIENT_ID with missing azp fails', async () => {
+    const nonce = 'nonce-multi-aud-no-azp';
+    const idToken = await createSignedIdToken({
+      sub: 'sub-aud-10',
+      aud: [CLIENT_ID, 'partner-client-id.apps.googleusercontent.com'],
+      nonce
+    });
+
+    await assert.rejects(
+      async () => authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID),
+      /requires azp claim exactly matching/i
+    );
+  });
+
+  await t.test('AUD-AZP-11: Multi-audience containing GOOGLE_CLIENT_ID with incorrect azp fails', async () => {
+    const nonce = 'nonce-multi-aud-wrong-azp';
+    const idToken = await createSignedIdToken({
+      sub: 'sub-aud-11',
+      aud: [CLIENT_ID, 'partner-client-id.apps.googleusercontent.com'],
+      azp: 'partner-client-id.apps.googleusercontent.com',
+      nonce
+    });
+
+    await assert.rejects(
+      async () => authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID),
+      /requires azp claim exactly matching/i
+    );
+  });
+
+  await t.test('AUD-AZP-12: Multi-audience not containing GOOGLE_CLIENT_ID fails', async () => {
+    const nonce = 'nonce-multi-aud-missing-client';
+    const idToken = await createSignedIdToken({
+      sub: 'sub-aud-12',
+      aud: ['third-party-1.apps.googleusercontent.com', 'third-party-2.apps.googleusercontent.com'],
+      azp: CLIENT_ID,
+      nonce
+    });
+
+    await assert.rejects(
+      async () => authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID),
+      OAuthCallbackError
+    );
+  });
+
+  await t.test('AUD-AZP-13: Ensure azp cannot substitute for an invalid/missing configured audience', async () => {
+    const nonce = 'nonce-azp-substitute';
+    const idToken = await createSignedIdToken({
+      sub: 'sub-aud-13',
+      aud: 'other-app.apps.googleusercontent.com',
+      azp: CLIENT_ID,
+      nonce
+    });
+
+    await assert.rejects(
+      async () => authService.verifyGoogleIdToken(idToken, nonce, CLIENT_ID),
+      OAuthCallbackError
+    );
+  });
+
+  // ============================================================
+  // TEST-SEAM & CALLER-CONTROLLED ISOLATION TESTS (Section 4 C)
+  // ============================================================
+
+  await t.test('SEAM-14: The production handleGoogleCallback() path cannot accept an injected ID token override', async () => {
+    // Calling handleGoogleCallback with any arbitrary caller input cannot override token exchange
+    const callArgs = {
+      code: 'test-code',
+      expectedState: 'test-state',
+      receivedState: 'test-state',
+      codeVerifier: 'test-verifier',
+      expectedNonce: 'test-nonce',
+      idTokenForTesting: 'malicious-injected-token' // Unauthorized property
+    };
+
+    // The service must perform the token exchange and not trust the injected property
+    await assert.rejects(
+      async () => (authService.handleGoogleCallback as any)(callArgs),
+      /Google token exchange failed/i
+    );
+  });
+
+  await t.test('SEAM-15: The production callback route always uses the Google authorization-code token exchange', async () => {
+    let exchangeExecuted = false;
+    const testService = new AuthService(authRepo, {
+      googleClientId: CLIENT_ID,
+      googleClientSecret: CLIENT_SECRET,
+      googleRedirectUri: REDIRECT_URI,
+      jwksResolver: localJwksResolver,
+      tokenExchangeHandler: async () => {
+        exchangeExecuted = true;
+        const nonce = 'nonce-seam-15';
+        const idToken = await createSignedIdToken({ sub: 'sub-seam-15', nonce });
+        return { id_token: idToken };
+      }
+    });
+
+    await testService.handleGoogleCallback({
+      code: 'code-seam',
+      expectedState: 'state-seam',
+      receivedState: 'state-seam',
+      codeVerifier: 'verifier-seam',
+      expectedNonce: 'nonce-seam-15'
+    });
+
+    assert.equal(exchangeExecuted, true, 'Authorization-code token exchange must be executed');
+  });
+
+  await t.test('SEAM-16: Direct deterministic tests of verifyGoogleIdToken() continue to require real JWS signature verification', async () => {
+    const nonce = 'nonce-real-jws';
+    const validToken = await createSignedIdToken({ sub: 'sub-real-jws', nonce });
+    const verified = await authService.verifyGoogleIdToken(validToken, nonce, CLIENT_ID);
+    assert.equal(verified.sub, 'sub-real-jws');
+
+    // Untrusted keypair signature fails
+    const untrustedKeyPair = await jose.generateKeyPair('RS256');
+    const untrustedToken = await createSignedIdToken(
+      { sub: 'sub-untrusted', nonce },
+      { signingKey: untrustedKeyPair.privateKey }
+    );
+
+    await assert.rejects(
+      async () => authService.verifyGoogleIdToken(untrustedToken, nonce, CLIENT_ID),
+      OAuthCallbackError
+    );
+  });
+
+  await t.test('SEAM-17: A forged/unsigned test token still fails', async () => {
+    const forgedHeader = Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'test-rsa-key-1' })).toString('base64url');
+    const forgedPayload = Buffer.from(
+      JSON.stringify({
+        sub: 'forged-sub',
+        iss: 'https://accounts.google.com',
+        aud: CLIENT_ID,
+        nonce: 'nonce-forged',
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 3600
+      })
+    ).toString('base64url');
+    const unsignedToken = `${forgedHeader}.${forgedPayload}.`;
+
+    await assert.rejects(
+      async () => authService.verifyGoogleIdToken(unsignedToken, 'nonce-forged', CLIENT_ID),
+      OAuthCallbackError
+    );
+  });
+
+  // ============================================================
+  // SESSION TESTS (24 - 31)
+  // ============================================================
+
+  await t.test('24. session token has sufficient entropy', () => {
     const user = authRepo.createUser({ email: 'entropy@church.org', displayName: 'Entropy' });
     const { rawToken } = authRepo.createSession(user.id);
     assert.ok(rawToken.startsWith('bst_'));
     assert.ok(rawToken.length >= 40, 'Raw token must have at least 256 bits of base64url entropy');
   });
 
-  await t.test('24. database does not store raw session token', () => {
+  await t.test('25. database does not store raw session token', () => {
     const user = authRepo.createUser({ email: 'dbhash@church.org', displayName: 'DbHash' });
     const { rawToken } = authRepo.createSession(user.id);
 
@@ -710,7 +870,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(rows[0].id, expectedHash, 'Database must only store SHA-256 hash');
   });
 
-  await t.test('25. valid session resolves', () => {
+  await t.test('26. valid session resolves', () => {
     const user = authRepo.createUser({ email: 'resolves@church.org', displayName: 'Resolves' });
     const { rawToken } = authRepo.createSession(user.id);
     const session = authService.resolveSession(rawToken);
@@ -718,20 +878,20 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(session?.user.id, user.id);
   });
 
-  await t.test('26. expired session fails', () => {
+  await t.test('27. expired session fails', () => {
     const user = authRepo.createUser({ email: 'expired2@church.org', displayName: 'Expired' });
     const { rawToken } = authRepo.createSession(user.id, -10); // Expired 10 seconds ago
     assert.equal(authService.resolveSession(rawToken), null);
   });
 
-  await t.test('27. revoked session fails', () => {
+  await t.test('28. revoked session fails', () => {
     const user = authRepo.createUser({ email: 'revoked@church.org', displayName: 'Revoked' });
     const { rawToken } = authRepo.createSession(user.id);
     authService.logout(rawToken);
     assert.equal(authService.resolveSession(rawToken), null);
   });
 
-  await t.test('28. logout invalidates session', () => {
+  await t.test('29. logout invalidates session', () => {
     const user = authRepo.createUser({ email: 'logout@church.org', displayName: 'Logout' });
     const { rawToken } = authRepo.createSession(user.id);
     assert.ok(authService.resolveSession(rawToken) !== null);
@@ -739,7 +899,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(authService.resolveSession(rawToken), null);
   });
 
-  await t.test('29. fresh authentication creates a fresh session', async () => {
+  await t.test('30. fresh authentication creates a fresh session', async () => {
     const hash = await hashPassword('Pass123456');
     authRepo.createUser({ email: 'fresh@church.org', passwordHash: hash, displayName: 'Fresh' });
 
@@ -749,7 +909,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.notEqual(login1.rawToken, login2.rawToken, 'Subsequent logins must issue distinct session tokens');
   });
 
-  await t.test('30. authenticated identity cannot be replaced through client input', async () => {
+  await t.test('31. authenticated identity cannot be replaced through client input', async () => {
     const genuineUser = authRepo.createUser({ email: 'genuine@church.org', displayName: 'Genuine' });
     const { rawToken } = authRepo.createSession(genuineUser.id, {
       authProvider: 'LOCAL_PASSWORD',
@@ -791,10 +951,10 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   // ============================================================
-  // PASSWORD TESTS (31 - 35)
+  // PASSWORD TESTS (32 - 36)
   // ============================================================
 
-  await t.test('31. correct password succeeds', async () => {
+  await t.test('32. correct password succeeds', async () => {
     const hash = await hashPassword('CorrectPassword1!');
     authRepo.createUser({ email: 'correct@church.org', passwordHash: hash, displayName: 'Correct' });
 
@@ -802,7 +962,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.ok(result.rawToken.startsWith('bst_'));
   });
 
-  await t.test('32. wrong password fails generically', async () => {
+  await t.test('33. wrong password fails generically', async () => {
     const hash = await hashPassword('CorrectPassword1!');
     authRepo.createUser({ email: 'wrong@church.org', passwordHash: hash, displayName: 'Wrong' });
 
@@ -812,14 +972,14 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
   });
 
-  await t.test('33. nonexistent account fails generically', async () => {
+  await t.test('34. nonexistent account fails generically', async () => {
     await assert.rejects(
       async () => authService.loginWithPassword({ email: 'nonexistent@church.org', password: 'AnyPassword' }),
       InvalidCredentialsError
     );
   });
 
-  await t.test('34. password hash is not exposed on domain User shape', async () => {
+  await t.test('35. password hash is not exposed on domain User shape', async () => {
     const hash = await hashPassword('SecretPass123');
     const user = authRepo.createUser({ email: 'secrethash@church.org', passwordHash: hash, displayName: 'Secret' });
     assert.equal('passwordHash' in user, false, 'User domain shape must not contain passwordHash');
@@ -838,7 +998,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal('passwordHash' in (session?.user as any), false, 'Session user must not expose passwordHash');
   });
 
-  await t.test('35. repeated password failures are rate limited with consecutive failure lockout window', async () => {
+  await t.test('36. repeated password failures are rate limited with consecutive failure lockout window', async () => {
     let currentTime = 1000000;
     const stepRateLimiter = new InMemoryRateLimiter(() => currentTime, {
       maxFailedLogins: 5,
@@ -888,52 +1048,52 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   // ============================================================
-  // REDIRECT SECURITY TESTS (36 - 42)
+  // REDIRECT SECURITY TESTS (37 - 43)
   // ============================================================
 
-  await t.test('36. absolute external URL rejected', () => {
+  await t.test('37. absolute external URL rejected', () => {
     assert.equal(sanitizeReturnTo('https://evil.example.com/steal-session'), '/teacher/quizzes');
     assert.equal(sanitizeReturnTo('http://evil.example.com'), '/teacher/quizzes');
   });
 
-  await t.test('37. protocol-relative URL rejected', () => {
+  await t.test('38. protocol-relative URL rejected', () => {
     assert.equal(sanitizeReturnTo('//evil.example.com/path'), '/teacher/quizzes');
   });
 
-  await t.test('38. encoded protocol-relative URL rejected', () => {
+  await t.test('39. encoded protocol-relative URL rejected', () => {
     assert.equal(sanitizeReturnTo('/%2fevil.example.com'), '/teacher/quizzes');
     assert.equal(sanitizeReturnTo('%2f%2fevil.example.com'), '/teacher/quizzes');
   });
 
-  await t.test('39. backslash URL rejected', () => {
+  await t.test('40. backslash URL rejected', () => {
     assert.equal(sanitizeReturnTo('/\\evil.example.com'), '/teacher/quizzes');
     assert.equal(sanitizeReturnTo('\\\\evil.example.com'), '/teacher/quizzes');
     assert.equal(sanitizeReturnTo('/teacher/quizzes\\evil'), '/teacher/quizzes');
     assert.equal(sanitizeReturnTo('/teacher%5cevil'), '/teacher/quizzes');
   });
 
-  await t.test('40. CRLF injection rejected', () => {
+  await t.test('41. CRLF injection rejected', () => {
     assert.equal(sanitizeReturnTo('/teacher/quizzes\r\nSet-Cookie: evil=1'), '/teacher/quizzes');
     assert.equal(sanitizeReturnTo('/teacher/quizzes\nLocation: http://evil.com'), '/teacher/quizzes');
   });
 
-  await t.test('41. javascript/data/vbscript rejected', () => {
+  await t.test('42. javascript/data/vbscript rejected', () => {
     assert.equal(sanitizeReturnTo('javascript:alert(1)'), '/teacher/quizzes');
     assert.equal(sanitizeReturnTo('data:text/html;base64,PHNjcmlwdD4='), '/teacher/quizzes');
     assert.equal(sanitizeReturnTo('vbscript:msgbox(1)'), '/teacher/quizzes');
   });
 
-  await t.test('42. valid internal path preserved', () => {
+  await t.test('43. valid internal path preserved', () => {
     assert.equal(sanitizeReturnTo('/teacher/quizzes'), '/teacher/quizzes');
     assert.equal(sanitizeReturnTo('/teacher/review?id=q_123'), '/teacher/review?id=q_123');
     assert.equal(sanitizeReturnTo('/teacher/quizzes#drafts'), '/teacher/quizzes#drafts');
   });
 
   // ============================================================
-  // AUTHORIZATION BOUNDARY TESTS (43 - 48)
+  // AUTHORIZATION BOUNDARY TESTS (44 - 49)
   // ============================================================
 
-  await t.test('43. authenticated non-teacher cannot access teacher workspace', async () => {
+  await t.test('44. authenticated non-teacher cannot access teacher workspace', async () => {
     const user = authRepo.createUser({ email: 'member@church.org', displayName: 'Member' });
     const { rawToken } = authRepo.createSession(user.id);
     setSessionTokenForTesting(rawToken);
@@ -944,7 +1104,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
   });
 
-  await t.test('44. teacher membership grants correct organization', async () => {
+  await t.test('45. teacher membership grants correct organization', async () => {
     const user = authRepo.createUser({ email: 'teacher@church.org', displayName: 'Teacher' });
     authRepo.addOrganizationMembership('church-org-alpha', user.id, 'teacher');
 
@@ -957,7 +1117,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(ctx.role, 'teacher');
   });
 
-  await t.test('45. admin membership grants correct organization', async () => {
+  await t.test('46. admin membership grants correct organization', async () => {
     const user = authRepo.createUser({ email: 'admin@church.org', displayName: 'Admin' });
     authRepo.addOrganizationMembership('church-org-beta', user.id, 'admin');
 
@@ -970,7 +1130,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(ctx.role, 'admin');
   });
 
-  await t.test('46. client-supplied organization cannot change authorization', async () => {
+  await t.test('47. client-supplied organization cannot change authorization', async () => {
     const user = authRepo.createUser({ email: 'teacher2@church.org', displayName: 'Teacher 2' });
     authRepo.addOrganizationMembership('church-org-genuine', user.id, 'teacher');
 
@@ -982,7 +1142,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(ctx.organizationId, 'church-org-genuine');
   });
 
-  await t.test('47. client-supplied role cannot elevate privileges', async () => {
+  await t.test('48. client-supplied role cannot elevate privileges', async () => {
     const user = authRepo.createUser({ email: 'pupil@church.org', displayName: 'Pupil' });
     const { rawToken } = authRepo.createSession(user.id);
     setSessionTokenForTesting(rawToken);
@@ -993,7 +1153,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
   });
 
-  await t.test('48. production without valid authentication fails closed', async () => {
+  await t.test('49. production without valid authentication fails closed', async () => {
     const prevEnv = process.env.NODE_ENV;
     try {
       (process.env as Record<string, string | undefined>).NODE_ENV = 'production';
@@ -1010,16 +1170,13 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     const prevEnv = process.env.NODE_ENV;
     const prevUri = process.env.GOOGLE_REDIRECT_URI;
     try {
-      // Configured URI takes precedence
       (process.env as Record<string, string | undefined>).GOOGLE_REDIRECT_URI = 'https://quiz.bereachurch.org/api/auth/callback/google';
       assert.equal(resolveOAuthRedirectUri('http://attacker.com'), 'https://quiz.bereachurch.org/api/auth/callback/google');
 
-      // In production without configuration: fails closed
       delete (process.env as Record<string, string | undefined>).GOOGLE_REDIRECT_URI;
       (process.env as Record<string, string | undefined>).NODE_ENV = 'production';
       assert.throws(() => resolveOAuthRedirectUri('http://attacker.com'), /GOOGLE_REDIRECT_URI must be configured/i);
 
-      // In test / dev: falls back safely
       (process.env as Record<string, string | undefined>).NODE_ENV = 'test';
       assert.equal(resolveOAuthRedirectUri('http://localhost:3000'), 'http://localhost:3000/api/auth/callback/google');
     } finally {
