@@ -39,7 +39,7 @@ test('Teacher Auth Guard - Route Navigation Failure Semantics', async (t) => {
     setSessionTokenForTesting(null);
   });
 
-  await t.test('1. Unauthenticated user: redirects to login with returnTo preserved', async () => {
+  await t.test('1. Unauthenticated user: redirects to login with returnTo preserved for base route', async () => {
     const envMap = process.env as Record<string, string | undefined>;
     const prevNodeEnv = envMap.NODE_ENV;
     try {
@@ -53,6 +53,41 @@ test('Teacher Auth Guard - Route Navigation Failure Semantics', async (t) => {
           assert.equal(err?.digest?.startsWith('NEXT_REDIRECT'), true, 'Should trigger NEXT_REDIRECT');
           // Next.js redirect errors encode url in digest as "NEXT_REDIRECT;replace;/login?returnTo=...;307;"
           assert.match(String(err?.digest || ''), /\/login\?returnTo=%2Fteacher%2Fquizzes/);
+          return true;
+        }
+      );
+    } finally {
+      if (prevNodeEnv !== undefined) {
+        envMap.NODE_ENV = prevNodeEnv;
+      } else {
+        delete envMap.NODE_ENV;
+      }
+    }
+  });
+
+  await t.test('1b. Unauthenticated user on child routes: preserves exact child route returnTo (/teacher/quizzes/<id> and /teacher/review?id=<id>)', async () => {
+    const envMap = process.env as Record<string, string | undefined>;
+    const prevNodeEnv = envMap.NODE_ENV;
+    try {
+      setSessionTokenForTesting(null);
+      envMap.NODE_ENV = 'production';
+
+      // Test child route /teacher/quizzes/qz-12345
+      await assert.rejects(
+        async () => ensureAuthorizedTeacherPage('/teacher/quizzes/qz-12345'),
+        (err: any) => {
+          assert.equal(err?.digest?.startsWith('NEXT_REDIRECT'), true);
+          assert.match(String(err?.digest || ''), /\/login\?returnTo=%2Fteacher%2Fquizzes%2Fqz-12345/);
+          return true;
+        }
+      );
+
+      // Test child route with query parameters /teacher/review?id=q-98765
+      await assert.rejects(
+        async () => ensureAuthorizedTeacherPage('/teacher/review?id=q-98765'),
+        (err: any) => {
+          assert.equal(err?.digest?.startsWith('NEXT_REDIRECT'), true);
+          assert.match(String(err?.digest || ''), /\/login\?returnTo=%2Fteacher%2Freview%3Fid%3Dq-98765/);
           return true;
         }
       );

@@ -1,8 +1,6 @@
 import './teacher-workspace.css';
-import { ensureAuthorizedTeacherPage } from './auth-guard';
 
-export default async function TeacherLayout({ children }: { children: React.ReactNode }) {
-  await ensureAuthorizedTeacherPage('/teacher/quizzes');
+export default function TeacherLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="teacher-workspace-shell">
