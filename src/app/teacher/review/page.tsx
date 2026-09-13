@@ -1,4 +1,5 @@
-import { getQuestionBankService, getAuthorizedTeacherContext } from './db';
+import { getQuestionBankService } from './db';
+import { ensureAuthorizedTeacherPage } from '../auth-guard';
 import { QuestionStatus } from '../../../domain/question';
 import { QueueClient } from './queue-client';
 
@@ -12,8 +13,12 @@ export default async function TeacherReviewPage({
   const params = await searchParams;
   const initialActiveId = params?.id;
 
+  const returnTo = initialActiveId
+    ? `/teacher/review?id=${encodeURIComponent(initialActiveId)}`
+    : '/teacher/review';
+
   // Derive teacher context strictly on the server; browser input cannot influence tenant identity
-  const teacherContext = await getAuthorizedTeacherContext();
+  const teacherContext = await ensureAuthorizedTeacherPage(returnTo);
   const bankService = getQuestionBankService();
 
   // Fetch only PENDING_REVIEW questions for this authorized organization

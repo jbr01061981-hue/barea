@@ -1,11 +1,12 @@
-import { getQuizService, getAuthorizedTeacherContext } from '../review/db';
+import { getQuizService } from '../review/db';
+import { ensureAuthorizedTeacherPage } from '../auth-guard';
 import { QuizzesClient } from './quizzes-client';
 import { logoutAction } from '../../login/actions';
 
 export const dynamic = 'force-dynamic';
 
 export default async function TeacherQuizzesPage() {
-  const teacherContext = await getAuthorizedTeacherContext();
+  const teacherContext = await ensureAuthorizedTeacherPage('/teacher/quizzes');
   const quizService = getQuizService();
 
   const quizzes = quizService.listQuizzes(teacherContext.organizationId);
