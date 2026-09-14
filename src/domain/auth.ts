@@ -34,3 +34,14 @@ export interface AuthenticatedSessionContext {
   readonly session: UserSession;
   readonly memberships: readonly OrganizationMembership[];
 }
+
+export interface OAuthTransaction {
+  readonly id: string;
+  readonly stateHash: string;
+  readonly codeVerifier: string;
+  readonly nonceHash: string;
+  readonly returnTo: string;
+  readonly createdAt: string;
+  readonly expiresAt: string;
+  readonly consumedAt: string | null;
+}

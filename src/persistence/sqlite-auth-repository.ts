@@ -5,7 +5,8 @@ import type {
   FederatedIdentity,
   UserSession,
   OrganizationMembership,
-  AuthenticatedSessionContext
+  AuthenticatedSessionContext,
+  OAuthTransaction
 } from '../domain/auth';
 
 export interface AuthRepository {
@@ -43,6 +44,19 @@ export interface AuthRepository {
   // Organization Memberships
   addOrganizationMembership(organizationId: string, userId: string, role: 'teacher' | 'admin'): void;
   getOrganizationMemberships(userId: string): OrganizationMembership[];
+
+  // OAuth Transactions
+  createOAuthTransaction(data: {
+    id: string;
+    stateHash: string;
+    codeVerifier: string;
+    nonceHash: string;
+    returnTo: string;
+    ttlSeconds?: number;
+  }): OAuthTransaction;
+  findOAuthTransaction(id: string): OAuthTransaction | null;
+  consumeOAuthTransaction(id: string, nowIso?: string): boolean;
+  pruneExpiredOAuthTransactions(beforeIso?: string): number;
 
   transaction<T>(action: () => T): T;
   close(): void;
@@ -104,10 +118,23 @@ export class SqliteAuthRepository implements AuthRepository {
         PRIMARY KEY (organization_id, user_id)
       );
 
+      CREATE TABLE IF NOT EXISTS oauth_transactions (
+        id TEXT PRIMARY KEY,
+        state_hash TEXT NOT NULL UNIQUE,
+        code_verifier TEXT NOT NULL,
+        nonce_hash TEXT NOT NULL,
+        return_to TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT
+      );
+
       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
       CREATE INDEX IF NOT EXISTS idx_federated_identities_sub ON federated_identities(provider_type, provider_sub);
       CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
       CREATE INDEX IF NOT EXISTS idx_org_memberships_user ON organization_memberships(user_id);
+      CREATE INDEX IF NOT EXISTS idx_oauth_transactions_expires_at ON oauth_transactions(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_oauth_transactions_state_hash ON oauth_transactions(state_hash);
     `);
 
     // Migration helper for existing databases: ensure auth_provider and provider_sub exist
@@ -333,6 +360,89 @@ export class SqliteAuthRepository implements AuthRepository {
       userId: r.user_id,
       role: r.role
     }));
+  }
+
+  createOAuthTransaction(data: {
+    id: string;
+    stateHash: string;
+    codeVerifier: string;
+    nonceHash: string;
+    returnTo: string;
+    ttlSeconds?: number;
+  }): OAuthTransaction {
+    const now = new Date();
+    const createdAt = now.toISOString();
+    const ttl = data.ttlSeconds ?? 600; // default 10 minutes (600s)
+    const expiresAt = new Date(now.getTime() + ttl * 1000).toISOString();
+
+    this.db.prepare(`
+      INSERT INTO oauth_transactions (id, state_hash, code_verifier, nonce_hash, return_to, created_at, expires_at, consumed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+    `).run(
+      data.id,
+      data.stateHash,
+      data.codeVerifier,
+      data.nonceHash,
+      data.returnTo,
+      createdAt,
+      expiresAt
+    );
+
+    return {
+      id: data.id,
+      stateHash: data.stateHash,
+      codeVerifier: data.codeVerifier,
+      nonceHash: data.nonceHash,
+      returnTo: data.returnTo,
+      createdAt,
+      expiresAt,
+      consumedAt: null
+    };
+  }
+
+  findOAuthTransaction(id: string): OAuthTransaction | null {
+    if (!id || typeof id !== 'string') return null;
+    const row = this.db.prepare(`
+      SELECT id, state_hash, code_verifier, nonce_hash, return_to, created_at, expires_at, consumed_at
+      FROM oauth_transactions
+      WHERE id = ?
+    `).get(id) as any;
+
+    if (!row) return null;
+    return {
+      id: row.id,
+      stateHash: row.state_hash,
+      codeVerifier: row.code_verifier,
+      nonceHash: row.nonce_hash,
+      returnTo: row.return_to,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      consumedAt: row.consumed_at ?? null
+    };
+  }
+
+  consumeOAuthTransaction(id: string, nowIso?: string): boolean {
+    if (!id || typeof id !== 'string') return false;
+    const now = nowIso || new Date().toISOString();
+    const result = this.db.prepare(`
+      UPDATE oauth_transactions
+      SET consumed_at = ?
+      WHERE id = ?
+        AND consumed_at IS NULL
+        AND expires_at > ?
+    `).run(now, id, now);
+
+    return (result.changes ?? 0) > 0;
+  }
+
+  pruneExpiredOAuthTransactions(beforeIso?: string): number {
+    const cutoff = beforeIso || new Date(Date.now() - 3600 * 1000).toISOString(); // Expired 1 hour ago
+    const result = this.db.prepare(`
+      DELETE FROM oauth_transactions
+      WHERE expires_at < ?
+    `).run(cutoff);
+
+    return Number(result.changes ?? 0);
   }
 
   transaction<T>(action: () => T): T {

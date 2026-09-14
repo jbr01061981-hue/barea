@@ -23,6 +23,10 @@ import { logoutAction } from '../src/app/login/actions';
 import {
   OAuthStateError,
   OAuthCallbackError,
+  OAuthTransactionNotFoundError,
+  OAuthTransactionReplayedError,
+  OAuthTransactionExpiredError,
+  AccountCollisionDetectedError,
   RateLimitExceededError
 } from '../src/domain/domain-errors';
 
@@ -105,7 +109,27 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       googleClientSecret: CLIENT_SECRET,
       googleRedirectUri: REDIRECT_URI,
       rateLimiter,
-      jwksResolver: localJwksResolver
+      jwksResolver: localJwksResolver,
+      tokenExchangeHandler: async (params) => {
+        // Deterministic test exchange handler:
+        // By convention, tests pass mock ID token in custom code or we generate signed ID token from params.code
+        const testCode = params.code;
+        if (testCode.startsWith('mock_id_token:')) {
+          return { id_token: testCode.slice('mock_id_token:'.length) };
+        }
+        // Fallback: look up pending mock token for code or generate signed token
+        const idToken = (authService as any).__mockIdTokenForCode?.(testCode);
+        if (idToken) {
+          return { id_token: idToken };
+        }
+        // Default token exchange for standard test codes
+        const generated = await createSignedIdToken({
+          sub: 'sub-exchange-' + crypto.createHash('sha256').update(testCode).digest('hex').slice(0, 10),
+          email: 'exchange.user@church.org',
+          email_verified: true
+        });
+        return { id_token: generated };
+      }
     });
 
     setAuthRepository(authRepo);
@@ -342,7 +366,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(result.user.displayName, 'No Email User');
   });
 
-  await t.test('11. unverified email cannot automatically link an existing account', async () => {
+  await t.test('11. unverified email cannot link an existing account and fails closed', async () => {
     const existing = authRepo.createUser({
       email: 'target.victim@church.org',
       emailVerified: true,
@@ -359,7 +383,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
 
     await assert.rejects(
       async () => executeGoogleCallback(idToken, nonce),
-      /cannot link unverified/i
+      AccountCollisionDetectedError
     );
 
     // Verify victim user was NOT hijacked
@@ -369,28 +393,36 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(federated, null, 'Federated identity must not be linked');
   });
 
-  await t.test('12. verified email can safely link the existing account', async () => {
+  await t.test('12. verified email with different Google sub CANNOT hijack or link existing account (prohibits silent linking)', async () => {
     const existing = authRepo.createUser({
       email: 'pastor.john@church.org',
       emailVerified: true,
       displayName: 'Pastor John'
     });
+    authRepo.createFederatedIdentity({
+      userId: existing.id,
+      providerType: 'GOOGLE',
+      providerSub: 'google-sub-original-pastor'
+    });
 
     const nonce = 'nonce-safe-link';
     const idToken = await createSignedIdToken({
-      sub: 'google-sub-pastor-john',
+      sub: 'google-sub-different-attacker',
       email: 'pastor.john@church.org',
       email_verified: true,
-      name: 'John Pastor',
+      name: 'Imposter Pastor',
       nonce
     });
 
-    const result = await executeGoogleCallback(idToken, nonce);
+    // Prohibits silent account takeover: must fail closed with AccountCollisionDetectedError
+    await assert.rejects(
+      async () => executeGoogleCallback(idToken, nonce),
+      AccountCollisionDetectedError
+    );
 
-    assert.equal(result.user.id, existing.id);
-    const linked = authRepo.findFederatedIdentity('GOOGLE', 'google-sub-pastor-john');
-    assert.ok(linked !== null);
-    assert.equal(linked?.userId, existing.id);
+    // Verify original account remains bound to original federated identity only
+    const boundIdentity = authRepo.findFederatedIdentity('GOOGLE', 'google-sub-different-attacker');
+    assert.equal(boundIdentity, null, 'Different sub must not be linked to pastor account');
   });
 
   await t.test('13. existing (GOOGLE, sub) always resolves to the bound BAREA user', async () => {
@@ -820,7 +852,14 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   // ============================================================
 
   await t.test('SEAM-14: The production handleGoogleCallback() path cannot accept an injected ID token override', async () => {
-    // Calling handleGoogleCallback with any arbitrary caller input cannot override token exchange
+    // A service without a tokenExchangeHandler performs the real token exchange and will reject invalid codes
+    const prodStyleService = new AuthService(authRepo, {
+      googleClientId: CLIENT_ID,
+      googleClientSecret: CLIENT_SECRET,
+      googleRedirectUri: REDIRECT_URI,
+      jwksResolver: localJwksResolver
+    });
+
     const callArgs = {
       code: 'test-code',
       expectedState: 'test-state',
@@ -832,7 +871,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
 
     // The service must perform the token exchange and not trust the injected property
     await assert.rejects(
-      async () => (authService.handleGoogleCallback as any)(callArgs),
+      async () => (prodStyleService.handleGoogleCallback as any)(callArgs),
       /Google token exchange failed/i
     );
   });
@@ -1490,5 +1529,365 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       logoutEntry.workers && logoutEntry.workers['app/home/page'],
       'logoutAction must be registered as a worker action for app/home/page'
     );
+  });
+
+  // ============================================================
+  // OAUTH HARDENING TEST SUITE (Section 18 Authorization Tests)
+  // ============================================================
+
+  await t.test('OAUTH-TX-01: Normal valid OAuth transaction succeeds and issues fresh session', async () => {
+    const res = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/teacher/quizzes');
+    assert.ok(res.transactionId);
+    assert.ok(res.state.startsWith(res.transactionId + '.'));
+
+    const nonce = res.nonce;
+    const idToken = await createSignedIdToken({
+      sub: 'google-sub-tx-01',
+      email: 'user.tx01@church.org',
+      email_verified: true,
+      name: 'TX01 User',
+      nonce
+    });
+
+    const callbackResult = await authService.handleGoogleCallback({
+      code: 'mock_id_token:' + idToken,
+      receivedState: res.state,
+      redirectUri: REDIRECT_URI
+    });
+
+    assert.ok(callbackResult.rawToken);
+    assert.equal(callbackResult.returnTo, '/teacher/quizzes');
+    assert.equal(callbackResult.user.email, 'user.tx01@church.org');
+
+    // Verify transaction is marked consumed in database
+    const txAfter = authRepo.findOAuthTransaction(res.transactionId);
+    assert.ok(txAfter);
+    assert.ok(txAfter.consumedAt !== null, 'Transaction must be marked consumed');
+  });
+
+  await t.test('OAUTH-TX-02: Consumed callback replay fails closed with OAUTH_TRANSACTION_REPLAYED', async () => {
+    const res = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const nonce = res.nonce;
+    const idToken = await createSignedIdToken({
+      sub: 'google-sub-tx-02',
+      email: 'user.tx02@church.org',
+      email_verified: true,
+      nonce
+    });
+
+    // First completion succeeds
+    const firstResult = await authService.handleGoogleCallback({
+      code: 'mock_id_token:' + idToken,
+      receivedState: res.state,
+      redirectUri: REDIRECT_URI
+    });
+    assert.ok(firstResult.rawToken);
+
+    // Immediate replay of same state/transaction fails closed
+    await assert.rejects(
+      async () =>
+        authService.handleGoogleCallback({
+          code: 'mock_id_token:' + idToken,
+          receivedState: res.state,
+          redirectUri: REDIRECT_URI
+        }),
+      OAuthTransactionReplayedError
+    );
+  });
+
+  await t.test('OAUTH-TX-03: Expired transaction fails closed with OAUTH_TRANSACTION_EXPIRED', async () => {
+    // Insert pre-expired transaction in auth repository
+    const expiredTxId = 'otx_expired_test_1';
+    const stateSecret = 'secret-expired-1';
+    const state = `${expiredTxId}.${stateSecret}`;
+    const stateHash = crypto.createHash('sha256').update(stateSecret).digest('hex');
+    const nonce = 'nonce-expired-1';
+    const nonceHash = crypto.createHash('sha256').update(nonce).digest('hex');
+
+    const db = authRepo.getDatabase();
+    db.prepare(`
+      INSERT INTO oauth_transactions (id, state_hash, code_verifier, nonce_hash, return_to, created_at, expires_at, consumed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+    `).run(
+      expiredTxId,
+      stateHash,
+      'verifier-expired',
+      nonceHash,
+      '/home',
+      new Date(Date.now() - 3600 * 1000).toISOString(),
+      new Date(Date.now() - 1000).toISOString() // Expired 1 second ago
+    );
+
+    const idToken = await createSignedIdToken({
+      sub: 'google-sub-expired',
+      email: 'expired@church.org',
+      email_verified: true,
+      nonce
+    });
+
+    await assert.rejects(
+      async () =>
+        authService.handleGoogleCallback({
+          code: 'mock_id_token:' + idToken,
+          receivedState: state,
+          redirectUri: REDIRECT_URI
+        }),
+      OAuthTransactionExpiredError
+    );
+  });
+
+  await t.test('OAUTH-TX-04: Tampered state secret fails closed with OAUTH_STATE_INVALID', async () => {
+    const res = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const tamperedState = `${res.transactionId}.tampered_state_secret`;
+
+    await assert.rejects(
+      async () =>
+        authService.handleGoogleCallback({
+          code: 'code-tampered',
+          receivedState: tamperedState,
+          redirectUri: REDIRECT_URI
+        }),
+      OAuthStateError
+    );
+  });
+
+  await t.test('OAUTH-TAB-01 & OAUTH-TAB-02: Two simultaneous transactions remain independent; completing B does not invalidate A', async () => {
+    // Tab A begins login
+    const txA = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/teacher/quizzes');
+    // Tab B begins login
+    const txB = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+
+    assert.notEqual(txA.transactionId, txB.transactionId, 'Transactions must have distinct identifiers');
+    assert.notEqual(txA.state, txB.state, 'State parameters must be distinct');
+
+    const idTokenB = await createSignedIdToken({
+      sub: 'sub-tab-user-b',
+      email: 'user.tab.b@church.org',
+      email_verified: true,
+      name: 'User B',
+      nonce: txB.nonce
+    });
+
+    // Complete Tab B first
+    const resultB = await authService.handleGoogleCallback({
+      code: 'mock_id_token:' + idTokenB,
+      receivedState: txB.state,
+      redirectUri: REDIRECT_URI
+    });
+    assert.ok(resultB.rawToken);
+    assert.equal(resultB.returnTo, '/home');
+
+    // Tab A remains unconsumed and valid
+    const txAStatus = authRepo.findOAuthTransaction(txA.transactionId);
+    assert.ok(txAStatus);
+    assert.equal(txAStatus.consumedAt, null, 'Transaction A must remain unconsumed after Tab B finishes');
+
+    // Complete Tab A second
+    const idTokenA = await createSignedIdToken({
+      sub: 'sub-tab-user-a',
+      email: 'user.tab.a@church.org',
+      email_verified: true,
+      name: 'User A',
+      nonce: txA.nonce
+    });
+
+    const resultA = await authService.handleGoogleCallback({
+      code: 'mock_id_token:' + idTokenA,
+      receivedState: txA.state,
+      redirectUri: REDIRECT_URI
+    });
+    assert.ok(resultA.rawToken);
+    assert.equal(resultA.returnTo, '/teacher/quizzes');
+
+    // Both sessions exist and are distinct
+    assert.notEqual(resultA.rawToken, resultB.rawToken);
+  });
+
+  await t.test('OAUTH-TX-CONCURRENCY-01: Two concurrent callbacks for the same transaction produce exactly one success and one replay rejection', async () => {
+    const res = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const idToken = await createSignedIdToken({
+      sub: 'sub-concurrent-tx',
+      email: 'concurrent.tx@church.org',
+      email_verified: true,
+      nonce: res.nonce
+    });
+
+    const p1 = authService.handleGoogleCallback({
+      code: 'mock_id_token:' + idToken,
+      receivedState: res.state,
+      redirectUri: REDIRECT_URI
+    });
+    const p2 = authService.handleGoogleCallback({
+      code: 'mock_id_token:' + idToken,
+      receivedState: res.state,
+      redirectUri: REDIRECT_URI
+    });
+
+    const results = await Promise.allSettled([p1, p2]);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled') as PromiseFulfilledResult<any>[];
+    const rejected = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+
+    assert.equal(fulfilled.length, 1, 'Exactly one callback must succeed');
+    assert.equal(rejected.length, 1, 'Exactly one callback must be rejected');
+    assert.equal(rejected[0].reason?.name, 'OAuthTransactionReplayedError');
+
+    // Verify only 1 user and 1 session were created
+    const foundUser = authRepo.findUserByEmail('concurrent.tx@church.org');
+    assert.ok(foundUser);
+    const db = authRepo.getDatabase();
+    const sessions = db.prepare('SELECT id FROM user_sessions WHERE user_id = ?').all(foundUser.id);
+    assert.equal(sessions.length, 1, 'Exactly one session row must exist');
+  });
+
+  await t.test('OAUTH-ID-01: Same email + different Google sub fails closed with AccountCollisionDetectedError', async () => {
+    const existing = authRepo.createUser({
+      email: 'victim.pastor@church.org',
+      emailVerified: true,
+      displayName: 'Pastor'
+    });
+    authRepo.createFederatedIdentity({
+      userId: existing.id,
+      providerType: 'GOOGLE',
+      providerSub: 'legitimate-pastor-sub'
+    });
+
+    const tx = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const imposterToken = await createSignedIdToken({
+      sub: 'imposter-sub-999',
+      email: 'victim.pastor@church.org',
+      email_verified: true,
+      nonce: tx.nonce
+    });
+
+    await assert.rejects(
+      async () =>
+        authService.handleGoogleCallback({
+          code: 'mock_id_token:' + imposterToken,
+          receivedState: tx.state,
+          redirectUri: REDIRECT_URI
+        }),
+      AccountCollisionDetectedError
+    );
+
+    // Verify original account was not hijacked
+    const victim = authRepo.findUserById(existing.id);
+    assert.equal(victim?.id, existing.id);
+    const imposterIdentity = authRepo.findFederatedIdentity('GOOGLE', 'imposter-sub-999');
+    assert.equal(imposterIdentity, null, 'Imposter sub must not be linked');
+  });
+
+  await t.test('OAUTH-ID-02: New Google sub + new email creates exactly one BAREA user and federated identity', async () => {
+    const tx = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const idToken = await createSignedIdToken({
+      sub: 'brand-new-sub-100',
+      email: 'newbie@church.org',
+      email_verified: true,
+      name: 'Newbie Member',
+      nonce: tx.nonce
+    });
+
+    const res = await authService.handleGoogleCallback({
+      code: 'mock_id_token:' + idToken,
+      receivedState: tx.state,
+      redirectUri: REDIRECT_URI
+    });
+
+    assert.equal(res.user.email, 'newbie@church.org');
+    assert.equal(res.user.displayName, 'Newbie Member');
+
+    const fed = authRepo.findFederatedIdentity('GOOGLE', 'brand-new-sub-100');
+    assert.ok(fed);
+    assert.equal(fed.userId, res.user.id);
+  });
+
+  await t.test('OAUTH-FIX-01: Pre-login session cannot become authenticated or bound to post-login identity', async () => {
+    // Generate an arbitrary pre-login token
+    const preLoginToken = 'bst_' + crypto.randomBytes(32).toString('base64url');
+
+    const tx = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const idToken = await createSignedIdToken({
+      sub: 'sub-fixation-test',
+      email: 'fixation@church.org',
+      email_verified: true,
+      nonce: tx.nonce
+    });
+
+    const res = await authService.handleGoogleCallback({
+      code: 'mock_id_token:' + idToken,
+      receivedState: tx.state,
+      redirectUri: REDIRECT_URI
+    });
+
+    // The authenticated session token is brand new and independent of preLoginToken
+    assert.notEqual(res.rawToken, preLoginToken);
+    assert.equal(authRepo.findSessionByToken(preLoginToken), null, 'Pre-login token must not resolve to any session');
+    assert.ok(authRepo.findSessionByToken(res.rawToken) !== null, 'New session must resolve');
+  });
+
+  await t.test('OAUTH-NET-01: Google token endpoint timeout aborts cleanly with 8-second error message', async () => {
+    const customService = new AuthService(authRepo, {
+      googleClientId: CLIENT_ID,
+      googleClientSecret: CLIENT_SECRET,
+      googleRedirectUri: REDIRECT_URI,
+      jwksResolver: localJwksResolver,
+      tokenExchangeHandler: async () => {
+        const err = new Error('The operation was aborted due to timeout');
+        err.name = 'TimeoutError';
+        throw err;
+      }
+    });
+
+    const tx = customService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+
+    await assert.rejects(
+      async () =>
+        customService.handleGoogleCallback({
+          code: 'code-timeout',
+          receivedState: tx.state,
+          redirectUri: REDIRECT_URI
+        }),
+      (err: any) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /timeout/i);
+        return true;
+      }
+    );
+  });
+
+  await t.test('OAUTH-REDIRECT-01: Malicious returnTo values are rejected/safely redirected to /home', () => {
+    assert.equal(sanitizeReturnTo('http://evil.com'), '/home');
+    assert.equal(sanitizeReturnTo('//evil.com'), '/home');
+    assert.equal(sanitizeReturnTo('/\\evil.com'), '/home');
+    assert.equal(sanitizeReturnTo('/%2fevil.com'), '/home');
+    assert.equal(sanitizeReturnTo('javascript:alert(1)'), '/home');
+    assert.equal(sanitizeReturnTo('/teacher/quizzes/123?edit=true'), '/teacher/quizzes/123?edit=true');
+  });
+
+  await t.test('OAUTH-HTTPS-01: resolveOAuthRedirectUri respects explicit HTTPS request origin in development/test', () => {
+    const originalEnv = process.env.GOOGLE_REDIRECT_URI;
+    delete process.env.GOOGLE_REDIRECT_URI;
+    try {
+      const uri = resolveOAuthRedirectUri('https://localhost:3000');
+      assert.equal(uri, 'https://localhost:3000/api/auth/callback/google');
+    } finally {
+      if (originalEnv !== undefined) {
+        process.env.GOOGLE_REDIRECT_URI = originalEnv;
+      }
+    }
+  });
+
+  await t.test('OAUTH-HTTPS-02: resolveOAuthRedirectUri prioritizes configured GOOGLE_REDIRECT_URI', () => {
+    const originalEnv = process.env.GOOGLE_REDIRECT_URI;
+    process.env.GOOGLE_REDIRECT_URI = 'https://localhost:3000/api/auth/callback/google';
+    try {
+      const uri = resolveOAuthRedirectUri('http://localhost:3000');
+      assert.equal(uri, 'https://localhost:3000/api/auth/callback/google');
+    } finally {
+      if (originalEnv !== undefined) {
+        process.env.GOOGLE_REDIRECT_URI = originalEnv;
+      } else {
+        delete process.env.GOOGLE_REDIRECT_URI;
+      }
+    }
   });
 });

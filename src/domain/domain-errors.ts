@@ -187,6 +187,38 @@ export class OAuthStateError extends BareaDomainError {
   }
 }
 
+export class OAuthTransactionNotFoundError extends BareaDomainError {
+  readonly code = 'OAUTH_TRANSACTION_NOT_FOUND';
+  readonly httpStatus = 400;
+  constructor(message: string = 'OAuth transaction not found.') {
+    super(message);
+  }
+}
+
+export class OAuthTransactionReplayedError extends BareaDomainError {
+  readonly code = 'OAUTH_TRANSACTION_REPLAYED';
+  readonly httpStatus = 400;
+  constructor(message: string = 'OAuth transaction has already been consumed and cannot be replayed.') {
+    super(message);
+  }
+}
+
+export class OAuthTransactionExpiredError extends BareaDomainError {
+  readonly code = 'OAUTH_TRANSACTION_EXPIRED';
+  readonly httpStatus = 400;
+  constructor(message: string = 'OAuth transaction has expired. Please initiate login again.') {
+    super(message);
+  }
+}
+
+export class AccountCollisionDetectedError extends BareaDomainError {
+  readonly code = 'ACCOUNT_COLLISION_DETECTED';
+  readonly httpStatus = 409;
+  constructor(message: string = 'An account with this email is already registered to a different login identity.') {
+    super(message);
+  }
+}
+
 export class OAuthCallbackError extends BareaDomainError {
   readonly code = 'OAUTH_CALLBACK_ERROR';
   readonly httpStatus = 400;
