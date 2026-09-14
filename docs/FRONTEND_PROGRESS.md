@@ -8,6 +8,16 @@
 
 The unified authenticated home, Google-only authentication, hardened OAuth flow, server-authoritative session handling, and local HTTPS development support are now part of `main`.
 
+**Mobile LAN development:** PR #21 (`c040ec7e2ee5d92e5950d8b4886bda191e4fcbfe`) is open and mergeable, but not yet merged into `main`. It fixes the development-origin failure that caused post-auth redirects to `https://0.0.0.0:3000/home` when Next.js is bound to `0.0.0.0`, adds explicit `BAREA_DEV_APP_URL` support, enables LAN HMR through `allowedDevOrigins`, and adds four regression tests.
+
+PR #21 verification:
+- `npm test` — **259 passing / 0 failing**
+- `npm run typecheck` — **PASS**
+- `npm run build:next` — **PASS**
+- `git diff --check` — **PASS**
+
+**Google Web OAuth limitation for LAN development:** Do not register a private LAN IP such as `https://192.168.1.7:3000/api/auth/callback/google` as the Web OAuth redirect URI. LAN IP access is appropriate for mobile UI/responsive development, but complete Google OAuth testing must use an approved hostname such as local `https://localhost:3000` until a suitable development hostname/tunnel is available.
+
 Verification associated with the merged milestone:
 - `npm test` — **255 passing / 0 failing**
 - `npm run typecheck` — **PASS**
@@ -21,6 +31,7 @@ Cloudflare public HTTPS validation is **deferred** because the current Cloudflar
 | Stage | Frontend scope | Status | Repository state |
 |---|---|---|---|
 | Phase 1 / Auth | Unified authenticated identity/session + Google-only login + hardened OAuth + unified `/home` | **COMPLETE / MERGED** | Present on `main` via PR #20 merge `298eccb` |
+| Mobile LAN Dev | Explicit development origin + LAN HMR/OAuth redirect resolution | **APPROVED / PR OPEN** | PR #21 `c040ec7`; not yet merged to `main` |
 | BAREA-008 | Public homepage / landing foundation | **MERGED** | Present on `main` |
 | BAREA-008A | Public homepage visual redesign + public entry UX | **MERGED** | Present on `main` |
 | BAREA-008B | Public homepage refinement | **CURRENT / DESIGN REFINEMENT** | Active work exists on dedicated `barea-008b-*` branches; not merged to `main` |
@@ -74,6 +85,17 @@ Local HTTPS browser verification completed successfully against:
 `https://localhost:3000`
 
 including Google login, callback, authenticated home, workspace navigation, logout, second login, and post-logout session invalidation.
+
+### Mobile LAN development-origin status
+
+PR #21 addresses development-only origin handling when Next.js listens on all interfaces:
+- `BAREA_DEV_APP_URL` provides an explicit browser-visible development origin.
+- `0.0.0.0` is never emitted as a client redirect destination.
+- If development resolves to `0.0.0.0` without an explicit development origin, origin resolution fails closed with an actionable configuration error.
+- `allowedDevOrigins` permits the configured LAN development origin for Next.js HMR/Fast Refresh.
+- Production ignores `BAREA_DEV_APP_URL` and continues to use authoritative production configuration.
+
+PR #21 is verified but remains a branch/PR state until merged. It must not be described as part of `main` implementation before merge.
 
 ## BAREA-008B — Public homepage refinement
 
