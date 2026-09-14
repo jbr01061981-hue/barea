@@ -12,6 +12,7 @@ import { InMemoryRateLimiter } from '../../../service/rate-limiter';
 import { LiveQuizService } from '../../../service/live-quiz-service';
 import { InMemoryRealtimeTransport } from '../../../transport/realtime-transport';
 
+import { cookies } from 'next/headers';
 import { SqliteAuthRepository } from '../../../persistence/sqlite-auth-repository';
 import { AuthService } from '../../../service/auth-service';
 import { TeacherUnauthorizedError, TeacherForbiddenError } from '../../../domain/domain-errors';
@@ -202,16 +203,14 @@ export function setSessionTokenForTesting(token: string | null): void {
 
 /**
  * Resolves the raw session token from the barea_session cookie.
- * Gracefully handles contexts where Next.js cookies() is unavailable (e.g. tests).
+ * Gracefully handles contexts where Next.js cookies() is unavailable (e.g. tests outside request scope).
  */
 export async function getSessionTokenFromRequest(): Promise<string | null> {
   if (mockSessionTokenForTesting !== null) {
     return mockSessionTokenForTesting;
   }
   try {
-    // Dynamic load to allow node --test runner without Next.js headers compilation failure
-    const nextHeadersModule = await (Function('return import("next/headers")')() as Promise<any>);
-    const cookieStore = await nextHeadersModule.cookies();
+    const cookieStore = await cookies();
     const sessionCookie = cookieStore.get('barea_session');
     return sessionCookie?.value || null;
   } catch {
@@ -226,9 +225,10 @@ export async function getSessionTokenFromRequest(): Promise<string | null> {
  * Security Boundary:
  * 1. Test fixture override (mockTeacherContext) is evaluated first (strictly permitted only in test or development).
  * 2. If a valid barea_session cookie is present, resolves user and verifies teacher/admin organization membership.
- * 3. Default development context is permitted ONLY when NODE_ENV is explicitly 'development'.
+ * 3. If a barea_session cookie is present but invalid/expired, strictly FAILS CLOSED with TeacherUnauthorizedError.
+ * 4. Default development context is permitted ONLY when NODE_ENV is explicitly 'development'.
  *    Unset, unknown, or production NODE_ENV strictly FAILS CLOSED.
- * 4. In development mode, requires an explicit, non-empty BAREA_DEV_ORG_ID.
+ * 5. In development mode, requires an explicit, non-empty BAREA_DEV_ORG_ID.
  *    There is NO silent fallback to 'church-berea-default'; missing or empty configuration FAILS CLOSED.
  */
 export async function getAuthorizedTeacherContext(): Promise<TeacherContext> {
@@ -262,6 +262,9 @@ export async function getAuthorizedTeacherContext(): Promise<TeacherContext> {
       // User is authenticated but has no teacher/admin role -> fail closed
       throw new TeacherForbiddenError('Forbidden: Authenticated user is not authorized as a teacher or admin for any organization.');
     }
+    // Session token was provided but could not be resolved (e.g. invalid or expired session)
+    // Strictly fail closed as unauthorized; NEVER fall through to development mock!
+    throw new TeacherUnauthorizedError('Unauthorized: invalid or expired session.');
   }
 
   // Non-development / production / unset / unknown environment guard: must fail closed
