@@ -1,6 +1,24 @@
 # BAREA — Project Roadmap
 
-This roadmap reconciles the core product phases with the implementation milestones already present in the repository. GitHub `main` is authoritative for actual implementation state; this document defines the intended task sequence.
+This roadmap reconciles the core product phases with the implementation milestones already present in the repository. **GitHub `main` is authoritative for actual implementation state; this document defines the intended task sequence and current development status.**
+
+## Current Development Status
+
+**Main branch baseline: PR #20 merged on 2026-09-14.**
+
+Merge commit: `298eccbabc7090531c9c31c2bc94c79592d11edb`
+
+The unified authentication/home and hardened Google OAuth milestone is now part of `main`.
+
+Verified on the merged branch before/after merge:
+- `npm test` — **255 passing / 0 failing**
+- `npm run typecheck` — **PASS**
+- `npm run build:next` — **PASS**
+- `git diff --check` — **PASS**
+- Local HTTPS Google OAuth flow — **PASS**
+- Logout and server-side session invalidation — **PASS**
+
+Cloudflare public HTTPS testing is **not yet completed**. Discovery found no active Cloudflare DNS zone or suitable custom domain in the current Cloudflare account, so no Cloudflare tunnel or DNS infrastructure was provisioned. This does not block the completed application milestone.
 
 ## Phase 1 — Unified Account & Access
 
@@ -8,15 +26,19 @@ This roadmap reconciles the core product phases with the implementation mileston
 
 Established capabilities:
 - Unified BAREA user identity and server-authoritative sessions.
-- Email/password authentication.
-- Google OAuth/OIDC with authorization-code exchange, PKCE, state and nonce handling, cryptographic ID-token verification, issuer/audience/algorithm/expiration/issued-at/subject validation, and JWKS key handling.
-- Safe Google account linking only from trusted verified identity data.
+- **Google-only federated authentication for current individual login.** Legacy email/password authentication is no longer an active authentication mechanism.
+- Google OAuth/OIDC with authorization-code exchange, PKCE S256, state and nonce handling, cryptographic ID-token verification, issuer/audience/algorithm/expiration/issued-at/subject validation, JWKS key handling, and timeout protection.
+- Server-side OAuth transaction lifecycle with replay/expiry protection and atomic consumption.
+- No silent Google-account linking by email; unknown Google identities that collide with an existing BAREA email are rejected for explicit account-collision handling.
 - Session persistence, expiration and revocation.
 - Teacher/admin authorization derived server-side from authenticated membership; client-supplied role or organization data cannot establish authority.
 - Explicit fail-closed behavior for missing, invalid, expired, or unauthorized sessions.
-- Logout session revocation and cookie clearing, including the Next.js Server Action discovery correction.
+- Logout session revocation and cookie clearing.
+- Unified authenticated `/home` for individual users and Create & Host capability presentation.
+- Create & Host remains server-authorized; the UI lock is not a security boundary.
+- Host cannot participate in their own real live session as a normal participant.
 
-Task 4 verification on the current `main` commit includes a fresh Next.js build with `logoutAction` registered and a complete automated suite of **240/240 passing tests**. Local browser verification also confirmed successful Google authentication/session handoff and correct denial of teacher capability for an authenticated account without teacher/admin membership.
+The milestone was implemented in PR #20, merged to `main` as commit `298eccbabc7090531c9c31c2bc94c79592d11edb`. Local HTTPS development support was also added for OAuth testing.
 
 ## Phase 2 — Share, Join & Live Quiz
 
@@ -92,7 +114,7 @@ The frontend track progresses through these purpose-built experiences:
 
 ### BAREA-009 — Teacher Workspace / Quiz Library redesign
 
-This is the next major frontend milestone after the current 008B refinement track is settled.
+**Status: NEXT MAJOR FRONTEND MILESTONE**
 
 Target experience:
 - Authenticated, authorized teacher workspace.
@@ -129,8 +151,8 @@ BAREA-009 must not invent authentication, authorization, tenant, quiz, or live-s
 
 **Status: PLANNED / PARTIALLY REPRESENTED BY EXISTING HOMEPAGE WORK**
 
-- Improve the Berea landing experience.
-- Clearly explain what Berea does.
+- Improve the BAREA landing experience.
+- Clearly explain what BAREA does.
 - Provide clear teacher/host entry.
 - Provide clear participant entry.
 - Connect landing naturally to create, sign-in, and join flows.
@@ -141,7 +163,7 @@ Existing BAREA-008/008A homepage work is foundation, not a declaration that the 
 
 **Status: PLANNED**
 
-- Run Berea in a real church environment.
+- Run BAREA in a real church environment.
 - Display the QR code to a real congregation.
 - Have real participants join using their phones.
 - Run real quizzes.
@@ -149,6 +171,33 @@ Existing BAREA-008/008A homepage work is foundation, not a declaration that the 
 - Collect church/user feedback.
 - Fix the highest-value problems.
 - Re-test with the church.
+
+## Infrastructure Validation — Cloudflare HTTPS
+
+**Status: DEFERRED — DOMAIN REQUIRED**
+
+The intended architecture remains:
+
+```text
+PUBLIC INTERNET (HTTPS)
+        ↓
+CLOUDFLARE EDGE
+        ↓
+CLOUDFLARE TUNNEL
+        ↓
+PRIVATE BAREA ORIGIN
+        ↓
+Next.js App Router :3000
+```
+
+Cloudflare discovery on 2026-09-14 confirmed:
+- Cloudflare account is accessible.
+- No active DNS zones/domains are currently present in the account.
+- No existing BAREA named tunnel exists.
+- `berea-api-production.jbr01061981.workers.dev` is a separate backend/legacy Worker and remains untouched.
+- No DNS, tunnel, Worker, or Google OAuth configuration was changed.
+
+A persistent public HTTPS/OAuth test should resume only when a suitable custom domain is available. A Quick Tunnel may be used later for non-OAuth connectivity smoke testing, but its ephemeral hostname is not the authoritative Google OAuth validation path.
 
 ## Sequencing and scope rules
 
@@ -159,3 +208,4 @@ Existing BAREA-008/008A homepage work is foundation, not a declaration that the 
 5. Preserve tenant isolation and server-authoritative live state.
 6. Resolve open design/architecture decisions before implementing dependent screens when those decisions materially affect routes or contracts.
 7. Every completed milestone requires repository inspection, tests/build verification, and independent review; an agent completion report is not itself approval.
+8. **When implementation state and historical reports differ, the current `main` branch and the latest verified repository state take precedence; historical reports remain historical evidence and must not be rewritten to make them current.**
