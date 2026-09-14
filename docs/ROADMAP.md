@@ -10,6 +10,18 @@ Merge commit: `298eccbabc7090531c9c31c2bc94c79592d11edb`
 
 The unified authentication/home and hardened Google OAuth milestone is now part of `main`.
 
+**Mobile LAN development-origin fix: PR #21 is reviewed and pending merge.**
+
+PR #21 (`c040ec7e2ee5d92e5950d8b4886bda191e4fcbfe`) adds explicit development-origin resolution so a Next.js server bound to `0.0.0.0` cannot redirect a browser to the non-routable `0.0.0.0` address. It also enables LAN HMR through `allowedDevOrigins` and adds four focused regression tests. Until PR #21 is merged, these changes are branch state rather than `main` implementation state.
+
+The verified PR #21 gates are:
+- `npm test` — **259 passing / 0 failing**
+- `npm run typecheck` — **PASS**
+- `npm run build:next` — **PASS**
+- `git diff --check` — **PASS**
+
+**Google Web OAuth does not use a private LAN IP as the authoritative Web-client redirect URI.** Do not add `https://192.168.1.7:3000/api/auth/callback/google` to the Google Web OAuth client. LAN IP access remains suitable for mobile UI/responsive development; complete Google OAuth testing remains on an approved hostname such as local `https://localhost:3000` until a proper development hostname/tunnel is available.
+
 Verified on the merged branch before/after merge:
 - `npm test` — **255 passing / 0 failing**
 - `npm run typecheck` — **PASS**
