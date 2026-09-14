@@ -1399,16 +1399,19 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('LOGOUT 11. logoutAction Server Action executes clean revocation and redirect', async () => {
-    // When invoked outside of Next.js HTTP request without cookieStore available,
-    // logoutAction attempts to get cookies(), safely deletes barea_session, and calls redirect('/')
+    // When invoked outside of Next.js HTTP request scope without request/cookie storage,
+    // Next.js dynamic API (cookies()) deterministically throws an unhandled scope error with __NEXT_ERROR_CODE 'E251'.
+    // This test deterministically proves logoutAction fails at the Next.js request boundary
+    // rather than passing on an arbitrary unrelated exception.
     await assert.rejects(
       async () => logoutAction(),
       (err: any) => {
-        // In Next.js, redirect('/') throws a NEXT_REDIRECT signal error
-        const isNextRedirect =
-          (typeof err === 'object' && err !== null && 'digest' in err && String(err.digest).startsWith('NEXT_REDIRECT')) ||
-          (err instanceof Error && /NEXT_REDIRECT/i.test(err.message));
-        // Or if cookies() throws outside request scope, that also indicates Next.js request context requirement
+        assert.ok(err instanceof Error, 'Expected thrown error to be an instance of Error');
+        assert.match(
+          err.message,
+          /`cookies` was called outside a request scope/i,
+          'logoutAction must deterministically fail at the Next.js cookies() request scope boundary when called outside request'
+        );
         return true;
       }
     );
@@ -1418,17 +1421,25 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     const fs = await import('fs');
     const path = await import('path');
     const manifestPath = path.join(process.cwd(), '.next', 'server', 'server-reference-manifest.json');
-    if (fs.existsSync(manifestPath)) {
-      const content = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-      const actions = Object.values(content.node || {}) as any[];
-      const logoutEntry = actions.find(
-        (entry) => entry.filename === 'src/app/login/actions.ts' && entry.exportedName === 'logoutAction'
-      );
-      assert.ok(logoutEntry, 'logoutAction must be registered in server-reference-manifest.json');
-      assert.ok(
-        logoutEntry.workers && logoutEntry.workers['app/teacher/quizzes/page'],
-        'logoutAction must be registered as a worker action for app/teacher/quizzes/page'
-      );
-    }
+    
+    // The manifest MUST exist; test strictly fails if manifest is missing (production next build required)
+    assert.ok(
+      fs.existsSync(manifestPath),
+      '.next/server/server-reference-manifest.json must exist. Run "npm run build:next" before running tests.'
+    );
+
+    const content = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const actions = Object.values(content.node || {}) as any[];
+    const logoutEntry = actions.find(
+      (entry) => entry.filename === 'src/app/login/actions.ts' && entry.exportedName === 'logoutAction'
+    );
+    assert.ok(
+      logoutEntry,
+      'logoutAction from src/app/login/actions.ts must be registered in server-reference-manifest.json'
+    );
+    assert.ok(
+      logoutEntry.workers && logoutEntry.workers['app/teacher/quizzes/page'],
+      'logoutAction must be registered as a worker action for app/teacher/quizzes/page'
+    );
   });
 });
