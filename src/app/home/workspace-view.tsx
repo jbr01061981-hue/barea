@@ -260,15 +260,17 @@ export function WorkspaceView({
                     Quizzes specifically assigned to your class or individual profile.
                   </p>
                 </div>
-                <span className="text-xs font-mono text-[var(--barea-ivory-muted)]">0 Active</span>
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-[0.7rem] font-semibold tracking-wide bg-[var(--barea-paper-dark)] text-[var(--barea-gold)] border border-[var(--barea-gold-muted)]">
+                  Coming Soon
+                </span>
               </div>
 
               <div className="py-10 text-center space-y-2">
                 <p className="text-sm font-medium text-[var(--barea-ivory)]">
-                  No active quiz assignments at this time.
+                  Curriculum assignments are not yet connected.
                 </p>
                 <p className="text-xs text-slate-400 max-w-md mx-auto">
-                  Assigned quizzes will appear here when assigned by your church curriculum.
+                  Direct church curriculum assignments and student rosters will be introduced in an upcoming milestone.
                 </p>
               </div>
             </div>
@@ -290,15 +292,17 @@ export function WorkspaceView({
                     Scheduled live sessions or fellowship events you have been invited to by email or phone.
                   </p>
                 </div>
-                <span className="text-xs font-mono text-[var(--barea-ivory-muted)]">0 Invitations</span>
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-[0.7rem] font-semibold tracking-wide bg-[var(--barea-paper-dark)] text-[var(--barea-gold)] border border-[var(--barea-gold-muted)]">
+                  Coming Soon
+                </span>
               </div>
 
               <div className="py-10 text-center space-y-2">
                 <p className="text-sm font-medium text-[var(--barea-ivory)]">
-                  No pending quiz invitations found.
+                  Participant invitations inbox is not yet connected.
                 </p>
                 <p className="text-xs text-slate-400 max-w-md mx-auto">
-                  When a host invites your verified contact details to a session, it will appear here.
+                  Authoritative personal invitation feeds for scheduled sessions will be available in an upcoming release.
                 </p>
               </div>
             </div>

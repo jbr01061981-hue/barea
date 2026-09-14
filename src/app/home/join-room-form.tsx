@@ -1,18 +1,18 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { lookupRoomAction, joinSessionAction } from '../session/actions';
+import { lookupRoomAction } from '../session/actions';
 
 export function JoinRoomForm() {
-  const router = useRouter();
   const [roomCode, setRoomCode] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [verifiedInfo, setVerifiedInfo] = useState<{ roomCode: string; quizTitle: string } | null>(null);
 
   async function handleJoin(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setErrorMessage(null);
+    setVerifiedInfo(null);
 
     const trimmed = roomCode.trim();
     if (!trimmed) {
@@ -22,7 +22,7 @@ export function JoinRoomForm() {
 
     setIsSubmitting(true);
     try {
-      // Check room exists and is joinable
+      // Validate room existence and active status without premature participant mutation
       const lookupResult = await lookupRoomAction(trimmed);
       if (!lookupResult.success) {
         setErrorMessage(lookupResult.error.message || 'Room not found or no longer active.');
@@ -30,22 +30,13 @@ export function JoinRoomForm() {
         return;
       }
 
-      // Join session using server-authoritative authenticated session
-      const joinResult = await joinSessionAction(trimmed);
-      if (!joinResult.success) {
-        setErrorMessage(joinResult.error.message || 'Could not join session.');
-        setIsSubmitting(false);
-        return;
-      }
-
-      // Successful join; session token and participant registered
-      // For now redirect or show session ready message
-      setErrorMessage(null);
-      // If client-side lobby route exists in future, navigate there; for now notify join success:
-      alert(`Joined room ${lookupResult.data.roomCode}! Session ID: ${lookupResult.data.sessionId}`);
+      setVerifiedInfo({
+        roomCode: lookupResult.data.roomCode,
+        quizTitle: lookupResult.data.quizTitle,
+      });
       setIsSubmitting(false);
     } catch {
-      setErrorMessage('An unexpected error occurred while joining the room.');
+      setErrorMessage('An unexpected error occurred while verifying the room.');
       setIsSubmitting(false);
     }
   }
@@ -59,6 +50,20 @@ export function JoinRoomForm() {
           className="rounded-[var(--barea-radius-control)] border border-red-500/50 bg-red-950/40 p-2.5 text-xs text-red-200"
         >
           {errorMessage}
+        </div>
+      )}
+      {verifiedInfo && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="rounded-[var(--barea-radius-control)] border border-emerald-500/40 bg-emerald-950/40 p-3 text-xs text-emerald-200 space-y-1"
+        >
+          <div className="font-semibold text-emerald-100">
+            Room {verifiedInfo.roomCode} Verified: &ldquo;{verifiedInfo.quizTitle}&rdquo;
+          </div>
+          <div className="text-emerald-300/80">
+            Participant live lobby and play view will connect automatically once synchronized live sessions launch.
+          </div>
         </div>
       )}
       <div className="flex flex-col sm:flex-row gap-2">
@@ -77,7 +82,7 @@ export function JoinRoomForm() {
           disabled={isSubmitting}
           className="inline-flex min-h-10 items-center justify-center rounded-[var(--barea-radius-control)] bg-[var(--barea-gold)] px-5 text-xs font-bold uppercase tracking-wider text-[var(--barea-midnight)] transition-colors hover:bg-[var(--barea-gold-light)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap cursor-pointer"
         >
-          {isSubmitting ? 'Joining...' : 'Enter Room'}
+          {isSubmitting ? 'Verifying...' : 'Enter Room'}
         </button>
       </div>
     </form>
