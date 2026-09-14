@@ -12,7 +12,6 @@ export interface AuthActionResult<T = unknown> {
   error?: string;
 }
 
-export { sanitizeReturnTo };
 
 /**
  * Server Action: Authenticates via email/password, establishes a server session,
