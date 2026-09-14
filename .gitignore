@@ -17,6 +17,12 @@ data/
 # Logs
 *.log
 
+# Certificates (Local Development)
+certificates/
+*.pem
+*.key
+*.crt
+
 # OS and IDE
 .DS_Store
 Thumbs.db

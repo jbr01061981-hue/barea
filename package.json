@@ -10,6 +10,7 @@
     "build:next": "next build",
     "start": "next start -H 127.0.0.1 -p 3000",
     "dev": "next dev",
+    "dev:https": "next dev --experimental-https",
     "typecheck": "tsc --noEmit",
     "test": "tsc -p tsconfig.test.json && node --test \"dist/test/**/*.test.js\""
   },

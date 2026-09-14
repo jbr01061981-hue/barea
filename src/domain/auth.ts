@@ -6,11 +6,6 @@ export interface User {
   readonly createdAt: string;
 }
 
-export interface UserCredentials {
-  readonly userId: string;
-  readonly passwordHash: string | null;
-}
-
 export interface FederatedIdentity {
   readonly id: string;
   readonly userId: string;
@@ -38,4 +33,15 @@ export interface AuthenticatedSessionContext {
   readonly user: User;
   readonly session: UserSession;
   readonly memberships: readonly OrganizationMembership[];
+}
+
+export interface OAuthTransaction {
+  readonly id: string;
+  readonly stateHash: string;
+  readonly codeVerifier: string;
+  readonly nonceHash: string;
+  readonly returnTo: string;
+  readonly createdAt: string;
+  readonly expiresAt: string;
+  readonly consumedAt: string | null;
 }

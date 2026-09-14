@@ -4,7 +4,7 @@
  * Uses semantic WHATWG URL parsing and strict path normalization.
  */
 export function sanitizeReturnTo(returnTo?: string | null): string {
-  const DEFAULT_PATH = '/teacher/quizzes';
+  const DEFAULT_PATH = '/home';
   if (!returnTo || typeof returnTo !== 'string') {
     return DEFAULT_PATH;
   }

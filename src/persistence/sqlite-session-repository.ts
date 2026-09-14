@@ -29,6 +29,7 @@ import {
   SessionLockedError,
   SessionFullError,
   SessionAccessDeniedError,
+  HostCannotParticipateInOwnSessionError,
   CrossTenantSnapshotError,
   InvalidParticipantTokenError,
   InvalidLiveStateTransitionError,
@@ -610,6 +611,9 @@ export class SqliteSessionRepository implements SessionRepository {
       }
       if (session.participationMode === ParticipationMode.TEACHER_GROUP) {
         throw new SessionAccessDeniedError('Direct individual join is not supported in teacher group mode.');
+      }
+      if (session.hostUserId === participant.userId) {
+        throw new HostCannotParticipateInOwnSessionError();
       }
 
       // Check capacity

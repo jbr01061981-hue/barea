@@ -1,45 +1,12 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { loginWithPasswordAction } from './actions';
-
 interface LoginClientProps {
   readonly initialReturnTo: string;
   readonly initialError?: string;
 }
 
 export function LoginClient({ initialReturnTo, initialError }: LoginClientProps) {
-  const router = useRouter();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [errorMessage, setErrorMessage] = useState<string | null>(initialError || null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setErrorMessage(null);
-    setIsSubmitting(true);
-
-    const formData = new FormData();
-    formData.set('email', email);
-    formData.set('password', password);
-    formData.set('returnTo', initialReturnTo);
-
-    try {
-      const result = await loginWithPasswordAction(formData);
-      if (result.success && result.data) {
-        router.push(result.data.returnTo);
-        router.refresh();
-      } else {
-        setErrorMessage(result.error || 'Login failed. Please check your credentials.');
-        setIsSubmitting(false);
-      }
-    } catch {
-      setErrorMessage('An unexpected error occurred. Please try again.');
-      setIsSubmitting(false);
-    }
-  }
+  const errorMessage = initialError || null;
 
   return (
     <div className="mx-auto w-full max-w-md">
@@ -56,8 +23,8 @@ export function LoginClient({ initialReturnTo, initialError }: LoginClientProps)
         </div>
       )}
 
-      {/* Google OAuth Option */}
-      <div className="mb-6">
+      {/* Google OAuth Federated Authentication */}
+      <div>
         <a
           href={`/api/auth/google?returnTo=${encodeURIComponent(initialReturnTo)}`}
           className="flex min-h-12 w-full items-center justify-center gap-3 rounded-[var(--barea-radius-control)] border border-[var(--barea-slate-border)] bg-[var(--barea-slate-card)] px-4 text-sm font-semibold text-white transition-colors hover:border-[var(--barea-gold)] hover:bg-[#182337] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--barea-midnight)]"
@@ -83,65 +50,6 @@ export function LoginClient({ initialReturnTo, initialError }: LoginClientProps)
           <span>Continue with Google</span>
         </a>
       </div>
-
-      {/* Divider */}
-      <div className="relative mb-6 flex items-center justify-center">
-        <div className="w-full border-t border-[var(--barea-slate-border)]" />
-        <span className="absolute bg-[var(--barea-midnight)] px-3 text-xs font-semibold uppercase tracking-wider text-[var(--barea-ivory-muted)]">
-          or sign in with email
-        </span>
-      </div>
-
-      {/* Email / Password Form */}
-      <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-        <div>
-          <label htmlFor="barea-login-email" className="block text-xs font-bold uppercase tracking-wider text-[var(--barea-ivory-muted)]">
-            Email address
-          </label>
-          <input
-            id="barea-login-email"
-            name="email"
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            disabled={isSubmitting}
-            className="mt-1.5 block w-full rounded-[var(--barea-radius-control)] border border-[var(--barea-slate-border)] bg-[var(--barea-slate-card)] px-3.5 py-2.5 text-sm text-white placeholder-slate-500 transition-colors focus:border-[var(--barea-gold)] focus:outline-none focus:ring-1 focus:ring-[var(--barea-gold)] disabled:opacity-50"
-            placeholder="you@church.org"
-          />
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between">
-            <label htmlFor="barea-login-password" className="block text-xs font-bold uppercase tracking-wider text-[var(--barea-ivory-muted)]">
-              Password
-            </label>
-          </div>
-          <input
-            id="barea-login-password"
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            disabled={isSubmitting}
-            className="mt-1.5 block w-full rounded-[var(--barea-radius-control)] border border-[var(--barea-slate-border)] bg-[var(--barea-slate-card)] px-3.5 py-2.5 text-sm text-white placeholder-slate-500 transition-colors focus:border-[var(--barea-gold)] focus:outline-none focus:ring-1 focus:ring-[var(--barea-gold)] disabled:opacity-50"
-            placeholder="••••••••"
-          />
-        </div>
-
-        <div className="pt-2">
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="flex min-h-12 w-full items-center justify-center rounded-[var(--barea-radius-control)] bg-[var(--barea-gold)] px-6 text-sm font-bold text-[var(--barea-midnight)] transition-colors hover:bg-[var(--barea-gold-light)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--barea-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--barea-midnight)] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isSubmitting ? 'Signing in...' : 'Log in'}
-          </button>
-        </div>
-      </form>
     </div>
   );
 }

@@ -13,11 +13,11 @@ export async function GET(request: NextRequest) {
     // Canonical redirect URI
     const redirectUri = resolveOAuthRedirectUri(request.nextUrl.origin);
 
-    const { url, state, codeVerifier, nonce } = authService.generateGoogleOAuthUrl(redirectUri);
+    const { url, transactionId } = authService.generateGoogleOAuthUrl(redirectUri, returnTo);
 
     const response = NextResponse.redirect(url);
 
-    // Store state, codeVerifier, nonce, and returnTo in HttpOnly, SameSite=Lax cookies restricted to callback path
+    // Store only the transaction identifier in HttpOnly, SameSite=Lax cookie restricted to callback path
     const cookieOptions = {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
@@ -26,10 +26,7 @@ export async function GET(request: NextRequest) {
       maxAge: 60 * 10 // 10 minutes
     };
 
-    response.cookies.set('barea_oauth_state', state, cookieOptions);
-    response.cookies.set('barea_oauth_verifier', codeVerifier, cookieOptions);
-    response.cookies.set('barea_oauth_nonce', nonce, cookieOptions);
-    response.cookies.set('barea_oauth_return_to', returnTo, cookieOptions);
+    response.cookies.set('barea_oauth_tx', transactionId, cookieOptions);
 
     return response;
   } catch (err: unknown) {

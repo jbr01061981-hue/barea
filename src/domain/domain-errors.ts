@@ -49,6 +49,14 @@ export class SessionAccessDeniedError extends BareaDomainError {
   }
 }
 
+export class HostCannotParticipateInOwnSessionError extends BareaDomainError {
+  readonly code = 'HOST_CANNOT_PARTICIPATE_IN_OWN_SESSION';
+  readonly httpStatus = 403;
+  constructor(message: string = 'Host cannot participate as an individual player in their own live quiz session.') {
+    super(message);
+  }
+}
+
 export class CrossTenantSnapshotError extends BareaDomainError {
   readonly code = 'CROSS_TENANT_SNAPSHOT_FORBIDDEN';
   readonly httpStatus = 403;
@@ -155,14 +163,6 @@ export class ConcurrencyConflictError extends BareaDomainError {
   }
 }
 
-export class InvalidCredentialsError extends BareaDomainError {
-  readonly code = 'INVALID_CREDENTIALS';
-  readonly httpStatus = 401;
-  constructor(message: string = 'Invalid email or password.') {
-    super(message);
-  }
-}
-
 export class AccountNotFoundError extends BareaDomainError {
   readonly code = 'ACCOUNT_NOT_FOUND';
   readonly httpStatus = 404;
@@ -183,6 +183,38 @@ export class OAuthStateError extends BareaDomainError {
   readonly code = 'OAUTH_STATE_INVALID';
   readonly httpStatus = 400;
   constructor(message: string = 'Invalid or expired OAuth state.') {
+    super(message);
+  }
+}
+
+export class OAuthTransactionNotFoundError extends BareaDomainError {
+  readonly code = 'OAUTH_TRANSACTION_NOT_FOUND';
+  readonly httpStatus = 400;
+  constructor(message: string = 'OAuth transaction not found.') {
+    super(message);
+  }
+}
+
+export class OAuthTransactionReplayedError extends BareaDomainError {
+  readonly code = 'OAUTH_TRANSACTION_REPLAYED';
+  readonly httpStatus = 400;
+  constructor(message: string = 'OAuth transaction has already been consumed and cannot be replayed.') {
+    super(message);
+  }
+}
+
+export class OAuthTransactionExpiredError extends BareaDomainError {
+  readonly code = 'OAUTH_TRANSACTION_EXPIRED';
+  readonly httpStatus = 400;
+  constructor(message: string = 'OAuth transaction has expired. Please initiate login again.') {
+    super(message);
+  }
+}
+
+export class AccountCollisionDetectedError extends BareaDomainError {
+  readonly code = 'ACCOUNT_COLLISION_DETECTED';
+  readonly httpStatus = 409;
+  constructor(message: string = 'An account with this email is already registered to a different login identity.') {
     super(message);
   }
 }

@@ -7,12 +7,12 @@ import * as crypto from 'crypto';
 import { SqliteAuthRepository, type AuthRepository } from '../src/persistence/sqlite-auth-repository';
 import { AuthService } from '../src/service/auth-service';
 import { InMemoryRateLimiter } from '../src/service/rate-limiter';
-import { hashPassword, verifyPassword } from '../src/service/password-hasher';
 import {
   setAuthRepository,
   setAuthService,
   getAuthorizedTeacherContext,
   getAuthenticatedUserContext,
+  getUnifiedUserContext,
   setAuthorizedTeacherContext,
   setAuthenticatedUserContext,
   setSessionTokenForTesting
@@ -21,9 +21,12 @@ import { sanitizeReturnTo, resolveOAuthRedirectUri } from '../src/app/login/url-
 import { logoutAction } from '../src/app/login/actions';
 
 import {
-  InvalidCredentialsError,
   OAuthStateError,
   OAuthCallbackError,
+  OAuthTransactionNotFoundError,
+  OAuthTransactionReplayedError,
+  OAuthTransactionExpiredError,
+  AccountCollisionDetectedError,
   RateLimitExceededError
 } from '../src/domain/domain-errors';
 
@@ -106,7 +109,27 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       googleClientSecret: CLIENT_SECRET,
       googleRedirectUri: REDIRECT_URI,
       rateLimiter,
-      jwksResolver: localJwksResolver
+      jwksResolver: localJwksResolver,
+      tokenExchangeHandler: async (params) => {
+        // Deterministic test exchange handler:
+        // By convention, tests pass mock ID token in custom code or we generate signed ID token from params.code
+        const testCode = params.code;
+        if (testCode.startsWith('mock_id_token:')) {
+          return { id_token: testCode.slice('mock_id_token:'.length) };
+        }
+        // Fallback: look up pending mock token for code or generate signed token
+        const idToken = (authService as any).__mockIdTokenForCode?.(testCode);
+        if (idToken) {
+          return { id_token: idToken };
+        }
+        // Default token exchange for standard test codes
+        const generated = await createSignedIdToken({
+          sub: 'sub-exchange-' + crypto.createHash('sha256').update(testCode).digest('hex').slice(0, 10),
+          email: 'exchange.user@church.org',
+          email_verified: true
+        });
+        return { id_token: generated };
+      }
     });
 
     setAuthRepository(authRepo);
@@ -343,11 +366,10 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(result.user.displayName, 'No Email User');
   });
 
-  await t.test('11. unverified email cannot automatically link an existing account', async () => {
+  await t.test('11. unverified email cannot link an existing account and fails closed', async () => {
     const existing = authRepo.createUser({
       email: 'target.victim@church.org',
       emailVerified: true,
-      passwordHash: await hashPassword('VictimPass123'),
       displayName: 'Victim User'
     });
 
@@ -361,7 +383,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
 
     await assert.rejects(
       async () => executeGoogleCallback(idToken, nonce),
-      /cannot link unverified/i
+      AccountCollisionDetectedError
     );
 
     // Verify victim user was NOT hijacked
@@ -371,29 +393,36 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(federated, null, 'Federated identity must not be linked');
   });
 
-  await t.test('12. verified email can safely link the existing account', async () => {
+  await t.test('12. verified email with different Google sub CANNOT hijack or link existing account (prohibits silent linking)', async () => {
     const existing = authRepo.createUser({
       email: 'pastor.john@church.org',
       emailVerified: true,
-      passwordHash: await hashPassword('PastorPass123!'),
       displayName: 'Pastor John'
+    });
+    authRepo.createFederatedIdentity({
+      userId: existing.id,
+      providerType: 'GOOGLE',
+      providerSub: 'google-sub-original-pastor'
     });
 
     const nonce = 'nonce-safe-link';
     const idToken = await createSignedIdToken({
-      sub: 'google-sub-pastor-john',
+      sub: 'google-sub-different-attacker',
       email: 'pastor.john@church.org',
       email_verified: true,
-      name: 'John Pastor',
+      name: 'Imposter Pastor',
       nonce
     });
 
-    const result = await executeGoogleCallback(idToken, nonce);
+    // Prohibits silent account takeover: must fail closed with AccountCollisionDetectedError
+    await assert.rejects(
+      async () => executeGoogleCallback(idToken, nonce),
+      AccountCollisionDetectedError
+    );
 
-    assert.equal(result.user.id, existing.id);
-    const linked = authRepo.findFederatedIdentity('GOOGLE', 'google-sub-pastor-john');
-    assert.ok(linked !== null);
-    assert.equal(linked?.userId, existing.id);
+    // Verify original account remains bound to original federated identity only
+    const boundIdentity = authRepo.findFederatedIdentity('GOOGLE', 'google-sub-different-attacker');
+    assert.equal(boundIdentity, null, 'Different sub must not be linked to pastor account');
   });
 
   await t.test('13. existing (GOOGLE, sub) always resolves to the bound BAREA user', async () => {
@@ -823,7 +852,14 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   // ============================================================
 
   await t.test('SEAM-14: The production handleGoogleCallback() path cannot accept an injected ID token override', async () => {
-    // Calling handleGoogleCallback with any arbitrary caller input cannot override token exchange
+    // A service without a tokenExchangeHandler performs the real token exchange and will reject invalid codes
+    const prodStyleService = new AuthService(authRepo, {
+      googleClientId: CLIENT_ID,
+      googleClientSecret: CLIENT_SECRET,
+      googleRedirectUri: REDIRECT_URI,
+      jwksResolver: localJwksResolver
+    });
+
     const callArgs = {
       code: 'test-code',
       expectedState: 'test-state',
@@ -835,7 +871,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
 
     // The service must perform the token exchange and not trust the injected property
     await assert.rejects(
-      async () => (authService.handleGoogleCallback as any)(callArgs),
+      async () => (prodStyleService.handleGoogleCallback as any)(callArgs),
       /Google token exchange failed/i
     );
   });
@@ -959,13 +995,12 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('30. fresh authentication creates a fresh session', async () => {
-    const hash = await hashPassword('Pass123456');
-    authRepo.createUser({ email: 'fresh@church.org', passwordHash: hash, displayName: 'Fresh' });
+    const user = authRepo.createUser({ email: 'fresh@church.org', displayName: 'Fresh' });
 
-    const login1 = await authService.loginWithPassword({ email: 'fresh@church.org', password: 'Pass123456' });
-    const login2 = await authService.loginWithPassword({ email: 'fresh@church.org', password: 'Pass123456' });
+    const session1 = authRepo.createSession(user.id);
+    const session2 = authRepo.createSession(user.id);
 
-    assert.notEqual(login1.rawToken, login2.rawToken, 'Subsequent logins must issue distinct session tokens');
+    assert.notEqual(session1.rawToken, session2.rawToken, 'Subsequent logins must issue distinct session tokens');
   });
 
   await t.test('31. authenticated identity cannot be replaced through client input', async () => {
@@ -1010,100 +1045,144 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   // ============================================================
-  // PASSWORD TESTS (32 - 36)
+  // UNIFIED AUTHENTICATED HOME & CAPABILITY TESTS (32 - 36)
   // ============================================================
 
-  await t.test('32. correct password succeeds', async () => {
-    const hash = await hashPassword('CorrectPassword1!');
-    authRepo.createUser({ email: 'correct@church.org', passwordHash: hash, displayName: 'Correct' });
-
-    const result = await authService.loginWithPassword({ email: 'correct@church.org', password: 'CorrectPassword1!' });
-    assert.ok(result.rawToken.startsWith('bst_'));
-  });
-
-  await t.test('33. wrong password fails generically', async () => {
-    const hash = await hashPassword('CorrectPassword1!');
-    authRepo.createUser({ email: 'wrong@church.org', passwordHash: hash, displayName: 'Wrong' });
-
-    await assert.rejects(
-      async () => authService.loginWithPassword({ email: 'wrong@church.org', password: 'WrongPassword' }),
-      InvalidCredentialsError
-    );
-  });
-
-  await t.test('34. nonexistent account fails generically', async () => {
-    await assert.rejects(
-      async () => authService.loginWithPassword({ email: 'nonexistent@church.org', password: 'AnyPassword' }),
-      InvalidCredentialsError
-    );
-  });
-
-  await t.test('35. password hash is not exposed on domain User shape', async () => {
-    const hash = await hashPassword('SecretPass123');
-    const user = authRepo.createUser({ email: 'secrethash@church.org', passwordHash: hash, displayName: 'Secret' });
-    assert.equal('passwordHash' in user, false, 'User domain shape must not contain passwordHash');
-
-    const userById = authRepo.findUserById(user.id);
-    assert.ok(userById !== null);
-    assert.equal('passwordHash' in userById!, false, 'findUserById must not expose passwordHash');
-
-    const userByEmail = authRepo.findUserByEmail('secrethash@church.org');
-    assert.ok(userByEmail !== null);
-    assert.equal('passwordHash' in userByEmail!, false, 'findUserByEmail must not expose passwordHash');
-
-    const { rawToken } = await authService.loginWithPassword({ email: 'secrethash@church.org', password: 'SecretPass123' });
-    const session = authService.resolveSession(rawToken);
-    assert.equal(session?.user.displayName, 'Secret');
-    assert.equal('passwordHash' in (session?.user as any), false, 'Session user must not expose passwordHash');
-  });
-
-  await t.test('36. repeated password failures are rate limited with consecutive failure lockout window', async () => {
-    let currentTime = 1000000;
-    const stepRateLimiter = new InMemoryRateLimiter(() => currentTime, {
-      maxFailedLogins: 5,
-      loginLockoutSeconds: 60
+  await t.test('32. authenticated ordinary individual user resolves on unified home with teacher capability locked', async () => {
+    const ordinaryUser = authRepo.createUser({ email: 'ordinary.member@church.org', displayName: 'Ordinary Member' });
+    const { rawToken } = authRepo.createSession(ordinaryUser.id, {
+      authProvider: 'GOOGLE',
+      providerSub: 'google-sub-ordinary-1'
     });
-    const stepAuthService = new AuthService(authRepo, {
-      rateLimiter: stepRateLimiter
+    setSessionTokenForTesting(rawToken);
+
+    const homeContext = await getUnifiedUserContext();
+    assert.ok(homeContext !== null, 'Unified user context must resolve');
+    assert.equal(homeContext?.userId, ordinaryUser.id);
+    assert.equal(homeContext?.displayName, 'Ordinary Member');
+    assert.equal(homeContext?.email, 'ordinary.member@church.org');
+    assert.equal(homeContext?.isTeacherAuthorized, false, 'Teacher capability must be locked (false) for ordinary user');
+    assert.equal(homeContext?.organizationId, undefined);
+  });
+
+  await t.test('33. authenticated teacher/admin user resolves on unified home with teacher capability unlocked', async () => {
+    const teacherUser = authRepo.createUser({ email: 'authorized.teacher@church.org', displayName: 'Authorized Teacher' });
+    authRepo.addOrganizationMembership('church-berea-org', teacherUser.id, 'teacher');
+    const { rawToken } = authRepo.createSession(teacherUser.id, {
+      authProvider: 'GOOGLE',
+      providerSub: 'google-sub-teacher-1'
     });
+    setSessionTokenForTesting(rawToken);
 
-    const hash = await hashPassword('TargetPassword123');
-    authRepo.createUser({ email: 'ratelimit@church.org', passwordHash: hash, displayName: 'RateLimited' });
+    const homeContext = await getUnifiedUserContext();
+    assert.ok(homeContext !== null, 'Unified user context must resolve');
+    assert.equal(homeContext?.userId, teacherUser.id);
+    assert.equal(homeContext?.isTeacherAuthorized, true, 'Teacher capability must be unlocked (true) for teacher/admin');
+    assert.equal(homeContext?.organizationId, 'church-berea-org');
+    assert.equal(homeContext?.role, 'teacher');
+  });
 
-    // 5 failures at T=1,000,000
-    for (let i = 0; i < 5; i++) {
-      await assert.rejects(
-        async () => stepAuthService.loginWithPassword({ email: 'ratelimit@church.org', password: 'BadPassword' }),
-        InvalidCredentialsError
-      );
-    }
+  await t.test('34. unauthenticated visitor returns null on unified home and requires login', async () => {
+    setSessionTokenForTesting(null);
+    const context = await getUnifiedUserContext();
+    assert.equal(context, null, 'Unauthenticated visitor must resolve to null when session token is absent');
+  });
 
-    // 6th attempt is throttled
+  await t.test('35. ordinary authenticated user cannot reach /teacher/* even with valid session', async () => {
+    const ordinaryUser = authRepo.createUser({ email: 'ordinary2@church.org', displayName: 'Ordinary Two' });
+    const { rawToken } = authRepo.createSession(ordinaryUser.id, {
+      authProvider: 'GOOGLE',
+      providerSub: 'google-sub-ord-2'
+    });
+    setSessionTokenForTesting(rawToken);
+
+    // Fail closed against teacher workspace
     await assert.rejects(
-      async () => stepAuthService.loginWithPassword({ email: 'ratelimit@church.org', password: 'BadPassword' }),
-      RateLimitExceededError
+      async () => getAuthorizedTeacherContext(),
+      /not authorized as a teacher or admin/i
     );
+  });
 
-    // Advance time by 30 seconds (still within initial 60s lockout)
-    currentTime += 30000;
-    // Another failed attempt extends lockout by 60s from current time
-    stepRateLimiter.recordFailedLogin('ratelimit@church.org');
+  await t.test('36. user gaining teacher membership later unlocks Create & Host capability on same account without separate identity', async () => {
+    const flexibleUser = authRepo.createUser({ email: 'flexible@church.org', displayName: 'Flexible User' });
+    const { rawToken } = authRepo.createSession(flexibleUser.id, {
+      authProvider: 'GOOGLE',
+      providerSub: 'google-sub-flex-1'
+    });
+    setSessionTokenForTesting(rawToken);
 
-    // Advance time by 40 seconds (total 70 seconds from start, but only 40 seconds since last failure)
-    currentTime += 40000;
-    // Still throttled because consecutive failure extended the window
-    await assert.rejects(
-      async () => stepAuthService.loginWithPassword({ email: 'ratelimit@church.org', password: 'BadPassword' }),
-      RateLimitExceededError
-    );
+    // Initial state: ordinary user
+    const initialHome = await getUnifiedUserContext();
+    assert.equal(initialHome?.isTeacherAuthorized, false);
 
-    // Advance time past the extended window (65 seconds later)
-    currentTime += 65000;
-    // Now permitted again to evaluate credentials
-    await assert.rejects(
-      async () => stepAuthService.loginWithPassword({ email: 'ratelimit@church.org', password: 'BadPassword' }),
-      InvalidCredentialsError
-    );
+    // Granted teacher membership later
+    authRepo.addOrganizationMembership('church-berea-org', flexibleUser.id, 'teacher');
+
+    // Subsequent resolution reflects unlocked capability
+    const updatedHome = await getUnifiedUserContext();
+    assert.equal(updatedHome?.isTeacherAuthorized, true);
+    assert.equal(updatedHome?.organizationId, 'church-berea-org');
+  });
+
+  await t.test('36b. navigation state: authenticated users see Individual, Create & Host, and Log out WITHOUT How it works, Log in, or Explore BAREA; public sees How it works, Log in, and Explore BAREA', async () => {
+    const { SiteNav } = await import('../src/app/site-nav.js');
+
+    // 1. Authenticated session:
+    const authUser = authRepo.createUser({ email: 'nav.user@church.org', displayName: 'Nav User' });
+    const { rawToken } = authRepo.createSession(authUser.id);
+    setSessionTokenForTesting(rawToken);
+
+    const authedNav = await SiteNav();
+    assert.ok(authedNav, 'SiteNav must return JSX');
+    const authedChildren = JSON.stringify(authedNav);
+    assert.ok(authedChildren.includes('Individual'), 'Authenticated nav must contain Individual');
+    assert.ok(authedChildren.includes('Create &amp; Host') || authedChildren.includes('Create & Host'), 'Authenticated nav must contain Create & Host');
+    assert.ok(authedChildren.includes('Log out'), 'Authenticated nav must contain Log out');
+    assert.ok(!authedChildren.includes('/#how-it-works'), 'Authenticated nav must NOT contain /#how-it-works or How it works');
+    assert.ok(!authedChildren.includes('How it works'), 'Authenticated nav must NOT contain How it works');
+    assert.ok(!authedChildren.includes('/login'), 'Authenticated nav must NOT contain /login');
+    assert.ok(!authedChildren.includes('Explore BAREA'), 'Authenticated nav must NOT contain Explore BAREA');
+
+    // 2. Unauthenticated session:
+    setSessionTokenForTesting(null);
+    const publicNav = await SiteNav();
+    const publicChildren = JSON.stringify(publicNav);
+    assert.ok(publicChildren.includes('/login'), 'Public nav must contain /login');
+    assert.ok(publicChildren.includes('Explore BAREA'), 'Public nav must contain Explore BAREA');
+    assert.ok(publicChildren.includes('/#how-it-works'), 'Public nav must contain /#how-it-works');
+    assert.ok(publicChildren.includes('How it works'), 'Public nav must contain How it works');
+    assert.ok(!publicChildren.includes('Individual'), 'Public nav must NOT contain Individual');
+    assert.ok(!publicChildren.includes('Log out'), 'Public nav must NOT contain Log out');
+  });
+
+  await t.test('36c. post-logout verification: invalidating session guarantees getUnifiedUserContext resolves to null and SiteNav renders public navigation', async () => {
+    const { SiteNav } = await import('../src/app/site-nav.js');
+
+    const logoutUser = authRepo.createUser({ email: 'postlogout@church.org', displayName: 'Post Logout User' });
+    const { rawToken } = authRepo.createSession(logoutUser.id);
+    setSessionTokenForTesting(rawToken);
+
+    // Before logout: authenticated
+    const preLogoutContext = await getUnifiedUserContext();
+    assert.ok(preLogoutContext !== null);
+    assert.equal(preLogoutContext?.userId, logoutUser.id);
+
+    // Perform authoritative server logout
+    authService.logout(rawToken);
+    setSessionTokenForTesting(null);
+
+    // After logout: must resolve to null
+    const postLogoutContext = await getUnifiedUserContext();
+    assert.equal(postLogoutContext, null, 'Context after logout must be null');
+
+    // SiteNav must render public navigation
+    const postLogoutNav = await SiteNav();
+    const navOutput = JSON.stringify(postLogoutNav);
+    assert.ok(navOutput.includes('/login'), 'Must render public Log in after logout');
+    assert.ok(navOutput.includes('Explore BAREA'), 'Must render public Explore BAREA after logout');
+    assert.ok(navOutput.includes('How it works'), 'Must render public How it works after logout');
+    assert.ok(!navOutput.includes('Individual'), 'Must NOT render Individual after logout');
+    assert.ok(!navOutput.includes('Log out'), 'Must NOT render Log out after logout');
   });
 
   // ============================================================
@@ -1111,41 +1190,42 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   // ============================================================
 
   await t.test('37. absolute external URL rejected', () => {
-    assert.equal(sanitizeReturnTo('https://evil.example.com/steal-session'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('http://evil.example.com'), '/teacher/quizzes');
+    assert.equal(sanitizeReturnTo('https://evil.example.com/steal-session'), '/home');
+    assert.equal(sanitizeReturnTo('http://evil.example.com'), '/home');
   });
 
   await t.test('38. protocol-relative URL rejected', () => {
-    assert.equal(sanitizeReturnTo('//evil.example.com/path'), '/teacher/quizzes');
+    assert.equal(sanitizeReturnTo('//evil.example.com/path'), '/home');
   });
 
   await t.test('39. encoded protocol-relative URL rejected', () => {
-    assert.equal(sanitizeReturnTo('/%2fevil.example.com'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('%2f%2fevil.example.com'), '/teacher/quizzes');
+    assert.equal(sanitizeReturnTo('/%2fevil.example.com'), '/home');
+    assert.equal(sanitizeReturnTo('%2f%2fevil.example.com'), '/home');
   });
 
   await t.test('40. backslash URL rejected', () => {
-    assert.equal(sanitizeReturnTo('/\\evil.example.com'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('\\\\evil.example.com'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('/teacher/quizzes\\evil'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('/teacher%5cevil'), '/teacher/quizzes');
+    assert.equal(sanitizeReturnTo('/\\evil.example.com'), '/home');
+    assert.equal(sanitizeReturnTo('\\\\evil.example.com'), '/home');
+    assert.equal(sanitizeReturnTo('/teacher/quizzes\\evil'), '/home');
+    assert.equal(sanitizeReturnTo('/teacher%5cevil'), '/home');
   });
 
   await t.test('41. CRLF injection rejected', () => {
-    assert.equal(sanitizeReturnTo('/teacher/quizzes\r\nSet-Cookie: evil=1'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('/teacher/quizzes\nLocation: http://evil.com'), '/teacher/quizzes');
+    assert.equal(sanitizeReturnTo('/teacher/quizzes\r\nSet-Cookie: evil=1'), '/home');
+    assert.equal(sanitizeReturnTo('/teacher/quizzes\nLocation: http://evil.com'), '/home');
   });
 
   await t.test('42. javascript/data/vbscript rejected', () => {
-    assert.equal(sanitizeReturnTo('javascript:alert(1)'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('data:text/html;base64,PHNjcmlwdD4='), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('vbscript:msgbox(1)'), '/teacher/quizzes');
+    assert.equal(sanitizeReturnTo('javascript:alert(1)'), '/home');
+    assert.equal(sanitizeReturnTo('data:text/html;base64,PHNjcmlwdD4='), '/home');
+    assert.equal(sanitizeReturnTo('vbscript:msgbox(1)'), '/home');
   });
 
   await t.test('43. valid internal path preserved', () => {
     assert.equal(sanitizeReturnTo('/teacher/quizzes'), '/teacher/quizzes');
     assert.equal(sanitizeReturnTo('/teacher/review?id=q_123'), '/teacher/review?id=q_123');
     assert.equal(sanitizeReturnTo('/teacher/quizzes#drafts'), '/teacher/quizzes#drafts');
+    assert.equal(sanitizeReturnTo('/home'), '/home');
   });
 
   // ============================================================
@@ -1390,11 +1470,12 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
 
   await t.test('LOGOUT 10. Redirect sanitization strictly prevents open redirects and enforces internal BAREA path', () => {
     // Verify sanitizeReturnTo ensures all redirects after logout or auth are safe internal paths
-    assert.equal(sanitizeReturnTo('http://attacker.com'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('https://evil.org/phish'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('//attacker.com'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('javascript:alert(1)'), '/teacher/quizzes');
+    assert.equal(sanitizeReturnTo('http://attacker.com'), '/home');
+    assert.equal(sanitizeReturnTo('https://evil.org/phish'), '/home');
+    assert.equal(sanitizeReturnTo('//attacker.com'), '/home');
+    assert.equal(sanitizeReturnTo('javascript:alert(1)'), '/home');
     assert.equal(sanitizeReturnTo('/teacher/quizzes'), '/teacher/quizzes');
+    assert.equal(sanitizeReturnTo('/home'), '/home');
     assert.equal(sanitizeReturnTo('/'), '/');
   });
 
@@ -1420,7 +1501,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
   });
 
-  await t.test('LOGOUT 12. Server Action discovery manifest contains logoutAction for /teacher/quizzes', async () => {
+  await t.test('LOGOUT 12. Server Action discovery manifest contains logoutAction for /teacher/quizzes and /home', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const manifestPath = path.join(process.cwd(), '.next', 'server', 'server-reference-manifest.json');
@@ -1444,5 +1525,369 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       logoutEntry.workers && logoutEntry.workers['app/teacher/quizzes/page'],
       'logoutAction must be registered as a worker action for app/teacher/quizzes/page'
     );
+    assert.ok(
+      logoutEntry.workers && logoutEntry.workers['app/home/page'],
+      'logoutAction must be registered as a worker action for app/home/page'
+    );
+  });
+
+  // ============================================================
+  // OAUTH HARDENING TEST SUITE (Section 18 Authorization Tests)
+  // ============================================================
+
+  await t.test('OAUTH-TX-01: Normal valid OAuth transaction succeeds and issues fresh session', async () => {
+    const res = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/teacher/quizzes');
+    assert.ok(res.transactionId);
+    assert.ok(res.state.startsWith(res.transactionId + '.'));
+
+    const nonce = res.nonce;
+    const idToken = await createSignedIdToken({
+      sub: 'google-sub-tx-01',
+      email: 'user.tx01@church.org',
+      email_verified: true,
+      name: 'TX01 User',
+      nonce
+    });
+
+    const callbackResult = await authService.handleGoogleCallback({
+      code: 'mock_id_token:' + idToken,
+      receivedState: res.state,
+      redirectUri: REDIRECT_URI
+    });
+
+    assert.ok(callbackResult.rawToken);
+    assert.equal(callbackResult.returnTo, '/teacher/quizzes');
+    assert.equal(callbackResult.user.email, 'user.tx01@church.org');
+
+    // Verify transaction is marked consumed in database
+    const txAfter = authRepo.findOAuthTransaction(res.transactionId);
+    assert.ok(txAfter);
+    assert.ok(txAfter.consumedAt !== null, 'Transaction must be marked consumed');
+  });
+
+  await t.test('OAUTH-TX-02: Consumed callback replay fails closed with OAUTH_TRANSACTION_REPLAYED', async () => {
+    const res = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const nonce = res.nonce;
+    const idToken = await createSignedIdToken({
+      sub: 'google-sub-tx-02',
+      email: 'user.tx02@church.org',
+      email_verified: true,
+      nonce
+    });
+
+    // First completion succeeds
+    const firstResult = await authService.handleGoogleCallback({
+      code: 'mock_id_token:' + idToken,
+      receivedState: res.state,
+      redirectUri: REDIRECT_URI
+    });
+    assert.ok(firstResult.rawToken);
+
+    // Immediate replay of same state/transaction fails closed
+    await assert.rejects(
+      async () =>
+        authService.handleGoogleCallback({
+          code: 'mock_id_token:' + idToken,
+          receivedState: res.state,
+          redirectUri: REDIRECT_URI
+        }),
+      OAuthTransactionReplayedError
+    );
+  });
+
+  await t.test('OAUTH-TX-03: Expired transaction fails closed with OAUTH_TRANSACTION_EXPIRED', async () => {
+    // Insert pre-expired transaction in auth repository
+    const expiredTxId = 'otx_expired_test_1';
+    const stateSecret = 'secret-expired-1';
+    const state = `${expiredTxId}.${stateSecret}`;
+    const stateHash = crypto.createHash('sha256').update(stateSecret).digest('hex');
+    const nonce = 'nonce-expired-1';
+    const nonceHash = crypto.createHash('sha256').update(nonce).digest('hex');
+
+    const db = authRepo.getDatabase();
+    db.prepare(`
+      INSERT INTO oauth_transactions (id, state_hash, code_verifier, nonce_hash, return_to, created_at, expires_at, consumed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+    `).run(
+      expiredTxId,
+      stateHash,
+      'verifier-expired',
+      nonceHash,
+      '/home',
+      new Date(Date.now() - 3600 * 1000).toISOString(),
+      new Date(Date.now() - 1000).toISOString() // Expired 1 second ago
+    );
+
+    const idToken = await createSignedIdToken({
+      sub: 'google-sub-expired',
+      email: 'expired@church.org',
+      email_verified: true,
+      nonce
+    });
+
+    await assert.rejects(
+      async () =>
+        authService.handleGoogleCallback({
+          code: 'mock_id_token:' + idToken,
+          receivedState: state,
+          redirectUri: REDIRECT_URI
+        }),
+      OAuthTransactionExpiredError
+    );
+  });
+
+  await t.test('OAUTH-TX-04: Tampered state secret fails closed with OAUTH_STATE_INVALID', async () => {
+    const res = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const tamperedState = `${res.transactionId}.tampered_state_secret`;
+
+    await assert.rejects(
+      async () =>
+        authService.handleGoogleCallback({
+          code: 'code-tampered',
+          receivedState: tamperedState,
+          redirectUri: REDIRECT_URI
+        }),
+      OAuthStateError
+    );
+  });
+
+  await t.test('OAUTH-TAB-01 & OAUTH-TAB-02: Two simultaneous transactions remain independent; completing B does not invalidate A', async () => {
+    // Tab A begins login
+    const txA = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/teacher/quizzes');
+    // Tab B begins login
+    const txB = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+
+    assert.notEqual(txA.transactionId, txB.transactionId, 'Transactions must have distinct identifiers');
+    assert.notEqual(txA.state, txB.state, 'State parameters must be distinct');
+
+    const idTokenB = await createSignedIdToken({
+      sub: 'sub-tab-user-b',
+      email: 'user.tab.b@church.org',
+      email_verified: true,
+      name: 'User B',
+      nonce: txB.nonce
+    });
+
+    // Complete Tab B first
+    const resultB = await authService.handleGoogleCallback({
+      code: 'mock_id_token:' + idTokenB,
+      receivedState: txB.state,
+      redirectUri: REDIRECT_URI
+    });
+    assert.ok(resultB.rawToken);
+    assert.equal(resultB.returnTo, '/home');
+
+    // Tab A remains unconsumed and valid
+    const txAStatus = authRepo.findOAuthTransaction(txA.transactionId);
+    assert.ok(txAStatus);
+    assert.equal(txAStatus.consumedAt, null, 'Transaction A must remain unconsumed after Tab B finishes');
+
+    // Complete Tab A second
+    const idTokenA = await createSignedIdToken({
+      sub: 'sub-tab-user-a',
+      email: 'user.tab.a@church.org',
+      email_verified: true,
+      name: 'User A',
+      nonce: txA.nonce
+    });
+
+    const resultA = await authService.handleGoogleCallback({
+      code: 'mock_id_token:' + idTokenA,
+      receivedState: txA.state,
+      redirectUri: REDIRECT_URI
+    });
+    assert.ok(resultA.rawToken);
+    assert.equal(resultA.returnTo, '/teacher/quizzes');
+
+    // Both sessions exist and are distinct
+    assert.notEqual(resultA.rawToken, resultB.rawToken);
+  });
+
+  await t.test('OAUTH-TX-CONCURRENCY-01: Two concurrent callbacks for the same transaction produce exactly one success and one replay rejection', async () => {
+    const res = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const idToken = await createSignedIdToken({
+      sub: 'sub-concurrent-tx',
+      email: 'concurrent.tx@church.org',
+      email_verified: true,
+      nonce: res.nonce
+    });
+
+    const p1 = authService.handleGoogleCallback({
+      code: 'mock_id_token:' + idToken,
+      receivedState: res.state,
+      redirectUri: REDIRECT_URI
+    });
+    const p2 = authService.handleGoogleCallback({
+      code: 'mock_id_token:' + idToken,
+      receivedState: res.state,
+      redirectUri: REDIRECT_URI
+    });
+
+    const results = await Promise.allSettled([p1, p2]);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled') as PromiseFulfilledResult<any>[];
+    const rejected = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+
+    assert.equal(fulfilled.length, 1, 'Exactly one callback must succeed');
+    assert.equal(rejected.length, 1, 'Exactly one callback must be rejected');
+    assert.equal(rejected[0].reason?.name, 'OAuthTransactionReplayedError');
+
+    // Verify only 1 user and 1 session were created
+    const foundUser = authRepo.findUserByEmail('concurrent.tx@church.org');
+    assert.ok(foundUser);
+    const db = authRepo.getDatabase();
+    const sessions = db.prepare('SELECT id FROM user_sessions WHERE user_id = ?').all(foundUser.id);
+    assert.equal(sessions.length, 1, 'Exactly one session row must exist');
+  });
+
+  await t.test('OAUTH-ID-01: Same email + different Google sub fails closed with AccountCollisionDetectedError', async () => {
+    const existing = authRepo.createUser({
+      email: 'victim.pastor@church.org',
+      emailVerified: true,
+      displayName: 'Pastor'
+    });
+    authRepo.createFederatedIdentity({
+      userId: existing.id,
+      providerType: 'GOOGLE',
+      providerSub: 'legitimate-pastor-sub'
+    });
+
+    const tx = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const imposterToken = await createSignedIdToken({
+      sub: 'imposter-sub-999',
+      email: 'victim.pastor@church.org',
+      email_verified: true,
+      nonce: tx.nonce
+    });
+
+    await assert.rejects(
+      async () =>
+        authService.handleGoogleCallback({
+          code: 'mock_id_token:' + imposterToken,
+          receivedState: tx.state,
+          redirectUri: REDIRECT_URI
+        }),
+      AccountCollisionDetectedError
+    );
+
+    // Verify original account was not hijacked
+    const victim = authRepo.findUserById(existing.id);
+    assert.equal(victim?.id, existing.id);
+    const imposterIdentity = authRepo.findFederatedIdentity('GOOGLE', 'imposter-sub-999');
+    assert.equal(imposterIdentity, null, 'Imposter sub must not be linked');
+  });
+
+  await t.test('OAUTH-ID-02: New Google sub + new email creates exactly one BAREA user and federated identity', async () => {
+    const tx = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const idToken = await createSignedIdToken({
+      sub: 'brand-new-sub-100',
+      email: 'newbie@church.org',
+      email_verified: true,
+      name: 'Newbie Member',
+      nonce: tx.nonce
+    });
+
+    const res = await authService.handleGoogleCallback({
+      code: 'mock_id_token:' + idToken,
+      receivedState: tx.state,
+      redirectUri: REDIRECT_URI
+    });
+
+    assert.equal(res.user.email, 'newbie@church.org');
+    assert.equal(res.user.displayName, 'Newbie Member');
+
+    const fed = authRepo.findFederatedIdentity('GOOGLE', 'brand-new-sub-100');
+    assert.ok(fed);
+    assert.equal(fed.userId, res.user.id);
+  });
+
+  await t.test('OAUTH-FIX-01: Pre-login session cannot become authenticated or bound to post-login identity', async () => {
+    // Generate an arbitrary pre-login token
+    const preLoginToken = 'bst_' + crypto.randomBytes(32).toString('base64url');
+
+    const tx = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const idToken = await createSignedIdToken({
+      sub: 'sub-fixation-test',
+      email: 'fixation@church.org',
+      email_verified: true,
+      nonce: tx.nonce
+    });
+
+    const res = await authService.handleGoogleCallback({
+      code: 'mock_id_token:' + idToken,
+      receivedState: tx.state,
+      redirectUri: REDIRECT_URI
+    });
+
+    // The authenticated session token is brand new and independent of preLoginToken
+    assert.notEqual(res.rawToken, preLoginToken);
+    assert.equal(authRepo.findSessionByToken(preLoginToken), null, 'Pre-login token must not resolve to any session');
+    assert.ok(authRepo.findSessionByToken(res.rawToken) !== null, 'New session must resolve');
+  });
+
+  await t.test('OAUTH-NET-01: Google token endpoint timeout aborts cleanly with 8-second error message', async () => {
+    const customService = new AuthService(authRepo, {
+      googleClientId: CLIENT_ID,
+      googleClientSecret: CLIENT_SECRET,
+      googleRedirectUri: REDIRECT_URI,
+      jwksResolver: localJwksResolver,
+      tokenExchangeHandler: async () => {
+        const err = new Error('The operation was aborted due to timeout');
+        err.name = 'TimeoutError';
+        throw err;
+      }
+    });
+
+    const tx = customService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+
+    await assert.rejects(
+      async () =>
+        customService.handleGoogleCallback({
+          code: 'code-timeout',
+          receivedState: tx.state,
+          redirectUri: REDIRECT_URI
+        }),
+      (err: any) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /timeout/i);
+        return true;
+      }
+    );
+  });
+
+  await t.test('OAUTH-REDIRECT-01: Malicious returnTo values are rejected/safely redirected to /home', () => {
+    assert.equal(sanitizeReturnTo('http://evil.com'), '/home');
+    assert.equal(sanitizeReturnTo('//evil.com'), '/home');
+    assert.equal(sanitizeReturnTo('/\\evil.com'), '/home');
+    assert.equal(sanitizeReturnTo('/%2fevil.com'), '/home');
+    assert.equal(sanitizeReturnTo('javascript:alert(1)'), '/home');
+    assert.equal(sanitizeReturnTo('/teacher/quizzes/123?edit=true'), '/teacher/quizzes/123?edit=true');
+  });
+
+  await t.test('OAUTH-HTTPS-01: resolveOAuthRedirectUri respects explicit HTTPS request origin in development/test', () => {
+    const originalEnv = process.env.GOOGLE_REDIRECT_URI;
+    delete process.env.GOOGLE_REDIRECT_URI;
+    try {
+      const uri = resolveOAuthRedirectUri('https://localhost:3000');
+      assert.equal(uri, 'https://localhost:3000/api/auth/callback/google');
+    } finally {
+      if (originalEnv !== undefined) {
+        process.env.GOOGLE_REDIRECT_URI = originalEnv;
+      }
+    }
+  });
+
+  await t.test('OAUTH-HTTPS-02: resolveOAuthRedirectUri prioritizes configured GOOGLE_REDIRECT_URI', () => {
+    const originalEnv = process.env.GOOGLE_REDIRECT_URI;
+    process.env.GOOGLE_REDIRECT_URI = 'https://localhost:3000/api/auth/callback/google';
+    try {
+      const uri = resolveOAuthRedirectUri('http://localhost:3000');
+      assert.equal(uri, 'https://localhost:3000/api/auth/callback/google');
+    } finally {
+      if (originalEnv !== undefined) {
+        process.env.GOOGLE_REDIRECT_URI = originalEnv;
+      } else {
+        delete process.env.GOOGLE_REDIRECT_URI;
+      }
+    }
   });
 });
