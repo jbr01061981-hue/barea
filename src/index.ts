@@ -110,6 +110,7 @@ export {
   SessionLockedError,
   SessionFullError,
   SessionAccessDeniedError,
+  HostCannotParticipateInOwnSessionError,
   CrossTenantSnapshotError,
   InvalidScheduledTimeError,
   InvalidRoomCodeError,

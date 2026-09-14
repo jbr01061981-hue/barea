@@ -18,8 +18,6 @@ export interface AuthRepository {
   }): User;
   findUserById(id: string): User | null;
   findUserByEmail(email: string): User | null;
-  findUserCredentialsByEmail(email: string): { user: User; passwordHash: string | null } | null;
-  updateUserPassword(id: string, passwordHash: string): void;
 
   // Federated Identity
   findFederatedIdentity(providerType: string, providerSub: string): FederatedIdentity | null;
@@ -190,34 +188,6 @@ export class SqliteAuthRepository implements AuthRepository {
       displayName: row.display_name,
       createdAt: row.created_at
     };
-  }
-
-  findUserCredentialsByEmail(email: string): { user: User; passwordHash: string | null } | null {
-    if (!email) return null;
-    const normalizedEmail = email.trim().toLowerCase();
-    const row = this.db.prepare(`
-      SELECT id, email, email_verified, password_hash, display_name, created_at
-      FROM users
-      WHERE email = ?
-    `).get(normalizedEmail) as any;
-
-    if (!row) return null;
-    return {
-      user: {
-        id: row.id,
-        email: row.email,
-        emailVerified: Boolean(row.email_verified),
-        displayName: row.display_name,
-        createdAt: row.created_at
-      },
-      passwordHash: row.password_hash ?? null
-    };
-  }
-
-  updateUserPassword(id: string, passwordHash: string): void {
-    this.db.prepare(`
-      UPDATE users SET password_hash = ? WHERE id = ?
-    `).run(passwordHash, id);
   }
 
   findFederatedIdentity(providerType: string, providerSub: string): FederatedIdentity | null {

@@ -6,11 +6,6 @@ export interface User {
   readonly createdAt: string;
 }
 
-export interface UserCredentials {
-  readonly userId: string;
-  readonly passwordHash: string | null;
-}
-
 export interface FederatedIdentity {
   readonly id: string;
   readonly userId: string;

@@ -7,12 +7,12 @@ import * as crypto from 'crypto';
 import { SqliteAuthRepository, type AuthRepository } from '../src/persistence/sqlite-auth-repository';
 import { AuthService } from '../src/service/auth-service';
 import { InMemoryRateLimiter } from '../src/service/rate-limiter';
-import { hashPassword, verifyPassword } from '../src/service/password-hasher';
 import {
   setAuthRepository,
   setAuthService,
   getAuthorizedTeacherContext,
   getAuthenticatedUserContext,
+  getUnifiedUserContext,
   setAuthorizedTeacherContext,
   setAuthenticatedUserContext,
   setSessionTokenForTesting
@@ -21,7 +21,6 @@ import { sanitizeReturnTo, resolveOAuthRedirectUri } from '../src/app/login/url-
 import { logoutAction } from '../src/app/login/actions';
 
 import {
-  InvalidCredentialsError,
   OAuthStateError,
   OAuthCallbackError,
   RateLimitExceededError
@@ -347,7 +346,6 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     const existing = authRepo.createUser({
       email: 'target.victim@church.org',
       emailVerified: true,
-      passwordHash: await hashPassword('VictimPass123'),
       displayName: 'Victim User'
     });
 
@@ -375,7 +373,6 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     const existing = authRepo.createUser({
       email: 'pastor.john@church.org',
       emailVerified: true,
-      passwordHash: await hashPassword('PastorPass123!'),
       displayName: 'Pastor John'
     });
 
@@ -959,13 +956,12 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('30. fresh authentication creates a fresh session', async () => {
-    const hash = await hashPassword('Pass123456');
-    authRepo.createUser({ email: 'fresh@church.org', passwordHash: hash, displayName: 'Fresh' });
+    const user = authRepo.createUser({ email: 'fresh@church.org', displayName: 'Fresh' });
 
-    const login1 = await authService.loginWithPassword({ email: 'fresh@church.org', password: 'Pass123456' });
-    const login2 = await authService.loginWithPassword({ email: 'fresh@church.org', password: 'Pass123456' });
+    const session1 = authRepo.createSession(user.id);
+    const session2 = authRepo.createSession(user.id);
 
-    assert.notEqual(login1.rawToken, login2.rawToken, 'Subsequent logins must issue distinct session tokens');
+    assert.notEqual(session1.rawToken, session2.rawToken, 'Subsequent logins must issue distinct session tokens');
   });
 
   await t.test('31. authenticated identity cannot be replaced through client input', async () => {
@@ -1010,100 +1006,144 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   // ============================================================
-  // PASSWORD TESTS (32 - 36)
+  // UNIFIED AUTHENTICATED HOME & CAPABILITY TESTS (32 - 36)
   // ============================================================
 
-  await t.test('32. correct password succeeds', async () => {
-    const hash = await hashPassword('CorrectPassword1!');
-    authRepo.createUser({ email: 'correct@church.org', passwordHash: hash, displayName: 'Correct' });
-
-    const result = await authService.loginWithPassword({ email: 'correct@church.org', password: 'CorrectPassword1!' });
-    assert.ok(result.rawToken.startsWith('bst_'));
-  });
-
-  await t.test('33. wrong password fails generically', async () => {
-    const hash = await hashPassword('CorrectPassword1!');
-    authRepo.createUser({ email: 'wrong@church.org', passwordHash: hash, displayName: 'Wrong' });
-
-    await assert.rejects(
-      async () => authService.loginWithPassword({ email: 'wrong@church.org', password: 'WrongPassword' }),
-      InvalidCredentialsError
-    );
-  });
-
-  await t.test('34. nonexistent account fails generically', async () => {
-    await assert.rejects(
-      async () => authService.loginWithPassword({ email: 'nonexistent@church.org', password: 'AnyPassword' }),
-      InvalidCredentialsError
-    );
-  });
-
-  await t.test('35. password hash is not exposed on domain User shape', async () => {
-    const hash = await hashPassword('SecretPass123');
-    const user = authRepo.createUser({ email: 'secrethash@church.org', passwordHash: hash, displayName: 'Secret' });
-    assert.equal('passwordHash' in user, false, 'User domain shape must not contain passwordHash');
-
-    const userById = authRepo.findUserById(user.id);
-    assert.ok(userById !== null);
-    assert.equal('passwordHash' in userById!, false, 'findUserById must not expose passwordHash');
-
-    const userByEmail = authRepo.findUserByEmail('secrethash@church.org');
-    assert.ok(userByEmail !== null);
-    assert.equal('passwordHash' in userByEmail!, false, 'findUserByEmail must not expose passwordHash');
-
-    const { rawToken } = await authService.loginWithPassword({ email: 'secrethash@church.org', password: 'SecretPass123' });
-    const session = authService.resolveSession(rawToken);
-    assert.equal(session?.user.displayName, 'Secret');
-    assert.equal('passwordHash' in (session?.user as any), false, 'Session user must not expose passwordHash');
-  });
-
-  await t.test('36. repeated password failures are rate limited with consecutive failure lockout window', async () => {
-    let currentTime = 1000000;
-    const stepRateLimiter = new InMemoryRateLimiter(() => currentTime, {
-      maxFailedLogins: 5,
-      loginLockoutSeconds: 60
+  await t.test('32. authenticated ordinary individual user resolves on unified home with teacher capability locked', async () => {
+    const ordinaryUser = authRepo.createUser({ email: 'ordinary.member@church.org', displayName: 'Ordinary Member' });
+    const { rawToken } = authRepo.createSession(ordinaryUser.id, {
+      authProvider: 'GOOGLE',
+      providerSub: 'google-sub-ordinary-1'
     });
-    const stepAuthService = new AuthService(authRepo, {
-      rateLimiter: stepRateLimiter
+    setSessionTokenForTesting(rawToken);
+
+    const homeContext = await getUnifiedUserContext();
+    assert.ok(homeContext !== null, 'Unified user context must resolve');
+    assert.equal(homeContext?.userId, ordinaryUser.id);
+    assert.equal(homeContext?.displayName, 'Ordinary Member');
+    assert.equal(homeContext?.email, 'ordinary.member@church.org');
+    assert.equal(homeContext?.isTeacherAuthorized, false, 'Teacher capability must be locked (false) for ordinary user');
+    assert.equal(homeContext?.organizationId, undefined);
+  });
+
+  await t.test('33. authenticated teacher/admin user resolves on unified home with teacher capability unlocked', async () => {
+    const teacherUser = authRepo.createUser({ email: 'authorized.teacher@church.org', displayName: 'Authorized Teacher' });
+    authRepo.addOrganizationMembership('church-berea-org', teacherUser.id, 'teacher');
+    const { rawToken } = authRepo.createSession(teacherUser.id, {
+      authProvider: 'GOOGLE',
+      providerSub: 'google-sub-teacher-1'
     });
+    setSessionTokenForTesting(rawToken);
 
-    const hash = await hashPassword('TargetPassword123');
-    authRepo.createUser({ email: 'ratelimit@church.org', passwordHash: hash, displayName: 'RateLimited' });
+    const homeContext = await getUnifiedUserContext();
+    assert.ok(homeContext !== null, 'Unified user context must resolve');
+    assert.equal(homeContext?.userId, teacherUser.id);
+    assert.equal(homeContext?.isTeacherAuthorized, true, 'Teacher capability must be unlocked (true) for teacher/admin');
+    assert.equal(homeContext?.organizationId, 'church-berea-org');
+    assert.equal(homeContext?.role, 'teacher');
+  });
 
-    // 5 failures at T=1,000,000
-    for (let i = 0; i < 5; i++) {
-      await assert.rejects(
-        async () => stepAuthService.loginWithPassword({ email: 'ratelimit@church.org', password: 'BadPassword' }),
-        InvalidCredentialsError
-      );
-    }
+  await t.test('34. unauthenticated visitor returns null on unified home and requires login', async () => {
+    setSessionTokenForTesting(null);
+    const context = await getUnifiedUserContext();
+    assert.equal(context, null, 'Unauthenticated visitor must resolve to null when session token is absent');
+  });
 
-    // 6th attempt is throttled
+  await t.test('35. ordinary authenticated user cannot reach /teacher/* even with valid session', async () => {
+    const ordinaryUser = authRepo.createUser({ email: 'ordinary2@church.org', displayName: 'Ordinary Two' });
+    const { rawToken } = authRepo.createSession(ordinaryUser.id, {
+      authProvider: 'GOOGLE',
+      providerSub: 'google-sub-ord-2'
+    });
+    setSessionTokenForTesting(rawToken);
+
+    // Fail closed against teacher workspace
     await assert.rejects(
-      async () => stepAuthService.loginWithPassword({ email: 'ratelimit@church.org', password: 'BadPassword' }),
-      RateLimitExceededError
+      async () => getAuthorizedTeacherContext(),
+      /not authorized as a teacher or admin/i
     );
+  });
 
-    // Advance time by 30 seconds (still within initial 60s lockout)
-    currentTime += 30000;
-    // Another failed attempt extends lockout by 60s from current time
-    stepRateLimiter.recordFailedLogin('ratelimit@church.org');
+  await t.test('36. user gaining teacher membership later unlocks Create & Host capability on same account without separate identity', async () => {
+    const flexibleUser = authRepo.createUser({ email: 'flexible@church.org', displayName: 'Flexible User' });
+    const { rawToken } = authRepo.createSession(flexibleUser.id, {
+      authProvider: 'GOOGLE',
+      providerSub: 'google-sub-flex-1'
+    });
+    setSessionTokenForTesting(rawToken);
 
-    // Advance time by 40 seconds (total 70 seconds from start, but only 40 seconds since last failure)
-    currentTime += 40000;
-    // Still throttled because consecutive failure extended the window
-    await assert.rejects(
-      async () => stepAuthService.loginWithPassword({ email: 'ratelimit@church.org', password: 'BadPassword' }),
-      RateLimitExceededError
-    );
+    // Initial state: ordinary user
+    const initialHome = await getUnifiedUserContext();
+    assert.equal(initialHome?.isTeacherAuthorized, false);
 
-    // Advance time past the extended window (65 seconds later)
-    currentTime += 65000;
-    // Now permitted again to evaluate credentials
-    await assert.rejects(
-      async () => stepAuthService.loginWithPassword({ email: 'ratelimit@church.org', password: 'BadPassword' }),
-      InvalidCredentialsError
-    );
+    // Granted teacher membership later
+    authRepo.addOrganizationMembership('church-berea-org', flexibleUser.id, 'teacher');
+
+    // Subsequent resolution reflects unlocked capability
+    const updatedHome = await getUnifiedUserContext();
+    assert.equal(updatedHome?.isTeacherAuthorized, true);
+    assert.equal(updatedHome?.organizationId, 'church-berea-org');
+  });
+
+  await t.test('36b. navigation state: authenticated users see Individual, Create & Host, and Log out WITHOUT How it works, Log in, or Explore BAREA; public sees How it works, Log in, and Explore BAREA', async () => {
+    const { SiteNav } = await import('../src/app/site-nav.js');
+
+    // 1. Authenticated session:
+    const authUser = authRepo.createUser({ email: 'nav.user@church.org', displayName: 'Nav User' });
+    const { rawToken } = authRepo.createSession(authUser.id);
+    setSessionTokenForTesting(rawToken);
+
+    const authedNav = await SiteNav();
+    assert.ok(authedNav, 'SiteNav must return JSX');
+    const authedChildren = JSON.stringify(authedNav);
+    assert.ok(authedChildren.includes('Individual'), 'Authenticated nav must contain Individual');
+    assert.ok(authedChildren.includes('Create &amp; Host') || authedChildren.includes('Create & Host'), 'Authenticated nav must contain Create & Host');
+    assert.ok(authedChildren.includes('Log out'), 'Authenticated nav must contain Log out');
+    assert.ok(!authedChildren.includes('/#how-it-works'), 'Authenticated nav must NOT contain /#how-it-works or How it works');
+    assert.ok(!authedChildren.includes('How it works'), 'Authenticated nav must NOT contain How it works');
+    assert.ok(!authedChildren.includes('/login'), 'Authenticated nav must NOT contain /login');
+    assert.ok(!authedChildren.includes('Explore BAREA'), 'Authenticated nav must NOT contain Explore BAREA');
+
+    // 2. Unauthenticated session:
+    setSessionTokenForTesting(null);
+    const publicNav = await SiteNav();
+    const publicChildren = JSON.stringify(publicNav);
+    assert.ok(publicChildren.includes('/login'), 'Public nav must contain /login');
+    assert.ok(publicChildren.includes('Explore BAREA'), 'Public nav must contain Explore BAREA');
+    assert.ok(publicChildren.includes('/#how-it-works'), 'Public nav must contain /#how-it-works');
+    assert.ok(publicChildren.includes('How it works'), 'Public nav must contain How it works');
+    assert.ok(!publicChildren.includes('Individual'), 'Public nav must NOT contain Individual');
+    assert.ok(!publicChildren.includes('Log out'), 'Public nav must NOT contain Log out');
+  });
+
+  await t.test('36c. post-logout verification: invalidating session guarantees getUnifiedUserContext resolves to null and SiteNav renders public navigation', async () => {
+    const { SiteNav } = await import('../src/app/site-nav.js');
+
+    const logoutUser = authRepo.createUser({ email: 'postlogout@church.org', displayName: 'Post Logout User' });
+    const { rawToken } = authRepo.createSession(logoutUser.id);
+    setSessionTokenForTesting(rawToken);
+
+    // Before logout: authenticated
+    const preLogoutContext = await getUnifiedUserContext();
+    assert.ok(preLogoutContext !== null);
+    assert.equal(preLogoutContext?.userId, logoutUser.id);
+
+    // Perform authoritative server logout
+    authService.logout(rawToken);
+    setSessionTokenForTesting(null);
+
+    // After logout: must resolve to null
+    const postLogoutContext = await getUnifiedUserContext();
+    assert.equal(postLogoutContext, null, 'Context after logout must be null');
+
+    // SiteNav must render public navigation
+    const postLogoutNav = await SiteNav();
+    const navOutput = JSON.stringify(postLogoutNav);
+    assert.ok(navOutput.includes('/login'), 'Must render public Log in after logout');
+    assert.ok(navOutput.includes('Explore BAREA'), 'Must render public Explore BAREA after logout');
+    assert.ok(navOutput.includes('How it works'), 'Must render public How it works after logout');
+    assert.ok(!navOutput.includes('Individual'), 'Must NOT render Individual after logout');
+    assert.ok(!navOutput.includes('Log out'), 'Must NOT render Log out after logout');
   });
 
   // ============================================================
@@ -1111,41 +1151,42 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   // ============================================================
 
   await t.test('37. absolute external URL rejected', () => {
-    assert.equal(sanitizeReturnTo('https://evil.example.com/steal-session'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('http://evil.example.com'), '/teacher/quizzes');
+    assert.equal(sanitizeReturnTo('https://evil.example.com/steal-session'), '/home');
+    assert.equal(sanitizeReturnTo('http://evil.example.com'), '/home');
   });
 
   await t.test('38. protocol-relative URL rejected', () => {
-    assert.equal(sanitizeReturnTo('//evil.example.com/path'), '/teacher/quizzes');
+    assert.equal(sanitizeReturnTo('//evil.example.com/path'), '/home');
   });
 
   await t.test('39. encoded protocol-relative URL rejected', () => {
-    assert.equal(sanitizeReturnTo('/%2fevil.example.com'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('%2f%2fevil.example.com'), '/teacher/quizzes');
+    assert.equal(sanitizeReturnTo('/%2fevil.example.com'), '/home');
+    assert.equal(sanitizeReturnTo('%2f%2fevil.example.com'), '/home');
   });
 
   await t.test('40. backslash URL rejected', () => {
-    assert.equal(sanitizeReturnTo('/\\evil.example.com'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('\\\\evil.example.com'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('/teacher/quizzes\\evil'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('/teacher%5cevil'), '/teacher/quizzes');
+    assert.equal(sanitizeReturnTo('/\\evil.example.com'), '/home');
+    assert.equal(sanitizeReturnTo('\\\\evil.example.com'), '/home');
+    assert.equal(sanitizeReturnTo('/teacher/quizzes\\evil'), '/home');
+    assert.equal(sanitizeReturnTo('/teacher%5cevil'), '/home');
   });
 
   await t.test('41. CRLF injection rejected', () => {
-    assert.equal(sanitizeReturnTo('/teacher/quizzes\r\nSet-Cookie: evil=1'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('/teacher/quizzes\nLocation: http://evil.com'), '/teacher/quizzes');
+    assert.equal(sanitizeReturnTo('/teacher/quizzes\r\nSet-Cookie: evil=1'), '/home');
+    assert.equal(sanitizeReturnTo('/teacher/quizzes\nLocation: http://evil.com'), '/home');
   });
 
   await t.test('42. javascript/data/vbscript rejected', () => {
-    assert.equal(sanitizeReturnTo('javascript:alert(1)'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('data:text/html;base64,PHNjcmlwdD4='), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('vbscript:msgbox(1)'), '/teacher/quizzes');
+    assert.equal(sanitizeReturnTo('javascript:alert(1)'), '/home');
+    assert.equal(sanitizeReturnTo('data:text/html;base64,PHNjcmlwdD4='), '/home');
+    assert.equal(sanitizeReturnTo('vbscript:msgbox(1)'), '/home');
   });
 
   await t.test('43. valid internal path preserved', () => {
     assert.equal(sanitizeReturnTo('/teacher/quizzes'), '/teacher/quizzes');
     assert.equal(sanitizeReturnTo('/teacher/review?id=q_123'), '/teacher/review?id=q_123');
     assert.equal(sanitizeReturnTo('/teacher/quizzes#drafts'), '/teacher/quizzes#drafts');
+    assert.equal(sanitizeReturnTo('/home'), '/home');
   });
 
   // ============================================================
@@ -1390,11 +1431,12 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
 
   await t.test('LOGOUT 10. Redirect sanitization strictly prevents open redirects and enforces internal BAREA path', () => {
     // Verify sanitizeReturnTo ensures all redirects after logout or auth are safe internal paths
-    assert.equal(sanitizeReturnTo('http://attacker.com'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('https://evil.org/phish'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('//attacker.com'), '/teacher/quizzes');
-    assert.equal(sanitizeReturnTo('javascript:alert(1)'), '/teacher/quizzes');
+    assert.equal(sanitizeReturnTo('http://attacker.com'), '/home');
+    assert.equal(sanitizeReturnTo('https://evil.org/phish'), '/home');
+    assert.equal(sanitizeReturnTo('//attacker.com'), '/home');
+    assert.equal(sanitizeReturnTo('javascript:alert(1)'), '/home');
     assert.equal(sanitizeReturnTo('/teacher/quizzes'), '/teacher/quizzes');
+    assert.equal(sanitizeReturnTo('/home'), '/home');
     assert.equal(sanitizeReturnTo('/'), '/');
   });
 
@@ -1420,7 +1462,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
   });
 
-  await t.test('LOGOUT 12. Server Action discovery manifest contains logoutAction for /teacher/quizzes', async () => {
+  await t.test('LOGOUT 12. Server Action discovery manifest contains logoutAction for /teacher/quizzes and /home', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const manifestPath = path.join(process.cwd(), '.next', 'server', 'server-reference-manifest.json');
@@ -1443,6 +1485,10 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.ok(
       logoutEntry.workers && logoutEntry.workers['app/teacher/quizzes/page'],
       'logoutAction must be registered as a worker action for app/teacher/quizzes/page'
+    );
+    assert.ok(
+      logoutEntry.workers && logoutEntry.workers['app/home/page'],
+      'logoutAction must be registered as a worker action for app/home/page'
     );
   });
 });

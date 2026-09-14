@@ -370,7 +370,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     }
   });
 
-  await t.test('Authentication & Identity Security (ADV-AUTH-01..08)', async () => {
+  await t.test('Authentication & Identity Security (ADV-AUTH-01..09)', async () => {
     const { sharedDb, bankService, quizService, sessionService, rateLimiter } = setupTestEnvironment();
 
     const orgTenant = 'org_berea';
@@ -452,6 +452,22 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
       assert.equal(resumeOther.success, false);
       assert.equal(resumeOther.error?.code, 'INVALID_PARTICIPANT_TOKEN');
     }
+
+    // ADV-AUTH-09: Host cannot join their own live quiz session as a participant (incompatible role separation)
+    setAuthenticatedUserContext({
+      userId: 'teacher_1', // same as openSession.hostUserId
+      providerType: 'GOOGLE',
+      providerSub: 'google_sub_teacher_1',
+      email: 'teacher1@church.org',
+      emailVerified: true,
+      phone: null,
+      phoneVerified: false,
+      displayName: 'Teacher Host'
+    });
+
+    const hostJoinAttempt = await joinSessionAction(openSession.roomCode);
+    assert.equal(hostJoinAttempt.success, false);
+    assert.equal(hostJoinAttempt.error?.code, 'HOST_CANNOT_PARTICIPATE_IN_OWN_SESSION');
   });
 
   await t.test('Admission Policies & Generic Enumeration Defense (ADV-ADM-01..06)', async () => {

@@ -1,7 +1,7 @@
 import './teacher-workspace.css';
+import { logoutAction } from '../login/actions';
 
 export default function TeacherLayout({ children }: { children: React.ReactNode }) {
-
   return (
     <div className="teacher-workspace-shell">
       <aside className="teacher-workspace-sidebar" aria-label="Teacher workspace navigation">
@@ -13,7 +13,16 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
         </nav>
         <div className="teacher-workspace-sidebar-footer">
           <span>org_berea_central</span>
-          <a href="/">Public site</a>
+          <a href="/home">Home</a>
+          <a href="/">Public preview</a>
+          <form action={logoutAction} className="mt-1">
+            <button
+              type="submit"
+              className="flex w-full min-h-11 items-center px-3 text-left text-[0.82rem] font-semibold text-[#536274] hover:bg-[#f1f0eb] hover:text-[#14243a] rounded-[4px] border border-transparent transition-colors cursor-pointer"
+            >
+              Log out
+            </button>
+          </form>
         </div>
       </aside>
       <div className="teacher-workspace-content">{children}</div>

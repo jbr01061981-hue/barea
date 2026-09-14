@@ -368,6 +368,55 @@ export function setAuthenticatedUserContext(context: AuthenticatedUserContext | 
   mockUserContext = context;
 }
 
+export interface UnifiedUserContext {
+  userId: string;
+  email: string | null;
+  displayName: string;
+  isTeacherAuthorized: boolean;
+  organizationId?: string;
+  role?: 'teacher' | 'admin';
+}
+
+let mockUnifiedUserContext: UnifiedUserContext | null = null;
+
+export function setUnifiedUserContextForTesting(context: UnifiedUserContext | null): void {
+  if (process.env.NODE_ENV === 'production' || !isTestEnvironment()) {
+    throw new Error('Forbidden: test authorization overrides cannot be executed outside of test environments.');
+  }
+  mockUnifiedUserContext = context;
+}
+
+export async function getUnifiedUserContext(): Promise<UnifiedUserContext | null> {
+  if (mockUnifiedUserContext !== null) {
+    if (!isTestEnvironment()) {
+      throw new Error('Forbidden: test authorization overrides are disabled outside of test environments.');
+    }
+    return mockUnifiedUserContext;
+  }
+
+  const sessionToken = await getSessionTokenFromRequest();
+  if (!sessionToken) {
+    return null;
+  }
+
+  const authService = getAuthService();
+  const sessionContext = authService.resolveSession(sessionToken);
+  if (!sessionContext) {
+    return null;
+  }
+
+  const teacherMembership = sessionContext.memberships.find(m => m.role === 'teacher' || m.role === 'admin');
+
+  return {
+    userId: sessionContext.user.id,
+    email: sessionContext.user.email,
+    displayName: sessionContext.user.displayName,
+    isTeacherAuthorized: Boolean(teacherMembership),
+    organizationId: teacherMembership?.organizationId,
+    role: teacherMembership?.role
+  };
+}
+
 let mockClientIp: string | null = null;
 let mockRequestHeadersForTesting: Record<string, string> | null = null;
 

@@ -3,12 +3,10 @@ import type { AuthRepository } from '../persistence/sqlite-auth-repository';
 import type { User, AuthenticatedSessionContext } from '../domain/auth';
 import type { RateLimiter } from './rate-limiter';
 import {
-  InvalidCredentialsError,
   AccountNotFoundError,
   OAuthStateError,
   OAuthCallbackError
 } from '../domain/domain-errors';
-import { hashPassword, verifyPassword } from './password-hasher';
 
 export type JwksKeyResolver = (protectedHeader?: any, token?: any) => Promise<any> | any;
 
@@ -35,10 +33,6 @@ export interface VerifiedGoogleClaims {
   emailVerified: boolean;
   name: string | null;
 }
-
-// Pre-computed valid scrypt hash used for constant-time evaluation on missing accounts
-const DUMMY_SCRYPT_HASH =
-  'scrypt$16384$8$1$0123456789abcdef0123456789abcdef$0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 const GOOGLE_JWKS_URL = new URL('https://www.googleapis.com/oauth2/v3/certs');
 let defaultGoogleRemoteJwks: JwksKeyResolver | null = null;
@@ -67,101 +61,6 @@ export class AuthService {
     private readonly repo: AuthRepository,
     private readonly options: AuthServiceOptions = {}
   ) {}
-
-  /**
-   * Registers a user with email and password and creates an initial session atomically.
-   */
-  async registerWithPassword(input: {
-    email: string;
-    password: string;
-    displayName: string;
-  }): Promise<{ user: User; rawToken: string }> {
-    const email = input.email ? input.email.trim().toLowerCase() : '';
-    if (!email || !email.includes('@')) {
-      throw new Error('Valid email address is required.');
-    }
-    if (!input.password || input.password.length < 8) {
-      throw new Error('Password must be at least 8 characters long.');
-    }
-    if (!input.displayName || !input.displayName.trim()) {
-      throw new Error('Display name is required.');
-    }
-
-    const existing = this.repo.findUserByEmail(email);
-    if (existing) {
-      throw new Error('An account with this email address already exists.');
-    }
-
-    const passwordHash = await hashPassword(input.password);
-
-    // Atomically create user and initial session inside a transaction boundary
-    const { user, rawToken } = this.repo.transaction(() => {
-      const user = this.repo.createUser({
-        email,
-        emailVerified: false,
-        passwordHash,
-        displayName: input.displayName.trim()
-      });
-
-      const { rawToken } = this.repo.createSession(user.id, {
-        authProvider: 'LOCAL_PASSWORD',
-        providerSub: user.id
-      });
-
-      return { user, rawToken };
-    });
-
-    return { user, rawToken };
-  }
-
-  /**
-   * Validates credentials, checks brute-force rate limits, and returns a session rawToken.
-   * Responds generically to nonexistent accounts, missing passwords, or wrong passwords.
-   */
-  async loginWithPassword(input: {
-    email: string;
-    password: string;
-    clientIp?: string | null;
-  }): Promise<{ user: User; rawToken: string }> {
-    const email = input.email ? input.email.trim().toLowerCase() : '';
-    if (!email || !input.password) {
-      throw new InvalidCredentialsError();
-    }
-
-    // Rate limiting: prevent rapid guessing against the account
-    if (this.options.rateLimiter) {
-      this.options.rateLimiter.checkLoginAttempt(email, input.clientIp);
-    }
-
-    const credentials = this.repo.findUserCredentialsByEmail(email);
-    if (!credentials || !credentials.passwordHash) {
-      // Execute dummy verification to preserve constant-time characteristics against user enumeration
-      await verifyPassword(input.password, DUMMY_SCRYPT_HASH);
-      if (this.options.rateLimiter) {
-        this.options.rateLimiter.recordFailedLogin(email, input.clientIp);
-      }
-      throw new InvalidCredentialsError();
-    }
-
-    const isValid = await verifyPassword(input.password, credentials.passwordHash);
-    if (!isValid) {
-      if (this.options.rateLimiter) {
-        this.options.rateLimiter.recordFailedLogin(email, input.clientIp);
-      }
-      throw new InvalidCredentialsError();
-    }
-
-    // Reset rate limiter on successful login
-    if (this.options.rateLimiter) {
-      this.options.rateLimiter.resetLoginAttempts(email);
-    }
-
-    const { rawToken } = this.repo.createSession(credentials.user.id, {
-      authProvider: 'LOCAL_PASSWORD',
-      providerSub: credentials.user.id
-    });
-    return { user: credentials.user, rawToken };
-  }
 
   /**
    * Generates Google OAuth authorization URL with state, PKCE challenge, and OIDC nonce.

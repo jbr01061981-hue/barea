@@ -49,6 +49,14 @@ export class SessionAccessDeniedError extends BareaDomainError {
   }
 }
 
+export class HostCannotParticipateInOwnSessionError extends BareaDomainError {
+  readonly code = 'HOST_CANNOT_PARTICIPATE_IN_OWN_SESSION';
+  readonly httpStatus = 403;
+  constructor(message: string = 'Host cannot participate as an individual player in their own live quiz session.') {
+    super(message);
+  }
+}
+
 export class CrossTenantSnapshotError extends BareaDomainError {
   readonly code = 'CROSS_TENANT_SNAPSHOT_FORBIDDEN';
   readonly httpStatus = 403;
@@ -151,14 +159,6 @@ export class ConcurrencyConflictError extends BareaDomainError {
   readonly code = 'CONCURRENCY_CONFLICT';
   readonly httpStatus = 409;
   constructor(message: string = 'State mutation conflict: provided state version is stale.') {
-    super(message);
-  }
-}
-
-export class InvalidCredentialsError extends BareaDomainError {
-  readonly code = 'INVALID_CREDENTIALS';
-  readonly httpStatus = 401;
-  constructor(message: string = 'Invalid email or password.') {
     super(message);
   }
 }
