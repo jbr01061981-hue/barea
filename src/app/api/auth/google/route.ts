@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthService } from '../../../teacher/review/db';
-import { sanitizeReturnTo, resolveOAuthRedirectUri } from '../../../login/url-utils';
+import { sanitizeReturnTo, resolveOAuthRedirectUri, resolveEffectiveAppOrigin } from '../../../login/url-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,8 +10,10 @@ export async function GET(request: NextRequest) {
     const returnToParam = request.nextUrl.searchParams.get('returnTo');
     const returnTo = sanitizeReturnTo(returnToParam);
 
+    const origin = resolveEffectiveAppOrigin(request.nextUrl.origin);
+
     // Canonical redirect URI
-    const redirectUri = resolveOAuthRedirectUri(request.nextUrl.origin);
+    const redirectUri = resolveOAuthRedirectUri(origin);
 
     const { url, transactionId } = authService.generateGoogleOAuthUrl(redirectUri, returnTo);
 
@@ -31,7 +33,8 @@ export async function GET(request: NextRequest) {
     return response;
   } catch (err: unknown) {
     console.error('[OAuth Initiation Error]:', err instanceof Error ? err.name : 'UnknownError');
-    const loginUrl = new URL('/login', request.nextUrl.origin);
+    const fallbackOrigin = resolveEffectiveAppOrigin(request.nextUrl.origin);
+    const loginUrl = new URL('/login', fallbackOrigin);
     loginUrl.searchParams.set('error', 'Google sign-in could not be completed. Please try again.');
     return NextResponse.redirect(loginUrl);
   }

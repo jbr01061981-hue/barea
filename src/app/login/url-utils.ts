@@ -87,10 +87,74 @@ export function sanitizeReturnTo(returnTo?: string | null): string {
 }
 
 /**
+ * Resolves the effective application origin for client-facing redirects.
+ *
+ * Security Invariants:
+ * 1. 0.0.0.0 is an all-interfaces bind address, NOT a valid routable client origin.
+ *    Redirecting a client browser to 0.0.0.0 results in ERR_ADDRESS_INVALID and client failure.
+ * 2. In production: untrusted request headers (Host, X-Forwarded-Host) or dynamic request origins
+ *    must NEVER override configured authority. If NEXT_PUBLIC_APP_URL is set, its origin is authoritative.
+ * 3. In local development / test:
+ *    - If BAREA_DEV_APP_URL or NEXT_PUBLIC_APP_URL is explicitly configured (e.g. https://192.168.1.7:3000),
+ *      it takes precedence over raw socket / bind addresses.
+ *    - If the incoming request origin resolves to 0.0.0.0, it is strictly rejected and falls back
+ *      to the configured development origin or localhost.
+ */
+export function resolveEffectiveAppOrigin(requestOrigin?: string | null): string {
+  // Check explicit development origin override first (if in non-production)
+  if (process.env.NODE_ENV !== 'production') {
+    const devAppUrl = process.env.BAREA_DEV_APP_URL || process.env.NEXT_PUBLIC_APP_URL;
+    if (devAppUrl && devAppUrl.trim()) {
+      try {
+        const parsedDev = new URL(devAppUrl.trim());
+        if (parsedDev.hostname !== '0.0.0.0') {
+          return parsedDev.origin;
+        }
+      } catch {
+        // invalid URL ignored, continue resolution
+      }
+    }
+  } else {
+    // In production, NEXT_PUBLIC_APP_URL is authoritative if provided
+    const prodAppUrl = process.env.NEXT_PUBLIC_APP_URL;
+    if (prodAppUrl && prodAppUrl.trim()) {
+      try {
+        const parsedProd = new URL(prodAppUrl.trim());
+        return parsedProd.origin;
+      } catch {
+        // invalid URL ignored
+      }
+    }
+  }
+
+  // Evaluate request origin
+  if (requestOrigin && typeof requestOrigin === 'string') {
+    try {
+      const parsed = new URL(requestOrigin);
+      // Strictly prevent 0.0.0.0 from becoming a client redirect destination
+      if (parsed.hostname === '0.0.0.0') {
+        throw new Error(
+          'Invalid application origin: server is bound to 0.0.0.0 which cannot be used for client redirects. ' +
+          'Configure BAREA_DEV_APP_URL (e.g. BAREA_DEV_APP_URL=https://<your-lan-ip>:3000 or BAREA_DEV_APP_URL=https://localhost:3000) in your environment.'
+        );
+      }
+      return parsed.origin;
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.includes('Invalid application origin')) {
+        throw err;
+      }
+      // invalid URL ignored
+    }
+  }
+
+  return 'http://localhost:3000';
+}
+
+/**
  * Resolves the canonical OAuth redirect URI.
  * In production: strictly requires GOOGLE_REDIRECT_URI in the server environment
  * and never allows untrusted request headers (Host/Origin) to dictate redirect URI.
- * In development / test: falls back to request origin or http://localhost:3000.
+ * In development / test: falls back to effective request origin or http://localhost:3000.
  */
 export function resolveOAuthRedirectUri(requestOrigin?: string): string {
   if (process.env.GOOGLE_REDIRECT_URI && process.env.GOOGLE_REDIRECT_URI.trim()) {
@@ -99,6 +163,6 @@ export function resolveOAuthRedirectUri(requestOrigin?: string): string {
   if (process.env.NODE_ENV === 'production') {
     throw new Error('GOOGLE_REDIRECT_URI must be configured in production environment.');
   }
-  const origin = requestOrigin || 'http://localhost:3000';
+  const origin = resolveEffectiveAppOrigin(requestOrigin);
   return `${origin}/api/auth/callback/google`;
 }
