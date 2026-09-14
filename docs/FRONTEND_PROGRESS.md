@@ -4,127 +4,62 @@
 
 ## Current status
 
-| Stage | Frontend scope | Status | GitHub reference |
+| Stage | Frontend scope | Status | Repository state |
 |---|---|---|---|
-| BAREA-008 | Public homepage / landing foundation | **MERGED** | `9b76e9f` / PR #12 |
-| BAREA-008A | Public homepage visual redesign + public entry UX | **IN PROGRESS** | `barea-008a-public-entry` / PR #13 |
-| BAREA-009 | Teacher Workspace / Quiz Library redesign | **NEXT** | Not started |
+| BAREA-008 | Public homepage / landing foundation | **MERGED** | Present on `main` |
+| BAREA-008A | Public homepage visual redesign + public entry UX | **MERGED** | Present on `main`; the former `barea-008a-public-entry` branch is behind `main` |
+| BAREA-008B | Public homepage refinement | **CURRENT / DESIGN REFINEMENT** | Active work exists on dedicated `barea-008b-*` branches; not merged to `main` |
+| BAREA-009 | Teacher Workspace / Quiz Library redesign | **NEXT MAJOR** | Not started on `main` |
 | BAREA-010 | Quiz Builder / Question UX | Planned | Not started |
 | BAREA-011 | Teacher Review / Question Bank UX | Planned | Not started |
-| BAREA-012 | Share Quiz / Join experience | Planned | Not started |
+| BAREA-012 | Share Quiz / Join experience | Planned | Not started as the next frontend milestone |
 | BAREA-013 | Host Lobby | Planned | Not started |
 | BAREA-014 | Participant mobile quiz | Planned | Not started |
 | BAREA-015 | Live Host Console | Planned | Not started |
 | BAREA-016 | Results / Leaderboard | Planned | Not started |
 | BAREA-017 | Presentation / Projector experience | Planned | Not started |
 
+## BAREA-008B — Public homepage refinement
+
+**Status: CURRENT / DESIGN REFINEMENT**
+
+BAREA-008 and BAREA-008A are already incorporated into `main`. The current 008B work is a refinement track rather than a completed milestone on `main`.
+
+Dedicated 008B branches exist for responsive, Stitch, and Living Water homepage refinements. These branches are not yet part of `main`; their changes must not be treated as merged implementation state until independently reviewed and merged.
+
+The current design exploration proposes a Living Waterscape direction while preserving the established BAREA product invariants:
+- Scripture/content primacy.
+- Human-in-the-loop review and approval.
+- Three distinct Host, Participant, and Sanctuary presentation roles.
+- No anonymous nickname-only individual participation.
+- Teacher-controlled group mode does not require child accounts or devices.
+- Authenticated individual participation uses the authoritative BAREA identity/session system.
+
+Any 008B implementation must preserve existing teacher workspace contracts and must not invent or weaken backend authentication, authorization, tenant isolation, or live-session behavior.
+
 ## BAREA-008A — Public homepage visual redesign + public entry UX
-
-**Status: IN PROGRESS**
-
-Purpose: implement the approved Stitch visual direction while keeping the homepage simple, responsive, Scripture-centered, and honest about authentication state.
-
-### Design reference
-
-The implementation is based on the user-provided Google Stitch export for the BAREA homepage (`Scriptural Editorial` direction).
-
-Key visual decisions carried into the frontend:
-- Deep midnight / indigo background for the public homepage.
-- Warm ivory Scripture typography.
-- Restrained liturgical gold accent.
-- Editorial serif treatment for Scripture and major headings.
-- Fine borders and tonal layering instead of heavy shadows or decorative SaaS effects.
-- One responsive homepage system across mobile, tablet, laptop, and desktop; not separate site designs.
-- Projector/presentation remains a separate future experience.
-
-### Homepage implementation
-
-- Hero uses a dedicated client-side Scripture typewriter component with additional breathing room and larger Scripture treatment.
-- Scripture cycles through:
-  - `Let the Word dwell richly.` — Colossians 3:16
-  - `Your word is a lamp to my feet.` — Psalm 119:105
-  - `Is not my word like fire?` — Jeremiah 23:29
-- Each verse types character-by-character, pauses, deletes, and transitions to the next verse.
-- The cycle is continuous as requested.
-- A restrained gold cursor and Scripture reference reinforce the animation without adding visual clutter.
-- Hero message is intentionally short: `Prepare. Learn. Share.`
-- Primary homepage action is `Explore BAREA`.
-- General `Log in` entry is used instead of teacher-only login wording.
-- No fake OAuth/provider flow or credentials are requested/simulated.
-- `The BAREA rhythm` is concise: Prepare → Verify → Play, with one short sentence per step.
-- The rhythm entry area keeps `Explore BAREA` and general `Log in` together before the three steps.
-- Human-review messaging is simplified to `Human review. Thoughtful preparation.`
-- Whole-room experiences are framed as `Host`, `Participant`, and `Sanctuary Display`.
-- Closing CTA is intentionally single-action: `Bring your church together around the Word.` / `Explore BAREA`.
-- Existing truthful teacher-review/product positioning is retained without inventing new backend capability.
-
-### Public entry boundary
-
-- The separate `/login` route remains removed.
-- `Log in` points to the homepage entry area rather than inventing a new authentication route.
-- Authentication remains a backend/application dependency; this frontend stage does not implement or alter authentication.
-
-### Files changed on the frontend branch
-
-- `src/app/page.tsx`
-- `src/app/layout.tsx`
-- `src/app/globals.css`
-- `src/app/components/scripture-typewriter.tsx`
-
-### Latest implementation commits
-
-- `6e70480a` — refined homepage Scripture presentation.
-- `194c8fd3` — refined homepage copy and whole-room experience language.
-
-### Verification
-
-Repository changes are committed on `barea-008a-public-entry`.
-
-A final local verification is still required after pulling the latest branch:
-- `npm run typecheck`
-- `npm test`
-- `npm run build`
-- `npm run build:next`
-- visual review at mobile and laptop/desktop widths
-- reduced-motion/accessibility review
-
-Do not mark BAREA-008A complete until that final local verification is reported.
-
-## BAREA-008 — Homepage
 
 **Status: MERGED**
 
-Merged into `main` via PR #12.
+Implemented on the public homepage and incorporated into `main` before the current authentication/logout work.
 
-Merge commit: `9b76e9f671cd004e5d58cb25f8ac723a81f2259d`
-
-Implemented:
-- Public BAREA homepage at `/`.
-- Public application shell/header/footer.
-- BAREA-owned visual tokens and responsive styling.
-- Hero and primary product positioning.
-- Prepare → Verify → Play workflow explanation.
-- Teacher, participant, and projector experience framing.
-- Public CTAs deliberately kept away from protected teacher routes until an appropriate authentication/entry experience exists.
-- Responsive/mobile presentation and accessibility-focused states.
-
-Verification completed before merge:
-- `npm run typecheck` — PASS
-- `npm test` — 149/149 PASS
-- `npm run build` — PASS
-- `npm run build:next` — PASS
-- Rendered homepage visual review — PASS
+Key established UI behavior:
+- Scripture-centered public homepage.
+- General `Log in` language rather than teacher-only login wording.
+- No fake OAuth/provider flow or simulated credentials.
+- Responsive homepage treatment across mobile, tablet, laptop, and desktop.
+- Teacher/Host, Participant, and Sanctuary Display experiences are presented as distinct product roles.
+- Public UI does not bypass protected teacher authorization.
 
 ## Sequencing rule
 
-Do not jump directly from the homepage to the live quiz console. Progressively expose the already-completed BAREA capabilities through purpose-built experiences:
+Do not jump directly from the homepage to the live quiz console. Progressively expose the existing BAREA capabilities through purpose-built experiences:
 
 `Homepage → Public Entry/Auth UX → Teacher Workspace → Quiz Builder/Question UX → Review/Question Bank → Share/Join → Host Lobby → Participant → Live Host → Results → Projector`
 
 ## Product architecture principles
 
-- This chat/workspace is for **frontend development and frontend testing only**.
-- No Phase 8/backend development takes place here.
+- This frontend track is responsible for frontend development and frontend testing; backend/security/domain contracts remain authoritative elsewhere in the repository.
 - BAREA is not a generic CRUD/admin dashboard.
 - Teacher/Host experience is desktop/tablet oriented.
 - Participant experience is mobile-first.
@@ -132,5 +67,15 @@ Do not jump directly from the homepage to the live quiz console. Progressively e
 - Frontend is not a security boundary.
 - Backend/session state remains authoritative.
 - Never invent backend APIs or silently alter backend/security/domain contracts to support a frontend feature.
-- If a frontend experience depends on backend capability that does not yet exist, record it as a frontend dependency/backend gap.
+- If a frontend experience depends on backend capability that does not yet exist, record it as a dependency/backend gap.
 - GitHub `main` and the implementation in the repository are the source of truth; this progress document records frontend sequence and evidence.
+
+## Authentication and access status
+
+Phase 1 authentication/access is complete on `main`. The repository now contains the unified account/session foundation, Google OAuth/OIDC verification, server-authoritative sessions, account linking rules, teacher authorization boundaries, and the Task 4 logout/session-revocation correction.
+
+A user who authenticates successfully but has no teacher/admin membership must remain denied from `/teacher/*`; frontend work must not introduce a teacher bypass. Individual authenticated participation and teacher authorization remain separate concerns.
+
+## Open human/design decisions
+
+Before implementing the next major workspace redesign or generating new live-session screens, resolve any still-open design decisions documented in the applicable design sources, including the Teacher Workspace theme decision, Stitch project allocation, and formal live-session role-route convention. Do not silently convert an exploratory design proposal into an implementation contract.
