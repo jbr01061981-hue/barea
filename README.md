@@ -6,18 +6,30 @@ BAREA is a synchronized church quiz platform designed for Sunday schools, youth 
 
 ## Overview
 
-BAREA bridges biblical education and interactive engagement. It empowers teachers and hosts to generate biblically faithful questions, manage a reusable question bank, author customized quizzes, and host live quiz sessions with real-time projector display and mobile participant experiences.
+BAREA bridges biblical education and interactive engagement. It empowers teachers and hosts to generate biblically faithful questions, manage a reusable Question Bank, author quizzes, and run synchronized live quiz experiences with projector and mobile participant surfaces.
 
 ### Key Pillars
 
-1. **Biblical Faithfulness & Content Verification**: Human-in-the-loop review ensures that every AI-generated or manually authored question is verified by a teacher for scriptural accuracy and church-level appropriateness. Structural validation by the system checks formatting and schema integrity, but cannot replace human theological review.
+1. **Biblical Faithfulness & Content Verification**: Human-in-the-loop review ensures that AI-generated or manually authored questions are verified by a teacher for scriptural accuracy and church-level appropriateness. Structural validation checks schema integrity but does not replace human theological review.
 2. **Dedicated Church Modes**:
-   - **Teacher / Host View**: Controls for question approval, quiz assembly, live session pacing, and participant roster oversight.
-   - **Mobile Participant Experience**: Responsive web experience accessible via smartphones with zero install friction.
-   - **Projector / Presentation View**: Big-screen display in sanctuaries, auditoriums, and classrooms showing questions, timers, leaderboards, and celebratory feedback.
-3. **Frictionless Joining**: Rapid participation via QR code, direct URL, or room access code without requiring participant app store downloads.
-4. **Server-Authoritative Live State & Scoring**: Tamper-proof scoring, synchronized timers, and live leaderboard calculations driven by an authoritative server state machine.
-5. **AI-Powered Generation with Teacher Control**: AI generates questions based on topic, difficulty, question type, and language. AI questions are never published directly without explicit structural validation and teacher review, editing, and approval.
+   - **Teacher / Host View**: Question approval, quiz assembly, live-session control, and participant/group oversight.
+   - **Mobile Participant Experience**: Responsive web participation without app installation.
+   - **Projector / Presentation View**: Big-screen display for questions, timers, answer reveals, leaderboards, and celebration.
+3. **Flexible Entry**: QR code, direct URL, and room access code provide low-friction entry while server-side admission rules remain authoritative.
+4. **Server-Authoritative Live State & Scoring**: Live state, timing, answer acceptance, and scoring are authoritative on the server.
+5. **AI-Powered Generation with Teacher Control**: AI-generated questions are structurally validated and staged for human review; they cannot bypass the approval lifecycle.
+
+---
+
+## Identity & Participation
+
+BAREA separates **participation mode** from **admission policy**.
+
+- **Teacher-controlled group participation (`TEACHER_GROUP`)**: The teacher creates/groups and records group answers. Children do not need BAREA accounts, OAuth identities, or personal devices.
+- **Authenticated individual participation (`INDIVIDUAL_AUTHENTICATED`)**: Each participant uses an authenticated BAREA identity. Anonymous nickname-only individual play is not permitted.
+- Admission policies include `TEACHER_ASSIGNED`, `OPEN`, and `RESTRICTED` as defined by the product and server-side authorization contracts.
+
+Authentication is real server-side authentication. Google OAuth/OIDC is implemented with state, PKCE, nonce, cryptographic ID-token verification, trusted identity binding, and server-authoritative sessions.
 
 ---
 
@@ -37,28 +49,58 @@ AI generates
 
 ## Project Documentation
 
-Conceptual architecture, product requirements, and design specifications are located in the docs/ directory:
+Conceptual architecture, product requirements, decisions, and roadmap are located in `docs/`:
 
-- [**docs/PRODUCT.md**](./docs/PRODUCT.md): Product vision, user personas, roles, and core experiences.
-- [**docs/REQUIREMENTS.md**](./docs/REQUIREMENTS.md): Functional and non-functional requirements and conceptual boundaries.
-- [**docs/ARCHITECTURE.md**](./docs/ARCHITECTURE.md): Conceptual system architecture, state machine, and server-authoritative scoring models.
-- [**docs/ROADMAP.md**](./docs/ROADMAP.md): Milestone tracker from Foundation (BAREA-001) through Pilot (BAREA-013).
-- [**docs/DECISIONS.md**](./docs/DECISIONS.md): Architecture Decision Records (ADRs) capturing architectural principles and open decisions.
-- [**AGENTS.md**](./AGENTS.md): Development guidance, guardrails, and instructions for AI agents working in this repository.
+- `docs/PRODUCT.md` — product vision, personas, participation modes, admission policies, and core experiences.
+- `docs/REQUIREMENTS.md` — functional and non-functional requirements.
+- `docs/ARCHITECTURE.md` — conceptual system architecture, state machine, and server-authoritative models.
+- `docs/ROADMAP.md` — current phase roadmap and frontend milestone sequence.
+- `docs/DECISIONS.md` — architecture decision records.
+- `docs/FRONTEND_PROGRESS.md` — frontend implementation sequence and evidence.
+- `AGENTS.md` — development guidance and repository guardrails.
 
 ---
 
-## Implementation Status
+## Current Implementation Status
 
-**Completed through BAREA-004.**
+### Phase 1 — Unified Account & Access
 
-- BAREA-001 Foundation — COMPLETED
-- BAREA-002 Question Bank — COMPLETED
-- BAREA-002A TypeScript Migration Gate — COMPLETED
-- BAREA-003 AI Quiz Generation — COMPLETED
-- BAREA-004 Teacher Review & Approval — COMPLETED and merged into `main`
-- BAREA-005 Quiz Authoring — NOT STARTED
+**COMPLETE — REVIEWED, VERIFIED, MERGED**
 
-BAREA-004 was merged into `main` in commit `1faff33235378c6061a902a89454e5d62b097b0b`.
+The repository contains the unified account/session foundation, email/password authentication, Google OAuth/OIDC, secure state/PKCE/nonce handling, cryptographic Google ID-token verification, trusted account linking, server-authoritative sessions, teacher/admin authorization boundaries, and logout session revocation/cookie clearing.
 
-The current implementation provides the AI generation, structural validation, Question Bank, and teacher review/approval workflow. Quiz authoring, sharing/joining, live gameplay, scoring, leaderboard, presentation, church validation, and pilot milestones remain future work according to the roadmap.
+Task 4 logout correction is merged in `ef175b6183c85a8cde309e645d89256fb6fbc946`. Fresh local verification after clearing the development database and Next.js build artifacts completed with:
+
+- `npm run typecheck` — PASS
+- `npm run build` — PASS
+- `npm run build:next` — PASS
+- `npm test` — **240/240 PASS**
+- Fresh Next.js Server Action manifest contains `logoutAction`.
+- Fresh browser verification confirmed Google authentication/session handoff and correct fail-closed teacher authorization for an authenticated user without teacher/admin membership.
+
+### Core Quiz Foundations
+
+The repository also contains the implemented foundations represented by BAREA-005, BAREA-006, and BAREA-007: quiz authoring/snapshots, share/join/admission foundations, and authoritative live-session state/transport. Their frontend end-to-end experiences continue through the frontend milestone sequence below.
+
+### Frontend Sequence
+
+- BAREA-008 — Public homepage / landing foundation — **MERGED**
+- BAREA-008A — Public homepage visual redesign + public entry UX — **MERGED**
+- BAREA-008B — Public homepage refinement — **CURRENT / DESIGN REFINEMENT; not merged to `main`**
+- BAREA-009 — Teacher Workspace / Quiz Library redesign — **NEXT MAJOR**
+- BAREA-010 — Quiz Builder / Question UX — Planned
+- BAREA-011 — Teacher Review / Question Bank UX — Planned
+- BAREA-012 — Share Quiz / Join — Planned
+- BAREA-013 — Host Lobby — Planned
+- BAREA-014 — Participant mobile quiz — Planned
+- BAREA-015 — Live Host Console — Planned
+- BAREA-016 — Results / Leaderboard — Planned
+- BAREA-017 — Presentation / Projector experience — Planned
+
+---
+
+## Next Major Product Direction
+
+The next major product phase is **Share, Join & Live Quiz**, while the frontend sequencing currently settles the public homepage refinement track before the **BAREA-009 Teacher Workspace / Quiz Library** redesign.
+
+Frontend work must preserve the existing authentication, authorization, tenant isolation, human-review, live-state, timing, scoring, and answer-secrecy contracts. A frontend screen must not invent or weaken backend behavior to make the UI appear complete.
