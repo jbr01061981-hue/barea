@@ -1224,6 +1224,14 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     }
   });
 
+  await t.test('50. invalid or expired session token strictly fails closed without dev fallback', async () => {
+    setSessionTokenForTesting('bst_unresolvable_expired_token');
+    await assert.rejects(
+      async () => getAuthorizedTeacherContext(),
+      /invalid or expired session/i
+    );
+  });
+
   await t.test('CANONICAL REDIRECT URI: production requires GOOGLE_REDIRECT_URI and development supports local fallback', () => {
     const prevEnv = process.env.NODE_ENV;
     const prevUri = process.env.GOOGLE_REDIRECT_URI;

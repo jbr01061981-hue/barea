@@ -209,4 +209,18 @@ test('Teacher Auth Guard - Route Navigation Failure Semantics', async (t) => {
     assert.equal(ctx.role, 'teacher');
     assert.equal(ctx.displayName, 'Teacher Mark');
   });
+
+  await t.test('6. Invalid or expired session token: strictly fails closed with login redirect and does not fallback', async () => {
+    // Provide a session token that does not exist in the repository
+    setSessionTokenForTesting('bst_nonexistent_token_12345');
+
+    await assert.rejects(
+      async () => ensureAuthorizedTeacherPage('/teacher/quizzes'),
+      (err: any) => {
+        assert.equal(err?.digest?.startsWith('NEXT_REDIRECT'), true, 'Should trigger NEXT_REDIRECT');
+        assert.match(String(err?.digest || ''), /\/login\?returnTo=%2Fteacher%2Fquizzes/);
+        return true;
+      }
+    );
+  });
 });
