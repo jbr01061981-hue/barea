@@ -1,13 +1,28 @@
 # BAREA Frontend Progress
 
-> **Frontend source of truth:** This file records implemented UI stages, verified repository state, and the agreed sequence for future frontend work. GitHub `main` remains the authoritative code source.
+> **Frontend source of truth:** This file records implemented UI stages, verified repository state, and the agreed sequence for future frontend work. **GitHub `main` remains the authoritative code source.**
 
 ## Current status
 
+**Main baseline:** PR #20 merged on 2026-09-14 as `298eccbabc7090531c9c31c2bc94c79592d11edb`.
+
+The unified authenticated home, Google-only authentication, hardened OAuth flow, server-authoritative session handling, and local HTTPS development support are now part of `main`.
+
+Verification associated with the merged milestone:
+- `npm test` — **255 passing / 0 failing**
+- `npm run typecheck` — **PASS**
+- `npm run build:next` — **PASS**
+- `git diff --check` — **PASS**
+- Local HTTPS Google OAuth flow — **PASS**
+- Logout and server-side session invalidation — **PASS**
+
+Cloudflare public HTTPS validation is **deferred** because the current Cloudflare account has no suitable custom DNS zone/domain. No Cloudflare tunnel or DNS infrastructure was provisioned.
+
 | Stage | Frontend scope | Status | Repository state |
 |---|---|---|---|
+| Phase 1 / Auth | Unified authenticated identity/session + Google-only login + hardened OAuth + unified `/home` | **COMPLETE / MERGED** | Present on `main` via PR #20 merge `298eccb` |
 | BAREA-008 | Public homepage / landing foundation | **MERGED** | Present on `main` |
-| BAREA-008A | Public homepage visual redesign + public entry UX | **MERGED** | Present on `main`; the former `barea-008a-public-entry` branch is behind `main` |
+| BAREA-008A | Public homepage visual redesign + public entry UX | **MERGED** | Present on `main` |
 | BAREA-008B | Public homepage refinement | **CURRENT / DESIGN REFINEMENT** | Active work exists on dedicated `barea-008b-*` branches; not merged to `main` |
 | BAREA-009 | Teacher Workspace / Quiz Library redesign | **NEXT MAJOR** | Not started on `main` |
 | BAREA-010 | Quiz Builder / Question UX | Planned | Not started |
@@ -18,6 +33,47 @@
 | BAREA-015 | Live Host Console | Planned | Not started |
 | BAREA-016 | Results / Leaderboard | Planned | Not started |
 | BAREA-017 | Presentation / Projector experience | Planned | Not started |
+
+## Phase 1 / Unified Authentication & Access — COMPLETE
+
+**Status: COMPLETE — REVIEWED, VERIFIED, MERGED**
+
+PR #20 completed the current unified authentication/access milestone and is merged into `main`.
+
+Established user-facing and access behavior includes:
+- Google-only federated individual authentication.
+- No active email/password authentication flow.
+- Unified authenticated `/home` rather than a separate participant landing page.
+- Individual workspace presentation for authenticated users.
+- Create & Host capability presentation with a locked state when teacher authorization is unavailable.
+- Server-side teacher/admin authorization remains authoritative; the frontend lock is not a security boundary.
+- Authenticated users without teacher/admin authorization are not redirected into a teacher workspace by normal login.
+- Authoritative logout and session invalidation.
+- Multiple tabs/windows/devices remain allowed; no blanket single-session restriction is introduced.
+- Workspace query parameters are UI state only and cannot grant privileges.
+- Host cannot participate in their own real live session as a normal participant.
+- Preview/test behavior is designed to remain distinct from real participant admission.
+
+### OAuth verification status
+
+The merged implementation includes:
+- PKCE S256.
+- State and nonce validation.
+- Strict Google ID-token verification and JWKS handling.
+- Server-side OAuth transaction lifecycle.
+- Transaction replay and expiry protection.
+- Atomic transaction consumption and session creation.
+- No silent email-based Google account linking; account collisions are explicitly rejected.
+- Fresh session token creation.
+- Secure transient OAuth/session cookies.
+- Return-to/open-redirect protection.
+- Google token exchange timeout protection.
+
+Local HTTPS browser verification completed successfully against:
+
+`https://localhost:3000`
+
+including Google login, callback, authenticated home, workspace navigation, logout, second login, and post-logout session invalidation.
 
 ## BAREA-008B — Public homepage refinement
 
@@ -72,9 +128,15 @@ Do not jump directly from the homepage to the live quiz console. Progressively e
 
 ## Authentication and access status
 
-Phase 1 authentication/access is complete on `main`. The repository now contains the unified account/session foundation, Google OAuth/OIDC verification, server-authoritative sessions, account linking rules, teacher authorization boundaries, and the Task 4 logout/session-revocation correction.
+Phase 1 authentication/access is complete on `main` via PR #20. The repository now contains the unified account/session foundation, Google-only OAuth/OIDC authentication, hardened OAuth transaction handling, server-authoritative sessions, explicit account-collision handling, teacher authorization boundaries, unified authenticated home, and the logout/session-revocation behavior.
 
 A user who authenticates successfully but has no teacher/admin membership must remain denied from `/teacher/*`; frontend work must not introduce a teacher bypass. Individual authenticated participation and teacher authorization remain separate concerns.
+
+## Infrastructure validation status
+
+Cloudflare public HTTPS testing is deferred. The Cloudflare account currently has no active DNS zones/domains and no existing named tunnel. The existing `berea-api-production.jbr01061981.workers.dev` Worker is a separate backend/legacy service and must remain untouched.
+
+A future stable Cloudflare HTTPS test requires a suitable custom domain. Ephemeral Quick Tunnels may be used for non-OAuth connectivity smoke testing, but they are not the authoritative Google OAuth validation path.
 
 ## Open human/design decisions
 
