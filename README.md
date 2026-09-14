@@ -29,7 +29,7 @@ BAREA separates **participation mode** from **admission policy**.
 - **Authenticated individual participation (`INDIVIDUAL_AUTHENTICATED`)**: Each participant uses an authenticated BAREA identity. Anonymous nickname-only individual play is not permitted.
 - Admission policies include `TEACHER_ASSIGNED`, `OPEN`, and `RESTRICTED` as defined by the product and server-side authorization contracts.
 
-Authentication is real server-side authentication. Google OAuth/OIDC is implemented with state, PKCE, nonce, cryptographic ID-token verification, trusted identity binding, and server-authoritative sessions.
+Authentication is real server-side authentication. **Google OAuth/OIDC is the current individual login mechanism**, implemented with state, PKCE S256, nonce, cryptographic ID-token verification, server-side OAuth transactions, replay/expiry protection, explicit account-collision handling, secure cookies, and server-authoritative sessions.
 
 ---
 
@@ -54,9 +54,9 @@ Conceptual architecture, product requirements, decisions, and roadmap are locate
 - `docs/PRODUCT.md` — product vision, personas, participation modes, admission policies, and core experiences.
 - `docs/REQUIREMENTS.md` — functional and non-functional requirements.
 - `docs/ARCHITECTURE.md` — conceptual system architecture, state machine, and server-authoritative models.
-- `docs/ROADMAP.md` — current phase roadmap and frontend milestone sequence.
+- `docs/ROADMAP.md` — current phase roadmap, implementation status, and frontend milestone sequence.
 - `docs/DECISIONS.md` — architecture decision records.
-- `docs/FRONTEND_PROGRESS.md` — frontend implementation sequence and evidence.
+- `docs/FRONTEND_PROGRESS.md` — frontend implementation sequence, current status, and verification evidence.
 - `AGENTS.md` — development guidance and repository guardrails.
 
 ---
@@ -67,16 +67,31 @@ Conceptual architecture, product requirements, decisions, and roadmap are locate
 
 **COMPLETE — REVIEWED, VERIFIED, MERGED**
 
-The repository contains the unified account/session foundation, email/password authentication, Google OAuth/OIDC, secure state/PKCE/nonce handling, cryptographic Google ID-token verification, trusted account linking, server-authoritative sessions, teacher/admin authorization boundaries, and logout session revocation/cookie clearing.
+PR #20, **"Unify authenticated home and remove legacy password auth,"** is merged into `main` as commit `298eccbabc7090531c9c31c2bc94c79592d11edb`.
 
-Task 4 logout correction is merged in `ef175b6183c85a8cde309e645d89256fb6fbc946`. Fresh local verification after clearing the development database and Next.js build artifacts completed with:
+The merged milestone establishes:
+- Unified authenticated `/home` for all authenticated users.
+- Google-only individual authentication; legacy email/password authentication is no longer an active login mechanism.
+- Hardened Google OAuth/OIDC with PKCE S256, state and nonce validation, strict cryptographic ID-token verification, server-side OAuth transaction handling, replay/expiry protection, atomic transaction consumption, explicit account-collision handling, secure transient cookies, return-to protection, and token-exchange timeout protection.
+- Server-authoritative sessions, teacher/admin authorization boundaries, and authoritative logout/session invalidation.
+- Create & Host capability presentation with server-side authorization remaining authoritative.
+- Host protection preventing a live-session host from joining their own session as a normal participant.
 
-- `npm run typecheck` — PASS
-- `npm run build` — PASS
-- `npm run build:next` — PASS
-- `npm test` — **240/240 PASS**
-- Fresh Next.js Server Action manifest contains `logoutAction`.
-- Fresh browser verification confirmed Google authentication/session handoff and correct fail-closed teacher authorization for an authenticated user without teacher/admin membership.
+Verification associated with the merged milestone:
+- `npm test` — **255/255 PASS**
+- `npm run typecheck` — **PASS**
+- `npm run build:next` — **PASS**
+- `git diff --check` — **PASS**
+- Local HTTPS Google OAuth browser flow — **PASS**
+- Logout and post-logout server-side session invalidation — **PASS**
+
+### Cloudflare HTTPS Validation
+
+**DEFERRED — CUSTOM DOMAIN REQUIRED**
+
+Cloudflare discovery confirmed that the current Cloudflare account has no active DNS zones/domains and no existing named tunnel. The existing `berea-api-production.jbr01061981.workers.dev` service is a separate backend/legacy Worker and remains untouched.
+
+No Cloudflare DNS, tunnel, Worker, or Google OAuth configuration was modified. A future stable public HTTPS/OAuth test can proceed when a suitable custom domain is available. An ephemeral Quick Tunnel may be used for non-OAuth connectivity smoke testing, but it is not the authoritative Google OAuth validation path.
 
 ### Core Quiz Foundations
 
