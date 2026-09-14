@@ -85,6 +85,20 @@ Verification associated with the merged milestone:
 - Local HTTPS Google OAuth browser flow — **PASS**
 - Logout and post-logout server-side session invalidation — **PASS**
 
+### Mobile LAN Development
+
+**PR #21 — APPROVED / OPEN / NOT YET MERGED**
+
+PR #21 (`c040ec7e2ee5d92e5950d8b4886bda191e4fcbfe`) addresses mobile LAN development when Next.js is bound to `0.0.0.0`. It adds explicit `BAREA_DEV_APP_URL` origin resolution, prevents `0.0.0.0` from being emitted as a browser redirect destination, fails closed when no explicit development origin is available, and allows the LAN origin through Next.js `allowedDevOrigins` for HMR/Fast Refresh.
+
+PR #21 verification:
+- `npm test` — **259/259 PASS**
+- `npm run typecheck` — **PASS**
+- `npm run build:next` — **PASS**
+- `git diff --check` — **PASS**
+
+**Google Web OAuth limitation:** Do not register a private LAN IP such as `https://192.168.1.7:3000/api/auth/callback/google` as the Web OAuth redirect URI. Use the LAN origin for mobile UI/responsive development, but use an approved hostname such as local `https://localhost:3000` for complete Google OAuth testing until a suitable development hostname/tunnel is available.
+
 ### Cloudflare HTTPS Validation
 
 **DEFERRED — CUSTOM DOMAIN REQUIRED**
