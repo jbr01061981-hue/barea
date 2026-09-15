@@ -1,9 +1,12 @@
 import './teacher-workspace.css';
 import { logoutAction } from '../login/actions';
+import { HistoryBfcacheGuard } from '../history-bfcache-guard';
 
 export default function TeacherLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="teacher-workspace-shell">
+    <div data-barea-auth-shell="" className="teacher-workspace-shell">
+      <HistoryBfcacheGuard />
+
       <aside className="teacher-workspace-sidebar" aria-label="Teacher workspace navigation">
         <a href="/teacher/quizzes" className="teacher-workspace-wordmark">BAREA</a>
         <p className="teacher-workspace-eyebrow">TEACHER WORKSPACE</p>

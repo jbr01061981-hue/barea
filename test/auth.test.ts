@@ -1505,7 +1505,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     const fs = await import('fs');
     const path = await import('path');
     const manifestPath = path.join(process.cwd(), '.next', 'server', 'server-reference-manifest.json');
-    
+
     // The manifest MUST exist; test strictly fails if manifest is missing (production next build required)
     assert.ok(
       fs.existsSync(manifestPath),
@@ -1964,5 +1964,433 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
         delete process.env.BAREA_DEV_APP_URL;
       }
     }
+  });
+
+  // ============================================================
+  // LOGOUT / BROWSER HISTORY / BFCACHE HARDENING TESTS (01 - 06)
+  // ============================================================
+
+  await t.test('LOGOUT-HISTORY-01: Authenticated session logs out -> session revoked in database, session cookie deleted, redirected to public destination', async () => {
+    const user = authRepo.createUser({ email: 'logout-01@church.org', displayName: 'Logout Test User' });
+    const { rawToken } = authRepo.createSession(user.id);
+
+    // Verify session is active before logout
+    const preSession = authService.resolveSession(rawToken);
+    assert.ok(preSession !== null, 'Session must resolve prior to logout');
+    assert.equal(preSession?.user.id, user.id);
+
+    // Call authoritative logout
+    authService.logout(rawToken);
+
+    // Verify server-side session is revoked in database
+    const postSession = authService.resolveSession(rawToken);
+    assert.equal(postSession, null, 'Revoked session must not resolve in auth service or database');
+  });
+
+  await t.test('LOGOUT-HISTORY-02: A revoked session cannot authenticate /home and fails closed to null context', async () => {
+    const user = authRepo.createUser({ email: 'logout-02@church.org', displayName: 'Revoked Home User' });
+    const { rawToken } = authRepo.createSession(user.id);
+    setSessionTokenForTesting(rawToken);
+
+    // 1. Authenticated
+    const activeContext = await getUnifiedUserContext();
+    assert.ok(activeContext !== null);
+    assert.equal(activeContext?.userId, user.id);
+
+    // 2. Revoke session server-side
+    authService.logout(rawToken);
+
+    // 3. Attempting to resolve /home with the revoked session token fails closed
+    const revokedContext = await getUnifiedUserContext();
+    assert.equal(revokedContext, null, 'Revoked session token must strictly fail closed to null for /home');
+    setSessionTokenForTesting(null);
+  });
+
+  await t.test('LOGOUT-HISTORY-03: A revoked session cannot access protected teacher routes and fails closed with TeacherUnauthorizedError', async () => {
+    const teacher = authRepo.createUser({ email: 'logout-03-teacher@church.org', displayName: 'Revoked Teacher' });
+    authRepo.addOrganizationMembership('church-berea-org', teacher.id, 'teacher');
+    const { rawToken } = authRepo.createSession(teacher.id);
+    setSessionTokenForTesting(rawToken);
+
+    // 1. Authorized teacher
+    const activeTeacher = await getAuthorizedTeacherContext();
+    assert.equal(activeTeacher.userId, teacher.id);
+    assert.equal(activeTeacher.role, 'teacher');
+
+    // 2. Revoke session server-side
+    authService.logout(rawToken);
+
+    // 3. Attempting teacher resolution with revoked session token strictly throws TeacherUnauthorizedError
+    await assert.rejects(
+      async () => getAuthorizedTeacherContext(),
+      /invalid or expired session/i
+    );
+    setSessionTokenForTesting(null);
+  });
+
+  await t.test('LOGOUT-HISTORY-04: Logout redirect uses RedirectType.replace semantics at application level', async () => {
+    const fs = await import('node:fs/promises');
+    const actionsSrc = await fs.readFile('src/app/login/actions.ts', 'utf8');
+
+    // Verify import of RedirectType from next/navigation
+    assert.match(actionsSrc, /import\s+.*RedirectType.*from\s+['"]next\/navigation['"]/);
+    // Verify redirect('/', RedirectType.replace) is used
+    assert.match(actionsSrc, /redirect\(\s*['"]\/['"]\s*,\s*RedirectType\.replace\s*\)/);
+  });
+
+  await t.test('LOGOUT-HISTORY-05: Authenticated and protected routes emit restrictive cache headers (no-store, no-cache, must-revalidate)', async () => {
+    // 1. Verify next.config.js configuration rules
+    const pathMod = await import('node:path');
+    const { pathToFileURL } = await import('node:url');
+    const configPath = pathMod.resolve(process.cwd(), 'next.config.js');
+    const importedConfig = await import(pathToFileURL(configPath).href);
+    const nextConfig = importedConfig.default || importedConfig;
+    assert.ok(typeof nextConfig.headers === 'function', 'next.config.js must define headers()');
+    const headerEntries = await nextConfig.headers();
+    assert.ok(Array.isArray(headerEntries), 'headers() must return an array');
+
+    // Verify explicit route patterns /home, /teacher, /teacher/:path*
+    const requiredPatterns = ['/home', '/teacher', '/teacher/:path*'];
+    for (const pattern of requiredPatterns) {
+      const matchEntry: any = (headerEntries as any[]).find((e: any) => e.source === pattern);
+      assert.ok(matchEntry, `Must have explicit header entry covering route pattern: ${pattern}`);
+      const cacheControlHeader = matchEntry.headers.find((h: any) => h.key.toLowerCase() === 'cache-control');
+      assert.ok(cacheControlHeader, `Must define Cache-Control header for pattern: ${pattern}`);
+      assert.match(cacheControlHeader.value, /no-store/i);
+      assert.match(cacheControlHeader.value, /no-cache/i);
+      assert.match(cacheControlHeader.value, /must-revalidate/i);
+    }
+
+    // 2. Verify runtime response headers emitted by session verification API
+    const { GET: sessionGet } = await import('../src/app/api/auth/session/route.js');
+    const mockReq = {
+      cookies: {
+        get: (_name: string) => undefined
+      }
+    };
+    const response = await sessionGet(mockReq as any);
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get('cache-control'), 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    assert.equal(response.headers.get('pragma'), 'no-cache');
+    assert.equal(response.headers.get('expires'), '0');
+  });
+
+  await t.test('LOGOUT-HISTORY-06: Session probe distinguishes authenticated, revoked, and absent sessions with strict data minimization', async () => {
+    const { GET: sessionGet } = await import('../src/app/api/auth/session/route.js');
+
+    // Case 1: No session cookie
+    const reqNoCookie = {
+      cookies: {
+        get: (_name: string) => undefined
+      }
+    };
+    const resNoCookie = await sessionGet(reqNoCookie as any);
+    assert.equal(resNoCookie.status, 401);
+    const bodyNoCookie = await resNoCookie.json();
+    assert.deepEqual(bodyNoCookie, { authenticated: false });
+    assert.equal(Object.prototype.hasOwnProperty.call(bodyNoCookie, 'userId'), false, 'Must not disclose userId');
+    assert.equal(Object.prototype.hasOwnProperty.call(bodyNoCookie, 'isTeacherAuthorized'), false, 'Must not disclose isTeacherAuthorized');
+
+    // Case 2: Valid active session -> returns strictly { authenticated: true }
+    const activeUser = authRepo.createUser({ email: 'active-session@church.org', displayName: 'Active User' });
+    const { rawToken } = authRepo.createSession(activeUser.id);
+    const reqActive = {
+      cookies: {
+        get: (name: string) => (name === 'barea_session' ? { value: rawToken } : undefined)
+      }
+    };
+    const resActive = await sessionGet(reqActive as any);
+    assert.equal(resActive.status, 200);
+    const bodyActive = await resActive.json();
+    assert.deepEqual(bodyActive, { authenticated: true });
+    assert.equal(Object.prototype.hasOwnProperty.call(bodyActive, 'userId'), false, 'Must not disclose userId in minimized contract');
+    assert.equal(Object.prototype.hasOwnProperty.call(bodyActive, 'isTeacherAuthorized'), false, 'Must not disclose role capabilities');
+
+    // Case 3: Revoked session
+    authService.logout(rawToken);
+    const resRevoked = await sessionGet(reqActive as any);
+    assert.equal(resRevoked.status, 401);
+    const bodyRevoked = await resRevoked.json();
+    assert.deepEqual(bodyRevoked, { authenticated: false });
+  });
+
+  await t.test('LOGOUT-HISTORY-07: Production HistoryBfcacheGuard handles pageshow, synchronous hiding, probe outcomes, and race conditions', async () => {
+    const { HistoryBfcacheGuard } = await import('../src/app/history-bfcache-guard.js');
+    const ReactModule = await import('react');
+    const ReactTarget: any = (ReactModule as any).default || ReactModule;
+
+    // Helper to simulate React hook execution in test environment
+    function mountGuard(props: { sessionEndpoint?: string; loginUrl?: string } = {}) {
+      const hooks: Array<{ current: any }> = [];
+      let hookIdx = 0;
+      let cleanup: (() => void) | void = undefined;
+
+      const origUseRef = ReactTarget.useRef;
+      const origUseEffect = ReactTarget.useEffect;
+
+      ReactTarget.useRef = ((init: any) => {
+        const i = hookIdx++;
+        if (!hooks[i]) hooks[i] = { current: init };
+        return hooks[i];
+      }) as any;
+
+      ReactTarget.useEffect = ((cb: () => (() => void) | void) => {
+        cleanup = cb();
+      }) as any;
+
+      try {
+        HistoryBfcacheGuard(props);
+      } finally {
+        ReactTarget.useRef = origUseRef;
+        ReactTarget.useEffect = origUseEffect;
+      }
+
+      return {
+        unmount: () => {
+          if (typeof cleanup === 'function') {
+            cleanup();
+          }
+        }
+      };
+    }
+
+    // Sub-test A: Non-persisted pageshow does NOT trigger suppression or fetch
+    {
+      const eventListeners: Record<string, Function> = {};
+      const mockShells = [{ style: { visibility: 'visible' } }];
+      let fetchCalled = false;
+
+      globalThis.window = {
+        addEventListener: (event: string, handler: Function) => { eventListeners[event] = handler; },
+        removeEventListener: (event: string) => { delete eventListeners[event]; },
+        location: { replace: () => {}, reload: () => {} }
+      } as any;
+      globalThis.document = {
+        querySelectorAll: () => mockShells
+      } as any;
+      globalThis.fetch = (async () => {
+        fetchCalled = true;
+        return { ok: true, json: async () => ({ authenticated: true }) };
+      }) as any;
+
+      const { unmount } = mountGuard();
+      assert.ok(eventListeners['pageshow'], 'Must register pageshow event listener');
+
+      // Fire normal navigation (persisted = false)
+      eventListeners['pageshow']({ persisted: false });
+      assert.equal(mockShells[0].style.visibility, 'visible', 'Shell must remain visible when persisted is false');
+      assert.equal(fetchCalled, false, 'Fetch must not be called when persisted is false');
+
+      unmount();
+      delete (globalThis as any).window;
+      delete (globalThis as any).document;
+      delete (globalThis as any).fetch;
+    }
+
+    // Sub-test B: Synchronous suppression before fetch resolution and restoration on 200 { authenticated: true }
+    {
+      const eventListeners: Record<string, Function> = {};
+      const mockShells = [
+        { style: { visibility: 'visible' } },
+        { style: { visibility: 'visible' } }
+      ];
+
+      let resolveFetch!: (value: any) => void;
+      const fetchPromise = new Promise((resolve) => {
+        resolveFetch = resolve;
+      });
+
+      globalThis.window = {
+        addEventListener: (event: string, handler: Function) => { eventListeners[event] = handler; },
+        removeEventListener: (event: string) => { delete eventListeners[event]; },
+        location: { replace: () => {}, reload: () => {} }
+      } as any;
+      globalThis.document = {
+        querySelectorAll: (sel: string) => sel === '[data-barea-auth-shell]' ? mockShells : []
+      } as any;
+      globalThis.fetch = (() => fetchPromise) as any;
+
+      const { unmount } = mountGuard();
+
+      // Trigger bfcache restoration
+      eventListeners['pageshow']({ persisted: true });
+
+      // SYNCHRONOUS CHECK: Before fetch resolves, all shells MUST already be hidden
+      assert.equal(mockShells[0].style.visibility, 'hidden', 'Shell 1 must be hidden synchronously');
+      assert.equal(mockShells[1].style.visibility, 'hidden', 'Shell 2 must be hidden synchronously');
+
+      // Now resolve fetch with valid session
+      resolveFetch({
+        ok: true,
+        json: async () => ({ authenticated: true })
+      });
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      // POST-PROBE CHECK: Shells restored to visible
+      assert.equal(mockShells[0].style.visibility, 'visible', 'Shell 1 must be restored to visible');
+      assert.equal(mockShells[1].style.visibility, 'visible', 'Shell 2 must be restored to visible');
+
+      unmount();
+      delete (globalThis as any).window;
+      delete (globalThis as any).document;
+      delete (globalThis as any).fetch;
+    }
+
+    // Sub-test C: Invalid session (401 / authenticated: false) keeps shells hidden and calls location.replace('/login')
+    {
+      const eventListeners: Record<string, Function> = {};
+      const mockShells = [
+        { style: { visibility: 'visible' } },
+        { style: { visibility: 'visible' } }
+      ];
+      let replacedLocation: string | null = null;
+
+      globalThis.window = {
+        addEventListener: (event: string, handler: Function) => { eventListeners[event] = handler; },
+        removeEventListener: (event: string) => { delete eventListeners[event]; },
+        location: {
+          replace: (url: string) => { replacedLocation = url; },
+          reload: () => {}
+        }
+      } as any;
+      globalThis.document = {
+        querySelectorAll: (sel: string) => sel === '[data-barea-auth-shell]' ? mockShells : []
+      } as any;
+      globalThis.fetch = (async () => ({
+        ok: false,
+        status: 401,
+        json: async () => ({ authenticated: false })
+      })) as any;
+
+      const { unmount } = mountGuard({ loginUrl: '/login' });
+
+      eventListeners['pageshow']({ persisted: true });
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Shells MUST remain hidden and location replaced to loginUrl
+      assert.equal(mockShells[0].style.visibility, 'hidden', 'Shell 1 must remain hidden on 401');
+      assert.equal(mockShells[1].style.visibility, 'hidden', 'Shell 2 must remain hidden on 401');
+      assert.equal(replacedLocation, '/login', 'Must replace location to /login');
+
+      unmount();
+      delete (globalThis as any).window;
+      delete (globalThis as any).document;
+      delete (globalThis as any).fetch;
+    }
+
+    // Sub-test D: Network failure calls window.location.reload()
+    {
+      const eventListeners: Record<string, Function> = {};
+      const mockShells = [{ style: { visibility: 'visible' } }];
+      let reloadCalled = false;
+
+      globalThis.window = {
+        addEventListener: (event: string, handler: Function) => { eventListeners[event] = handler; },
+        removeEventListener: (event: string) => { delete eventListeners[event]; },
+        location: {
+          replace: () => {},
+          reload: () => { reloadCalled = true; }
+        }
+      } as any;
+      globalThis.document = {
+        querySelectorAll: (sel: string) => sel === '[data-barea-auth-shell]' ? mockShells : []
+      } as any;
+      globalThis.fetch = (async () => {
+        throw new Error('Network offline');
+      }) as any;
+
+      const { unmount } = mountGuard();
+
+      eventListeners['pageshow']({ persisted: true });
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      assert.equal(mockShells[0].style.visibility, 'hidden', 'Shell must remain hidden');
+      assert.equal(reloadCalled, true, 'window.location.reload() must be called on network error');
+
+      unmount();
+      delete (globalThis as any).window;
+      delete (globalThis as any).document;
+      delete (globalThis as any).fetch;
+    }
+
+    // Sub-test E: Stale probe response is ignored when newer pageshow probe has superseded it
+    {
+      const eventListeners: Record<string, Function> = {};
+      const mockShells = [{ style: { visibility: 'visible' } }];
+      let replacedLocation: string | null = null;
+
+      let resolveProbe1!: (val: any) => void;
+      const probe1Promise = new Promise((resolve) => { resolveProbe1 = resolve; });
+
+      let resolveProbe2!: (val: any) => void;
+      const probe2Promise = new Promise((resolve) => { resolveProbe2 = resolve; });
+
+      let probeCallCount = 0;
+      globalThis.window = {
+        addEventListener: (event: string, handler: Function) => { eventListeners[event] = handler; },
+        removeEventListener: (event: string) => { delete eventListeners[event]; },
+        location: {
+          replace: (url: string) => { replacedLocation = url; },
+          reload: () => {}
+        }
+      } as any;
+      globalThis.document = {
+        querySelectorAll: (sel: string) => sel === '[data-barea-auth-shell]' ? mockShells : []
+      } as any;
+      globalThis.fetch = (() => {
+        probeCallCount++;
+        return probeCallCount === 1 ? probe1Promise : probe2Promise;
+      }) as any;
+
+      const { unmount } = mountGuard({ loginUrl: '/login' });
+
+      // First restoration event begins
+      eventListeners['pageshow']({ persisted: true });
+      assert.equal(mockShells[0].style.visibility, 'hidden');
+
+      // Second restoration event fires before first resolves (e.g. rapid history steps)
+      eventListeners['pageshow']({ persisted: true });
+
+      // Resolve Probe 2 as INVALID (401)
+      resolveProbe2({
+        ok: false,
+        status: 401,
+        json: async () => ({ authenticated: false })
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      assert.equal(replacedLocation, '/login', 'Probe 2 replaced location to /login');
+
+      // Now resolve the late Probe 1 as VALID (200)
+      // Stale Probe 1 MUST NOT restore the shell to visible!
+      resolveProbe1({
+        ok: true,
+        json: async () => ({ authenticated: true })
+      });
+      await new Promise((r) => setTimeout(r, 10));
+
+      assert.equal(mockShells[0].style.visibility, 'hidden', 'Stale probe 1 MUST NOT restore visibility');
+
+      unmount();
+      delete (globalThis as any).window;
+      delete (globalThis as any).document;
+      delete (globalThis as any).fetch;
+    }
+  });
+
+  await t.test('LOGOUT-HISTORY-08: Authenticated surfaces in site-nav, home, and teacher-layout declare data-barea-auth-shell marker', async () => {
+    const fs = await import('node:fs/promises');
+    const siteNavSrc = await fs.readFile('src/app/site-nav.tsx', 'utf8');
+    const homePageSrc = await fs.readFile('src/app/home/page.tsx', 'utf8');
+    const teacherLayoutSrc = await fs.readFile('src/app/teacher/layout.tsx', 'utf8');
+
+    // site-nav: authenticated navigation wrapper must have data-barea-auth-shell
+    assert.match(siteNavSrc, /data-barea-auth-shell/);
+    // home/page: workspace container must have data-barea-auth-shell
+    assert.match(homePageSrc, /data-barea-auth-shell/);
+    // teacher/layout: workspace shell must have data-barea-auth-shell
+    assert.match(teacherLayoutSrc, /data-barea-auth-shell/);
   });
 });
