@@ -4,11 +4,44 @@
 
 ## Current status
 
-**Main baseline:** PR #20 merged on 2026-09-14 as `298eccbabc7090531c9c31c2bc94c79592d11edb`.
+**Main baseline:** PR #22 merged on 2026-09-16 as `345f72d0f86de61373a6ed080a42372492ab017b`.
 
-The unified authenticated home, Google-only authentication, hardened OAuth flow, server-authoritative session handling, and local HTTPS development support are now part of `main`.
+PR #20 established the unified authenticated home, Google-only authentication, hardened OAuth flow, and server-authoritative session handling. PR #22 subsequently completed logout/browser-history/bfcache hardening and is now part of `main`.
 
-**Mobile LAN development:** PR #21 (`c040ec7e2ee5d92e5950d8b4886bda191e4fcbfe`) is open and mergeable, but not yet merged into `main`. It fixes the development-origin failure that caused post-auth redirects to `https://0.0.0.0:3000/home` when Next.js is bound to `0.0.0.0`, adds explicit `BAREA_DEV_APP_URL` support, enables LAN HMR through `allowedDevOrigins`, and adds four regression tests.
+### PR #22 — Logout / Browser History / bfcache Hardening
+
+**Status: COMPLETE / REVIEWED / VERIFIED / MERGED**
+
+Merge commit: `345f72d0f86de61373a6ed080a42372492ab017b`
+
+The implementation improvements now present on `main` include:
+- `logoutAction` uses `RedirectType.replace` after server-side session revocation and cookie deletion.
+- Protected `/home` and `/teacher/*` routes emit restrictive `Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate`, `Pragma: no-cache`, and `Expires: 0` headers.
+- New `/api/auth/session` provides a minimal server-authoritative session-validity probe and returns only `{ authenticated: true }` or `{ authenticated: false }`.
+- New `HistoryBfcacheGuard` detects `pageshow` events restored from bfcache and synchronously suppresses authenticated shells before probing the server.
+- Active sessions restore authenticated shells only after a successful server probe.
+- Invalid/revoked sessions remain hidden and are redirected with `window.location.replace('/login')`.
+- Probe/network failure reloads through the normal server-authoritative route checks.
+- Sequence tracking prevents stale asynchronous probes from restoring a superseded history state.
+- Authenticated shell coverage includes global authenticated navigation, `/home`, and the teacher workspace.
+- Regression tests `LOGOUT-HISTORY-01` through `LOGOUT-HISTORY-08` cover session invalidation, protected access, history replacement, cache rules, probe data minimization, production guard behavior, race conditions, and shell markers.
+
+Final verification after cleanup and merge:
+- `npm test` — **263 passing / 0 failing**
+- `npm run typecheck` — **PASS**
+- `npm run build:next` — **PASS**
+- `git diff --check` — **CLEAN**
+- Standard merge commit used; no squash or rebase.
+- Only the intended eight implementation/test files entered `main` through PR #22.
+- LAN OAuth changes from PR #21 were not introduced by PR #22 and remain isolated in PR #21 / `barea-dev-lan-origin`.
+
+The core security invariant is preserved: logout revokes the server-side session, and browser history, reload, direct navigation, or stale bfcache state cannot resurrect that session as an authenticated/usable BAREA page. Some mobile OS/compositor gesture snapshots remain outside JavaScript control; this is a platform rendering limitation, not an authorization mechanism.
+
+## Mobile LAN Development
+
+**PR #21 — APPROVED / OPEN / NOT YET MERGED**
+
+PR #21 (`c040ec7e2ee5d92e5950d8b4886bda191e4fcbfe`) addresses mobile LAN development when Next.js is bound to `0.0.0.0`. It adds explicit `BAREA_DEV_APP_URL` origin resolution, prevents `0.0.0.0` from being emitted as a browser redirect destination, fails closed when no explicit development origin is available, and allows the LAN origin through Next.js `allowedDevOrigins` for HMR/Fast Refresh.
 
 PR #21 verification:
 - `npm test` — **259 passing / 0 failing**
@@ -18,27 +51,22 @@ PR #21 verification:
 
 **Google Web OAuth limitation for LAN development:** Do not register a private LAN IP such as `https://192.168.1.7:3000/api/auth/callback/google` as the Web OAuth redirect URI. LAN IP access is appropriate for mobile UI/responsive development, but complete Google OAuth testing must use an approved hostname such as local `https://localhost:3000` until a suitable development hostname/tunnel is available.
 
-Verification associated with the merged milestone:
-- `npm test` — **255 passing / 0 failing**
-- `npm run typecheck` — **PASS**
-- `npm run build:next` — **PASS**
-- `git diff --check` — **PASS**
-- Local HTTPS Google OAuth flow — **PASS**
-- Logout and server-side session invalidation — **PASS**
+PR #21 remains a branch/PR state and must not be described as part of `main` until separately merged and verified.
 
-Cloudflare public HTTPS validation is **deferred** because the current Cloudflare account has no suitable custom DNS zone/domain. No Cloudflare tunnel or DNS infrastructure was provisioned.
+## Milestone sequence
 
 | Stage | Frontend scope | Status | Repository state |
 |---|---|---|---|
-| Phase 1 / Auth | Unified authenticated identity/session + Google-only login + hardened OAuth + unified `/home` | **COMPLETE / MERGED** | Present on `main` via PR #20 merge `298eccb` |
-| Mobile LAN Dev | Explicit development origin + LAN HMR/OAuth redirect resolution | **APPROVED / PR OPEN** | PR #21 `c040ec7`; not yet merged to `main` |
+| Phase 1 / Auth | Unified authenticated identity/session + Google-only login + hardened OAuth + unified `/home` | **COMPLETE / MERGED** | PR #20 merged; further logout/history hardening merged via PR #22 |
+| Logout / History | Logout replacement + bfcache/session restoration privacy hardening | **COMPLETE / MERGED** | PR #22 merged as `345f72d` |
+| Mobile LAN Dev | Explicit development origin + LAN HMR/origin resolution | **APPROVED / PR OPEN** | PR #21 `c040ec7`; not yet merged to `main` |
 | BAREA-008 | Public homepage / landing foundation | **MERGED** | Present on `main` |
 | BAREA-008A | Public homepage visual redesign + public entry UX | **MERGED** | Present on `main` |
-| BAREA-008B | Public homepage refinement | **CURRENT / DESIGN REFINEMENT** | Active work exists on dedicated `barea-008b-*` branches; not merged to `main` |
+| BAREA-008B | Public homepage refinement | **CURRENT / DESIGN REFINEMENT** | Dedicated 008B branches; not merged to `main` |
 | BAREA-009 | Teacher Workspace / Quiz Library redesign | **NEXT MAJOR** | Not started on `main` |
 | BAREA-010 | Quiz Builder / Question UX | Planned | Not started |
 | BAREA-011 | Teacher Review / Question Bank UX | Planned | Not started |
-| BAREA-012 | Share Quiz / Join experience | Planned | Not started as the next frontend milestone |
+| BAREA-012 | Share Quiz / Join experience | Planned | Not started |
 | BAREA-013 | Host Lobby | Planned | Not started |
 | BAREA-014 | Participant mobile quiz | Planned | Not started |
 | BAREA-015 | Live Host Console | Planned | Not started |
@@ -49,7 +77,7 @@ Cloudflare public HTTPS validation is **deferred** because the current Cloudflar
 
 **Status: COMPLETE — REVIEWED, VERIFIED, MERGED**
 
-PR #20 completed the current unified authentication/access milestone and is merged into `main`.
+PR #20 completed the unified authentication/access milestone. The current `main` additionally includes PR #22 logout/history hardening.
 
 Established user-facing and access behavior includes:
 - Google-only federated individual authentication.
@@ -63,7 +91,7 @@ Established user-facing and access behavior includes:
 - Multiple tabs/windows/devices remain allowed; no blanket single-session restriction is introduced.
 - Workspace query parameters are UI state only and cannot grant privileges.
 - Host cannot participate in their own real live session as a normal participant.
-- Preview/test behavior is designed to remain distinct from real participant admission.
+- Preview/test behavior remains distinct from real participant admission.
 
 ### OAuth verification status
 
@@ -80,22 +108,7 @@ The merged implementation includes:
 - Return-to/open-redirect protection.
 - Google token exchange timeout protection.
 
-Local HTTPS browser verification completed successfully against:
-
-`https://localhost:3000`
-
-including Google login, callback, authenticated home, workspace navigation, logout, second login, and post-logout session invalidation.
-
-### Mobile LAN development-origin status
-
-PR #21 addresses development-only origin handling when Next.js listens on all interfaces:
-- `BAREA_DEV_APP_URL` provides an explicit browser-visible development origin.
-- `0.0.0.0` is never emitted as a client redirect destination.
-- If development resolves to `0.0.0.0` without an explicit development origin, origin resolution fails closed with an actionable configuration error.
-- `allowedDevOrigins` permits the configured LAN development origin for Next.js HMR/Fast Refresh.
-- Production ignores `BAREA_DEV_APP_URL` and continues to use authoritative production configuration.
-
-PR #21 is verified but remains a branch/PR state until merged. It must not be described as part of `main` implementation before merge.
+Local HTTPS browser verification completed successfully against `https://localhost:3000`, including Google login, callback, authenticated home, workspace navigation, logout, second login, and post-logout session invalidation.
 
 ## BAREA-008B — Public homepage refinement
 
@@ -148,15 +161,9 @@ Do not jump directly from the homepage to the live quiz console. Progressively e
 - If a frontend experience depends on backend capability that does not yet exist, record it as a dependency/backend gap.
 - GitHub `main` and the implementation in the repository are the source of truth; this progress document records frontend sequence and evidence.
 
-## Authentication and access status
-
-Phase 1 authentication/access is complete on `main` via PR #20. The repository now contains the unified account/session foundation, Google-only OAuth/OIDC authentication, hardened OAuth transaction handling, server-authoritative sessions, explicit account-collision handling, teacher authorization boundaries, unified authenticated home, and the logout/session-revocation behavior.
-
-A user who authenticates successfully but has no teacher/admin membership must remain denied from `/teacher/*`; frontend work must not introduce a teacher bypass. Individual authenticated participation and teacher authorization remain separate concerns.
-
 ## Infrastructure validation status
 
-Cloudflare public HTTPS testing is deferred. The Cloudflare account currently has no active DNS zones/domains and no existing named tunnel. The existing `berea-api-production.jbr01061981.workers.dev` Worker is a separate backend/legacy service and must remain untouched.
+Cloudflare public HTTPS validation is deferred because the current Cloudflare account has no active DNS zones/domains and no existing named tunnel. The existing `berea-api-production.jbr01061981.workers.dev` service is a separate backend/legacy Worker and remains untouched.
 
 A future stable Cloudflare HTTPS test requires a suitable custom domain. Ephemeral Quick Tunnels may be used for non-OAuth connectivity smoke testing, but they are not the authoritative Google OAuth validation path.
 
