@@ -77,13 +77,29 @@ The merged milestone establishes:
 - Create & Host capability presentation with server-side authorization remaining authoritative.
 - Host protection preventing a live-session host from joining their own session as a normal participant.
 
-Verification associated with the merged milestone:
-- `npm test` — **255/255 PASS**
+### Logout / Browser History / bfcache Hardening
+
+**COMPLETE — REVIEWED, VERIFIED, MERGED**
+
+PR #22, **"fix(auth): harden logout history restoration,"** is merged into `main` as commit `345f72d0f86de61373a6ed080a42372492ab017b` using a standard merge commit.
+
+The milestone adds:
+- Logout history replacement using `RedirectType.replace`.
+- Restrictive cache headers for `/home` and `/teacher/*` protected surfaces.
+- A minimal server-authoritative `/api/auth/session` validity probe returning only `{ authenticated: true }` or `{ authenticated: false }`.
+- `HistoryBfcacheGuard` protection for authenticated navigation restored from browser Back/Forward Cache.
+- Synchronous suppression of authenticated shells before the session probe completes.
+- Fail-closed invalid-session handling and server-authoritative reload behavior on probe/network failure.
+- Stale-probe race protection.
+- Authenticated shell coverage for global navigation, `/home`, and the teacher workspace.
+- Eight dedicated `LOGOUT-HISTORY` regression tests covering invalidation, protected access, history replacement, cache headers, session-probe minimization, guard lifecycle, race handling, and shell coverage.
+
+Final PR #22 verification:
+- `npm test` — **263/263 PASS**
 - `npm run typecheck` — **PASS**
 - `npm run build:next` — **PASS**
-- `git diff --check` — **PASS**
-- Local HTTPS Google OAuth browser flow — **PASS**
-- Logout and post-logout server-side session invalidation — **PASS**
+- `git diff --check` — **CLEAN**
+- No LAN OAuth changes from PR #21 entered `main` through PR #22.
 
 ### Mobile LAN Development
 
