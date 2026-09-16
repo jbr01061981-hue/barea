@@ -1,7 +1,7 @@
 'use server';
 
 import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
+import { redirect, RedirectType } from 'next/navigation';
 import { getAuthService } from '../teacher/review/db';
 
 /**
@@ -22,5 +22,5 @@ export async function logoutAction(): Promise<void> {
     path: '/'
   });
 
-  redirect('/');
+  redirect('/', RedirectType.replace);
 }

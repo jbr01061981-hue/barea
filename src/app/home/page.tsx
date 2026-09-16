@@ -2,6 +2,7 @@ import { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { getUnifiedUserContext } from '../teacher/review/db';
 import { WorkspaceView } from './workspace-view';
+import { HistoryBfcacheGuard } from '../history-bfcache-guard';
 
 export const metadata: Metadata = {
   title: 'Workspace — BAREA',
@@ -25,7 +26,9 @@ export default async function HomePage({
   const initialWorkspace = params?.workspace === 'create-host' ? 'create-host' : 'individual';
 
   return (
-    <div className="min-h-[calc(100svh-4.5rem)] bg-[var(--barea-midnight)] text-[var(--barea-ivory)] px-4 py-6 sm:px-6 lg:px-8">
+    <div data-barea-auth-shell="" className="min-h-[calc(100svh-4.5rem)] bg-[var(--barea-midnight)] text-[var(--barea-ivory)] px-4 py-6 sm:px-6 lg:px-8">
+      <HistoryBfcacheGuard />
+
       <div className="mx-auto max-w-4xl">
         <WorkspaceView
           initialWorkspace={initialWorkspace}

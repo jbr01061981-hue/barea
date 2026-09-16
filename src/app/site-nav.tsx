@@ -7,8 +7,9 @@ export async function SiteNav() {
 
   if (user) {
     return (
-      <div className="flex items-center gap-3 sm:gap-6">
+      <div data-barea-auth-shell="" className="flex items-center gap-3 sm:gap-6">
         {/* Desktop / Tablet horizontal navigation */}
+
         <nav aria-label="Authenticated navigation" className="hidden sm:flex items-center gap-3 md:gap-5">
           <a
             href="/home?workspace=individual"
