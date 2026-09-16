@@ -4,11 +4,47 @@ This roadmap reconciles the core product phases with the implementation mileston
 
 ## Current Development Status
 
-**Main branch baseline: PR #20 merged on 2026-09-14.**
+**Main branch baseline: PR #22 merged on 2026-09-16.**
 
-Merge commit: `298eccbabc7090531c9c31c2bc94c79592d11edb`
+Merge commit: `345f72d0f86de61373a6ed080a42372492ab017b`
 
-The unified authentication/home and hardened Google OAuth milestone is now part of `main`.
+PR #22 (`fix(auth): harden logout history restoration`) completed and merged the logout/browser-history/bfcache hardening milestone. The implementation protects authenticated BAREA surfaces against stale browser history restoration after logout while preserving server-authoritative session enforcement.
+
+Verified PR #22 final state:
+- `npm test` — **263 passing / 0 failing**
+- `npm run typecheck` — **PASS**
+- `npm run build:next` — **PASS**
+- `git diff --check` — **CLEAN**
+- PR #22 merged with a standard merge commit; no squash/rebase.
+
+PR #22 scope was independently cleaned before merge. Only the intended eight files entered `main`:
+- `next.config.js`
+- `src/app/api/auth/session/route.ts`
+- `src/app/history-bfcache-guard.tsx`
+- `src/app/home/page.tsx`
+- `src/app/login/actions.ts`
+- `src/app/site-nav.tsx`
+- `src/app/teacher/layout.tsx`
+- `test/auth.test.ts`
+
+The PR #22 merge did **not** introduce the LAN OAuth development-origin changes from PR #21. Those remain isolated in PR #21 / `barea-dev-lan-origin` until separately merged and verified.
+
+### Logout / Browser History / bfcache Hardening — COMPLETE
+
+The merged implementation establishes:
+- Server-side session revocation remains authoritative on logout.
+- Logout uses `RedirectType.replace` so the current authenticated history entry is replaced by the public landing route.
+- Protected `/home` and `/teacher/*` responses receive restrictive no-store/no-cache headers.
+- `/api/auth/session` is a minimal server-authoritative session probe returning only `{ authenticated: true }` or `{ authenticated: false }`.
+- `HistoryBfcacheGuard` detects `pageshow` restoration with `event.persisted === true`.
+- Authenticated shells are synchronously hidden before the asynchronous session probe.
+- A valid active session restores the shells; an invalid session keeps them hidden and replaces the location with `/login`.
+- Network/probe failure reloads so the normal server-side authorization path decides access.
+- Probe sequence tracking prevents stale asynchronous responses from restoring a superseded history state.
+- Authenticated shell coverage includes global authenticated navigation, `/home`, and the teacher workspace.
+- Dedicated regression coverage `LOGOUT-HISTORY-01` through `LOGOUT-HISTORY-08` exercises logout invalidation, protected-route behavior, cache rules, data minimization, production guard lifecycle, race handling, and shell coverage.
+
+This milestone addresses the security invariant that a revoked BAREA session cannot be resurrected as an authenticated or usable page through browser Back/Forward, reload, or direct navigation. Browser/OS compositor snapshots may still be outside JavaScript control during some mobile gesture transitions; this remains a platform limitation rather than an authorization bypass.
 
 **Mobile LAN development-origin fix: PR #21 is reviewed and pending merge.**
 
@@ -22,11 +58,7 @@ The verified PR #21 gates are:
 
 **Google Web OAuth does not use a private LAN IP as the authoritative Web-client redirect URI.** Do not add `https://192.168.1.7:3000/api/auth/callback/google` to the Google Web OAuth client. LAN IP access remains suitable for mobile UI/responsive development; complete Google OAuth testing remains on an approved hostname such as local `https://localhost:3000` until a proper development hostname/tunnel is available.
 
-Verified on the merged branch before/after merge:
-- `npm test` — **255 passing / 0 failing**
-- `npm run typecheck` — **PASS**
-- `npm run build:next` — **PASS**
-- `git diff --check` — **PASS**
+Verified on the merged authentication branch:
 - Local HTTPS Google OAuth flow — **PASS**
 - Logout and server-side session invalidation — **PASS**
 
@@ -50,7 +82,7 @@ Established capabilities:
 - Create & Host remains server-authorized; the UI lock is not a security boundary.
 - Host cannot participate in their own real live session as a normal participant.
 
-The milestone was implemented in PR #20, merged to `main` as commit `298eccbabc7090531c9c31c2bc94c79592d11edb`. Local HTTPS development support was also added for OAuth testing.
+The authentication/home milestone was implemented in PR #20 and merged to `main` as commit `298eccbabc7090531c9c31c2bc94c79592d11edb`. PR #22 subsequently added and verified logout/history/bfcache hardening and is now merged as `345f72d0f86de61373a6ed080a42372492ab017b`.
 
 ## Phase 2 — Share, Join & Live Quiz
 
@@ -115,7 +147,7 @@ The frontend track progresses through these purpose-built experiences:
 | BAREA-008A | Public homepage visual redesign + public entry UX | **MERGED** |
 | BAREA-008B | Public homepage refinement | **CURRENT / DESIGN REFINEMENT** |
 | BAREA-009 | Teacher Workspace / Quiz Library redesign | **NEXT MAJOR** |
-| BAREA-010 | Quiz Builder / Question UX | Planned |
+| BAREA-010 | Quiz Builder | Planned |
 | BAREA-011 | Teacher Review / Question Bank UX | Planned |
 | BAREA-012 | Share Quiz / Join experience | Planned |
 | BAREA-013 | Host Lobby | Planned |
