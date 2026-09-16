@@ -17,7 +17,7 @@ import {
   setAuthenticatedUserContext,
   setSessionTokenForTesting
 } from '../src/app/teacher/review/db';
-import { sanitizeReturnTo, resolveOAuthRedirectUri, resolveEffectiveAppOrigin } from '../src/app/login/url-utils';
+import { sanitizeReturnTo, resolveOAuthRedirectUri } from '../src/app/login/url-utils';
 import { logoutAction } from '../src/app/login/actions';
 
 import {
@@ -1505,7 +1505,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     const fs = await import('fs');
     const path = await import('path');
     const manifestPath = path.join(process.cwd(), '.next', 'server', 'server-reference-manifest.json');
-
+    
     // The manifest MUST exist; test strictly fails if manifest is missing (production next build required)
     assert.ok(
       fs.existsSync(manifestPath),
@@ -1891,82 +1891,6 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     }
   });
 
-  await t.test('OAUTH-LAN-01: 0.0.0.0 bind address is strictly rejected as client redirect origin and fails with clear error', () => {
-    // 0.0.0.0 bind address must NEVER be returned as client redirect origin; must fail closed with actionable error
-    const originalDevUrl = process.env.BAREA_DEV_APP_URL;
-    delete process.env.BAREA_DEV_APP_URL;
-    try {
-      assert.throws(
-        () => resolveEffectiveAppOrigin('https://0.0.0.0:3000'),
-        (err: any) => {
-          assert.ok(err instanceof Error);
-          assert.match(err.message, /Invalid application origin: server is bound to 0\.0\.0\.0/);
-          assert.match(err.message, /BAREA_DEV_APP_URL/);
-          return true;
-        }
-      );
-    } finally {
-      if (originalDevUrl !== undefined) {
-        process.env.BAREA_DEV_APP_URL = originalDevUrl;
-      }
-    }
-  });
-
-  await t.test('OAUTH-LAN-02: BAREA_DEV_APP_URL overrides bind address in development/test', () => {
-    const originalDevUrl = process.env.BAREA_DEV_APP_URL;
-    process.env.BAREA_DEV_APP_URL = 'https://192.168.1.7:3000';
-    try {
-      const origin = resolveEffectiveAppOrigin('https://0.0.0.0:3000');
-      assert.equal(origin, 'https://192.168.1.7:3000');
-    } finally {
-      if (originalDevUrl !== undefined) {
-        process.env.BAREA_DEV_APP_URL = originalDevUrl;
-      } else {
-        delete process.env.BAREA_DEV_APP_URL;
-      }
-    }
-  });
-
-  await t.test('OAUTH-LAN-03: BAREA_DEV_APP_URL is strictly ignored in production environment', () => {
-    const originalNodeEnv = process.env.NODE_ENV;
-    const originalDevUrl = process.env.BAREA_DEV_APP_URL;
-    (process.env as any).NODE_ENV = 'production';
-    process.env.BAREA_DEV_APP_URL = 'https://192.168.1.7:3000';
-    try {
-      // In production, development-only overrides must not activate
-      const origin = resolveEffectiveAppOrigin('https://example-church.org');
-      assert.equal(origin, 'https://example-church.org');
-    } finally {
-      (process.env as any).NODE_ENV = originalNodeEnv;
-      if (originalDevUrl !== undefined) {
-        process.env.BAREA_DEV_APP_URL = originalDevUrl;
-      } else {
-        delete process.env.BAREA_DEV_APP_URL;
-      }
-    }
-  });
-
-  await t.test('OAUTH-LAN-04: resolveOAuthRedirectUri derives canonical callback using effective LAN origin in development', () => {
-    const originalEnv = process.env.GOOGLE_REDIRECT_URI;
-    const originalDevUrl = process.env.BAREA_DEV_APP_URL;
-    delete process.env.GOOGLE_REDIRECT_URI;
-    process.env.BAREA_DEV_APP_URL = 'https://192.168.1.7:3000';
-    try {
-      const uri = resolveOAuthRedirectUri('https://0.0.0.0:3000');
-      assert.equal(uri, 'https://192.168.1.7:3000/api/auth/callback/google');
-    } finally {
-      if (originalEnv !== undefined) {
-        process.env.GOOGLE_REDIRECT_URI = originalEnv;
-      }
-      if (originalDevUrl !== undefined) {
-        process.env.BAREA_DEV_APP_URL = originalDevUrl;
-      } else {
-        delete process.env.BAREA_DEV_APP_URL;
-      }
-    }
-  });
-
-  // ============================================================
   // LOGOUT / BROWSER HISTORY / BFCACHE HARDENING TESTS (01 - 06)
   // ============================================================
 

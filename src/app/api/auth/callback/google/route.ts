@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthService } from '../../../../teacher/review/db';
-import { sanitizeReturnTo, resolveOAuthRedirectUri, resolveEffectiveAppOrigin } from '../../../../login/url-utils';
+import { sanitizeReturnTo, resolveOAuthRedirectUri } from '../../../../login/url-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
   const receivedState = searchParams.get('state');
   const providerError = searchParams.get('error');
 
-  const origin = resolveEffectiveAppOrigin(request.nextUrl.origin);
+  const origin = request.nextUrl.origin;
 
   // If Google sent an error (e.g. user canceled), fail generically without reflecting provider internals
   if (providerError) {
