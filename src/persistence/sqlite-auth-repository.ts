@@ -588,7 +588,7 @@ export class SqliteAuthRepository implements AuthRepository {
     return Number(result.changes ?? 0);
   }
 
-  transaction<T>(action: () => T): T {
+  private transaction<T>(action: () => T): T {
     this.db.exec('BEGIN IMMEDIATE TRANSACTION;');
     try {
       const result = action();
