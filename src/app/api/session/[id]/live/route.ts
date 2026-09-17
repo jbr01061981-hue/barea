@@ -27,7 +27,7 @@ export async function GET(
   }
 
   const repo = getSessionRepository();
-  const session = repo.findSessionById(sessionId);
+  const session = await repo.findSessionById(sessionId);
   if (!session) {
     return NextResponse.json({ error: 'SESSION_NOT_FOUND', message: 'Session not found or unavailable' }, { status: 404 });
   }
@@ -107,7 +107,7 @@ export async function GET(
     }
 
     try {
-      const { participant } = repo.resumeSession(sessionId, validatedToken);
+      const { participant } = await repo.resumeSession(sessionId, validatedToken);
       effectiveRole = 'participant';
       authenticatedUserId = participant.userId;
     } catch (err) {

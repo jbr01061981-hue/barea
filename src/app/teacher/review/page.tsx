@@ -22,7 +22,7 @@ export default async function TeacherReviewPage({
   const bankService = getQuestionBankService();
 
   // Fetch only PENDING_REVIEW questions for this authorized organization
-  const pendingQuestions = bankService.listQuestions(teacherContext.organizationId, {
+  const pendingQuestions = await bankService.listQuestions(teacherContext.organizationId, {
     status: QuestionStatus.PENDING_REVIEW,
   });
 

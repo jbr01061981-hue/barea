@@ -102,13 +102,13 @@ test('Teacher Auth Guard - Route Navigation Failure Semantics', async (t) => {
 
   await t.test('2. Authenticated user lacking teacher/admin role: redirects to access-denied error', async () => {
     // Create an authenticated user with NO teacher or admin memberships
-    const user = authRepo.createUser({
+    const user = await authRepo.createUser({
       displayName: 'Student Jane',
       email: 'student@berea.org',
       emailVerified: true,
     });
 
-    const { rawToken } = authRepo.createSession(user.id, 3600);
+    const { rawToken } = await authRepo.createSession(user.id, 3600);
     setSessionTokenForTesting(rawToken);
 
     await assert.rejects(
@@ -193,14 +193,14 @@ test('Teacher Auth Guard - Route Navigation Failure Semantics', async (t) => {
   });
 
   await t.test('5. Authorized teacher: successfully returns TeacherContext without redirecting', async () => {
-    const teacherUser = authRepo.createUser({
+    const teacherUser = await authRepo.createUser({
       displayName: 'Teacher Mark',
       email: 'teacher@berea.org',
       emailVerified: true,
     });
-    authRepo.addOrganizationMembership('org-sunday-school', teacherUser.id, 'teacher');
+    await authRepo.addOrganizationMembership('org-sunday-school', teacherUser.id, 'teacher');
 
-    const { rawToken } = authRepo.createSession(teacherUser.id, 3600);
+    const { rawToken } = await authRepo.createSession(teacherUser.id, 3600);
     setSessionTokenForTesting(rawToken);
 
     const ctx = await ensureAuthorizedTeacherPage('/teacher/quizzes');

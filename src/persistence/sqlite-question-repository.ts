@@ -14,11 +14,11 @@ import {
 } from '../domain/question';
 
 export interface QuestionRepository {
-  create(data: CreateQuestionPayload): Question;
-  findById(organizationId: string, id: string): Question | null;
-  update(organizationId: string, id: string, updates: UpdateQuestionPayload): Question | null;
-  list(organizationId: string, filter?: QuestionFilter): Question[];
-  transitionStatus(organizationId: string, id: string, targetStatus: QuestionStatus): Question | null;
+  create(data: CreateQuestionPayload): Promise<Question>;
+  findById(organizationId: string, id: string): Promise<Question | null>;
+  update(organizationId: string, id: string, updates: UpdateQuestionPayload): Promise<Question | null>;
+  list(organizationId: string, filter?: QuestionFilter): Promise<Question[]>;
+  transitionStatus(organizationId: string, id: string, targetStatus: QuestionStatus): Promise<Question | null>;
   transaction<T>(action: () => T): T;
   close(): void;
 }
@@ -116,7 +116,13 @@ export class SqliteQuestionRepository implements QuestionRepository {
     };
   }
 
-  create(data: CreateQuestionPayload): Question {
+  private _findByIdSync(organizationId: string, id: string): Question | null {
+    const stmt = this.db.prepare('SELECT * FROM questions WHERE organization_id = ? AND id = ?');
+    const row = stmt.get(organizationId, id) as unknown as QuestionRow | undefined;
+    return this._rowToEntity(row);
+  }
+
+  private _createSync(data: CreateQuestionPayload): Question {
     const payload: CreateQuestionPayload = {
       ...data,
       status: data.status || QuestionStatus.DRAFT
@@ -153,17 +159,23 @@ export class SqliteQuestionRepository implements QuestionRepository {
       updatedAt
     );
 
-    return this.findById(payload.organizationId, id)!;
+    return this._findByIdSync(payload.organizationId, id)!;
   }
 
-  findById(organizationId: string, id: string): Question | null {
-    const stmt = this.db.prepare('SELECT * FROM questions WHERE organization_id = ? AND id = ?');
-    const row = stmt.get(organizationId, id) as unknown as QuestionRow | undefined;
-    return this._rowToEntity(row);
+  createSync(data: CreateQuestionPayload): Question {
+    return this._createSync(data);
   }
 
-  update(organizationId: string, id: string, updates: UpdateQuestionPayload): Question | null {
-    const existing = this.findById(organizationId, id);
+  async create(data: CreateQuestionPayload): Promise<Question> {
+    return this._createSync(data);
+  }
+
+  async findById(organizationId: string, id: string): Promise<Question | null> {
+    return this._findByIdSync(organizationId, id);
+  }
+
+  private _updateSync(organizationId: string, id: string, updates: UpdateQuestionPayload): Question | null {
+    const existing = this._findByIdSync(organizationId, id);
     if (!existing) {
       return null;
     }
@@ -227,10 +239,14 @@ export class SqliteQuestionRepository implements QuestionRepository {
       id
     );
 
-    return this.findById(organizationId, id);
+    return this._findByIdSync(organizationId, id);
   }
 
-  list(organizationId: string, filter: QuestionFilter = {}): Question[] {
+  async update(organizationId: string, id: string, updates: UpdateQuestionPayload): Promise<Question | null> {
+    return this._updateSync(organizationId, id, updates);
+  }
+
+  async list(organizationId: string, filter: QuestionFilter = {}): Promise<Question[]> {
     let sql = 'SELECT * FROM questions WHERE organization_id = ?';
     const params: string[] = [organizationId];
 
@@ -266,8 +282,16 @@ export class SqliteQuestionRepository implements QuestionRepository {
     return rows.map((r) => this._rowToEntity(r)!);
   }
 
-  transitionStatus(organizationId: string, id: string, targetStatus: QuestionStatus): Question | null {
-    return this.update(organizationId, id, { status: targetStatus });
+  private _transitionStatusSync(organizationId: string, id: string, targetStatus: QuestionStatus): Question | null {
+    return this._updateSync(organizationId, id, { status: targetStatus });
+  }
+
+  transitionStatusSync(organizationId: string, id: string, targetStatus: QuestionStatus): Question | null {
+    return this._transitionStatusSync(organizationId, id, targetStatus);
+  }
+
+  async transitionStatus(organizationId: string, id: string, targetStatus: QuestionStatus): Promise<Question | null> {
+    return this._transitionStatusSync(organizationId, id, targetStatus);
   }
 
   close(): void {

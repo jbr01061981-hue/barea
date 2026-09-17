@@ -54,7 +54,7 @@ export async function listQuizzesAction(
   try {
     const context = await getAuthorizedTeacherContext();
     const service = getQuizService();
-    const quizzes = service.listQuizzes(context.organizationId, filter);
+    const quizzes = await service.listQuizzes(context.organizationId, filter);
     return { success: true, data: quizzes };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -69,7 +69,7 @@ export async function getQuizByIdAction(quizId: string): Promise<ActionResponse<
   try {
     const context = await getAuthorizedTeacherContext();
     const service = getQuizService();
-    const quiz = service.getQuiz(context.organizationId, quizId);
+    const quiz = await service.getQuiz(context.organizationId, quizId);
     if (!quiz) {
       return { success: false, error: `Quiz ${quizId} not found.` };
     }
@@ -97,7 +97,7 @@ export async function createQuizAction(
     const sanitizedScoring = input.scoringStyle === ScoringStyle.SPEED_WEIGHTED ? ScoringStyle.SPEED_WEIGHTED : ScoringStyle.STANDARD;
     const sanitizedShuffle = typeof input.optionShuffle === 'boolean' ? input.optionShuffle : false;
 
-    const quiz = service.createQuiz(context.organizationId, {
+    const quiz = await service.createQuiz(context.organizationId, {
       organizationId: context.organizationId,
       title: sanitizedTitle,
       description: sanitizedDesc,
@@ -145,7 +145,7 @@ export async function updateQuizAction(
       sanitizedUpdates.optionShuffle = input.optionShuffle;
     }
 
-    const updated = service.updateQuiz(context.organizationId, quizId, sanitizedUpdates);
+    const updated = await service.updateQuiz(context.organizationId, quizId, sanitizedUpdates);
     if (!updated) {
       return { success: false, error: `Quiz ${quizId} not found.` };
     }
@@ -176,7 +176,7 @@ export async function addQuestionToQuizAction(
         ? sortOrder
         : undefined;
 
-    const item = service.addQuestion(context.organizationId, quizId, questionId, sanitizedSortOrder);
+    const item = await service.addQuestion(context.organizationId, quizId, questionId, sanitizedSortOrder);
 
     safeRevalidate(`/teacher/quizzes/${quizId}`);
     return { success: true, data: item };
@@ -197,7 +197,7 @@ export async function removeQuestionFromQuizAction(
     const context = await getAuthorizedTeacherContext();
     const service = getQuizService();
 
-    const removed = service.removeQuestion(context.organizationId, quizId, questionId);
+    const removed = await service.removeQuestion(context.organizationId, quizId, questionId);
 
     safeRevalidate(`/teacher/quizzes/${quizId}`);
     return { success: true, data: { removed } };
@@ -222,7 +222,7 @@ export async function reorderQuizQuestionsAction(
       return { success: false, error: 'questionIdsInOrder must be an array of question IDs.' };
     }
 
-    const reordered = service.reorderQuestions(context.organizationId, quizId, questionIdsInOrder);
+    const reordered = await service.reorderQuestions(context.organizationId, quizId, questionIdsInOrder);
 
     safeRevalidate(`/teacher/quizzes/${quizId}`);
     return { success: true, data: reordered };
@@ -242,7 +242,7 @@ export async function publishQuizAction(
     const context = await getAuthorizedTeacherContext();
     const service = getQuizService();
 
-    const snapshot = service.publishQuiz(context.organizationId, quizId, context.userId);
+    const snapshot = await service.publishQuiz(context.organizationId, quizId, context.userId);
 
     safeRevalidate('/teacher/quizzes');
     safeRevalidate(`/teacher/quizzes/${quizId}`);
@@ -261,7 +261,7 @@ export async function archiveQuizAction(quizId: string): Promise<ActionResponse<
     const context = await getAuthorizedTeacherContext();
     const service = getQuizService();
 
-    const archived = service.archiveQuiz(context.organizationId, quizId);
+    const archived = await service.archiveQuiz(context.organizationId, quizId);
     if (!archived) {
       return { success: false, error: `Quiz ${quizId} not found.` };
     }
@@ -285,7 +285,7 @@ export async function getPublishedSnapshotAction(
     const context = await getAuthorizedTeacherContext();
     const service = getQuizService();
 
-    const snapshot = service.getPublishedSnapshot(context.organizationId, quizId);
+    const snapshot = await service.getPublishedSnapshot(context.organizationId, quizId);
     if (!snapshot) {
       return { success: false, error: `Published snapshot for quiz ${quizId} not found.` };
     }

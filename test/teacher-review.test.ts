@@ -53,7 +53,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
   const orgB = 'church-review-beta';
 
   // Seed sample questions directly through domain lifecycle
-  const draft1 = bankService.createQuestion({
+  const draft1 = await bankService.createQuestion({
     organizationId: orgA,
     stem: 'What was the first thing God created?',
     type: QuestionType.MULTIPLE_CHOICE,
@@ -65,9 +65,9 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
     difficulty: QuestionDifficulty.EASY,
     language: 'en',
   });
-  const pending1 = bankService.transitionStatus(orgA, draft1.id, QuestionStatus.PENDING_REVIEW)!;
+  const pending1 = (await bankService.transitionStatus(orgA, draft1.id, QuestionStatus.PENDING_REVIEW))!;
 
-  const draft2 = bankService.createQuestion({
+  const draft2 = await bankService.createQuestion({
     organizationId: orgA,
     stem: 'Who was the father of Isaac?',
     type: QuestionType.MULTIPLE_CHOICE,
@@ -79,10 +79,10 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
     difficulty: QuestionDifficulty.EASY,
     language: 'en',
   });
-  const pending2 = bankService.transitionStatus(orgA, draft2.id, QuestionStatus.PENDING_REVIEW)!;
+  const pending2 = (await bankService.transitionStatus(orgA, draft2.id, QuestionStatus.PENDING_REVIEW))!;
 
   // Question for Org B
-  const draftB = bankService.createQuestion({
+  const draftB = await bankService.createQuestion({
     organizationId: orgB,
     stem: 'Who built the ark?',
     type: QuestionType.MULTIPLE_CHOICE,
@@ -94,7 +94,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
     difficulty: QuestionDifficulty.EASY,
     language: 'en',
   });
-  const pendingB = bankService.transitionStatus(orgB, draftB.id, QuestionStatus.PENDING_REVIEW)!;
+  const pendingB = (await bankService.transitionStatus(orgB, draftB.id, QuestionStatus.PENDING_REVIEW))!;
 
   // Set trusted context to Org A teacher initially
   setAuthorizedTeacherContext({
@@ -173,7 +173,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
 
   await t.test('5. batch approval transitions multiple questions atomically', async () => {
     // Add two more pending questions
-    const qA = bankService.createQuestion({
+    const qA = await bankService.createQuestion({
       organizationId: orgA,
       stem: 'Batch Q1',
       type: QuestionType.MULTIPLE_CHOICE,
@@ -185,9 +185,9 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
       difficulty: QuestionDifficulty.EASY,
       language: 'en',
     });
-    const pA = bankService.transitionStatus(orgA, qA.id, QuestionStatus.PENDING_REVIEW)!;
+    const pA = (await bankService.transitionStatus(orgA, qA.id, QuestionStatus.PENDING_REVIEW))!;
 
-    const qB = bankService.createQuestion({
+    const qB = await bankService.createQuestion({
       organizationId: orgA,
       stem: 'Batch Q2',
       type: QuestionType.MULTIPLE_CHOICE,
@@ -199,7 +199,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
       difficulty: QuestionDifficulty.EASY,
       language: 'en',
     });
-    const pB = bankService.transitionStatus(orgA, qB.id, QuestionStatus.PENDING_REVIEW)!;
+    const pB = (await bankService.transitionStatus(orgA, qB.id, QuestionStatus.PENDING_REVIEW))!;
 
     const batchRes = await batchApproveQuestionsAction([pA.id, pB.id]);
     assert.ok(batchRes.success);
@@ -213,7 +213,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
 
   await t.test('6. batch approval rolls back completely if any transition fails (all-or-nothing)', async () => {
     // One valid pending question, one non-existent question ID
-    const qC = bankService.createQuestion({
+    const qC = await bankService.createQuestion({
       organizationId: orgA,
       stem: 'Batch Rollback Q',
       type: QuestionType.MULTIPLE_CHOICE,
@@ -225,7 +225,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
       difficulty: QuestionDifficulty.EASY,
       language: 'en',
     });
-    const pC = bankService.transitionStatus(orgA, qC.id, QuestionStatus.PENDING_REVIEW)!;
+    const pC = (await bankService.transitionStatus(orgA, qC.id, QuestionStatus.PENDING_REVIEW))!;
 
     const failBatchRes = await batchApproveQuestionsAction([pC.id, 'non-existent-id']);
     assert.equal(failBatchRes.success, false);
@@ -246,7 +246,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
   });
 
   await t.test('8. regeneration generates a new candidate without modifying or overwriting the original', async () => {
-    const qOrig = bankService.createQuestion({
+    const qOrig = await bankService.createQuestion({
       organizationId: orgA,
       stem: 'Original Question',
       type: QuestionType.MULTIPLE_CHOICE,
@@ -258,7 +258,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
       difficulty: QuestionDifficulty.MEDIUM,
       language: 'en',
     });
-    const pOrig = bankService.transitionStatus(orgA, qOrig.id, QuestionStatus.PENDING_REVIEW)!;
+    const pOrig = (await bankService.transitionStatus(orgA, qOrig.id, QuestionStatus.PENDING_REVIEW))!;
 
     fakeProvider.queueResponse({
       questions: [
@@ -322,7 +322,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
     assert.equal(crossEdit.success, false);
 
     // Verify Org B question in bank was NOT modified
-    const untouched = bankService.getQuestion(orgB, pendingB.id);
+    const untouched = await bankService.getQuestion(orgB, pendingB.id);
     assert.equal(untouched?.stem, 'Who built the ark?');
   });
 
@@ -338,13 +338,13 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
     assert.equal(crossApprove.success, false);
 
     // Verify Org B question is still PENDING_REVIEW
-    const untouched = bankService.getQuestion(orgB, pendingB.id);
+    const untouched = await bankService.getQuestion(orgB, pendingB.id);
     assert.equal(untouched?.status, QuestionStatus.PENDING_REVIEW);
   });
 
   await t.test('12. security: teacher from Org A cannot include Org B question in batch approval (fails closed)', async () => {
     // Org A pending question
-    const qA = bankService.createQuestion({
+    const qA = await bankService.createQuestion({
       organizationId: orgA,
       stem: 'Org A Question for Mixed Batch',
       type: QuestionType.MULTIPLE_CHOICE,
@@ -356,7 +356,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
       difficulty: QuestionDifficulty.EASY,
       language: 'en',
     });
-    const pA = bankService.transitionStatus(orgA, qA.id, QuestionStatus.PENDING_REVIEW)!;
+    const pA = (await bankService.transitionStatus(orgA, qA.id, QuestionStatus.PENDING_REVIEW))!;
 
     setAuthorizedTeacherContext({
       userId: 'teacher-alpha',
@@ -370,8 +370,8 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
     assert.equal(mixedBatchRes.success, false);
 
     // All-or-nothing rollback: neither question was approved
-    const checkA = bankService.getQuestion(orgA, pA.id);
-    const checkB = bankService.getQuestion(orgB, pendingB.id);
+    const checkA = await bankService.getQuestion(orgA, pA.id);
+    const checkB = await bankService.getQuestion(orgB, pendingB.id);
     assert.equal(checkA?.status, QuestionStatus.PENDING_REVIEW);
     assert.equal(checkB?.status, QuestionStatus.PENDING_REVIEW);
   });
@@ -388,7 +388,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
     assert.equal(crossArchive.success, false);
 
     // Verify Org B question is NOT archived
-    const untouched = bankService.getQuestion(orgB, pendingB.id);
+    const untouched = await bankService.getQuestion(orgB, pendingB.id);
     assert.equal(untouched?.status, QuestionStatus.PENDING_REVIEW);
   });
 
@@ -776,7 +776,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
     });
 
     // 1. Create a fresh PENDING_REVIEW question for Org A
-    const qInject = bankService.createQuestion({
+    const qInject = await bankService.createQuestion({
       organizationId: orgA,
       stem: 'Original Stem Before Malicious Update',
       type: QuestionType.MULTIPLE_CHOICE,
@@ -788,7 +788,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
       difficulty: QuestionDifficulty.MEDIUM,
       language: 'en',
     });
-    const pendingInject = bankService.transitionStatus(orgA, qInject.id, QuestionStatus.PENDING_REVIEW)!;
+    const pendingInject = (await bankService.transitionStatus(orgA, qInject.id, QuestionStatus.PENDING_REVIEW))!;
     assert.equal(pendingInject.status, QuestionStatus.PENDING_REVIEW);
 
     // 2. Invoke updateQuestionAction with runtime injected properties:
@@ -814,7 +814,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
     assert.notEqual(updateRes.data?.status, QuestionStatus.APPROVED);
 
     // 4. Verify the persisted question in QuestionBankService remains PENDING_REVIEW and in Org A
-    const persisted = bankService.getQuestion(orgA, pendingInject.id);
+    const persisted = await bankService.getQuestion(orgA, pendingInject.id);
     assert.ok(persisted);
     assert.equal(persisted.status, QuestionStatus.PENDING_REVIEW);
     assert.equal(persisted.organizationId, orgA);
@@ -825,7 +825,7 @@ test('Teacher Review Workflow, Actions & Security Boundary (BAREA-004)', async (
     assert.equal(persisted.explanation, 'Updated Explanation');
 
     // 6. Verify question does NOT exist in Org B
-    const persistedInB = bankService.getQuestion(orgB, pendingInject.id);
+    const persistedInB = await bankService.getQuestion(orgB, pendingInject.id);
     assert.equal(persistedInB, null);
   });
 });

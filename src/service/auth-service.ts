@@ -3,7 +3,6 @@ import type { AuthRepository } from '../persistence/sqlite-auth-repository';
 import type { User, AuthenticatedSessionContext } from '../domain/auth';
 import type { RateLimiter } from './rate-limiter';
 import {
-  AccountNotFoundError,
   OAuthStateError,
   OAuthCallbackError,
   OAuthTransactionNotFoundError,
@@ -70,13 +69,13 @@ export class AuthService {
    * Generates Google OAuth authorization URL with namespaced transaction ID, PKCE challenge, and OIDC nonce.
    * Persists OAuthTransaction in server-side SQLite store.
    */
-  generateGoogleOAuthUrl(redirectUri?: string, returnTo?: string): {
+  async generateGoogleOAuthUrl(redirectUri?: string, returnTo?: string): Promise<{
     url: string;
     transactionId: string;
     state: string;
     codeVerifier: string;
     nonce: string;
-  } {
+  }> {
     const clientId = this.options.googleClientId || process.env.GOOGLE_CLIENT_ID;
     if (!clientId) {
       throw new Error('Google OAuth is not configured: GOOGLE_CLIENT_ID is missing.');
@@ -100,7 +99,7 @@ export class AuthService {
     const sanitizedReturnTo = returnTo || '/home';
 
     // Persist OAuth transaction in server-side store
-    this.repo.createOAuthTransaction({
+    await this.repo.createOAuthTransaction({
       id: transactionId,
       stateHash,
       codeVerifier,
@@ -231,130 +230,6 @@ export class AuthService {
     };
   }
 
-  /**
-   * Fallback for tests operating without stored transaction:
-   * Performs strict non-linking identity resolution (rejecting email collisions)
-   * and creates a fresh server session in an atomic SQLite transaction.
-   */
-  private provisionGoogleUserSession(verified: VerifiedGoogleClaims): { user: User; rawToken: string } {
-    const displayName = verified.name || (verified.email ? verified.email.split('@')[0] : 'Participant');
-
-    return this.repo.transaction(() => {
-      let resolvedUser: User;
-
-      const existingFederated = this.repo.findFederatedIdentity('GOOGLE', verified.sub);
-      if (existingFederated) {
-        const foundUser = this.repo.findUserById(existingFederated.userId);
-        if (!foundUser) {
-          throw new AccountNotFoundError('User bound to Google account not found.');
-        }
-        resolvedUser = foundUser;
-      } else {
-        if (verified.email) {
-          const existingUserByEmail = this.repo.findUserByEmail(verified.email);
-          if (existingUserByEmail) {
-            throw new AccountCollisionDetectedError(
-              'An account with this email address is already registered to a different login provider or identity.'
-            );
-          }
-        }
-
-        const newUser = this.repo.createUser({
-          email: verified.email,
-          emailVerified: verified.emailVerified,
-          displayName
-        });
-
-        this.repo.createFederatedIdentity({
-          userId: newUser.id,
-          providerType: 'GOOGLE',
-          providerSub: verified.sub
-        });
-
-        resolvedUser = newUser;
-      }
-
-      const { rawToken } = this.repo.createSession(resolvedUser.id, {
-        authProvider: 'GOOGLE',
-        providerSub: verified.sub
-      });
-
-      return { user: resolvedUser, rawToken };
-    });
-  }
-
-  /**
-   * Atomically consumes the OAuth transaction, verifies Google claims,
-   * performs strict non-linking identity resolution (rejecting email collisions),
-   * and creates a fresh server session in one atomic SQLite transaction.
-   */
-  private consumeTransactionAndProvisionUser(
-    transactionId: string,
-    verified: VerifiedGoogleClaims
-  ): { user: User; rawToken: string } {
-    const displayName = verified.name || (verified.email ? verified.email.split('@')[0] : 'Participant');
-
-    return this.repo.transaction(() => {
-      // Step A: Atomically consume OAuth transaction (single-use invariant)
-      const consumed = this.repo.consumeOAuthTransaction(transactionId);
-      if (!consumed) {
-        throw new OAuthTransactionReplayedError('OAuth transaction has already been consumed and cannot be replayed.');
-      }
-
-      let resolvedUser: User;
-
-      // Step B: Identity resolution (Rule: provider + Google sub is authoritative)
-      const existingFederated = this.repo.findFederatedIdentity('GOOGLE', verified.sub);
-      if (existingFederated) {
-        const foundUser = this.repo.findUserById(existingFederated.userId);
-        if (!foundUser) {
-          throw new AccountNotFoundError('User bound to Google account not found.');
-        }
-        resolvedUser = foundUser;
-      } else {
-        // New Google subject: Check if verified email exists in users table
-        if (verified.email) {
-          const existingUserByEmail = this.repo.findUserByEmail(verified.email);
-          if (existingUserByEmail) {
-            // STRICT ANTI-HIJACKING INVARIANT: Prohibit silent automatic account linking
-            // Do NOT link new Google sub to existing account. Fail closed with collision error.
-            throw new AccountCollisionDetectedError(
-              'An account with this email address is already registered to a different login provider or identity.'
-            );
-          }
-        }
-
-        // New user + new federated identity
-        const newUser = this.repo.createUser({
-          email: verified.email,
-          emailVerified: verified.emailVerified,
-          displayName
-        });
-
-        this.repo.createFederatedIdentity({
-          userId: newUser.id,
-          providerType: 'GOOGLE',
-          providerSub: verified.sub
-        });
-
-        resolvedUser = newUser;
-      }
-
-      // Step C: Fresh BAREA session creation (atomic with consumption & provisioning)
-      const { rawToken } = this.repo.createSession(resolvedUser.id, {
-        authProvider: 'GOOGLE',
-        providerSub: verified.sub
-      });
-
-      return { user: resolvedUser, rawToken };
-    });
-  }
-
-  /**
-   * Exchanges Google auth code for tokens, cryptographically verifies ID token,
-   * validates state, PKCE, and nonce against server-stored OAuthTransaction,
-   * and atomically consumes transaction + provisions identity + creates session.
-   */
   async handleGoogleCallback(input: {
     code: string;
     receivedState: string;
@@ -384,7 +259,7 @@ export class AuthService {
     const txId = dotIndex > 0 ? input.receivedState.slice(0, dotIndex) : input.receivedState;
     const stateSecret = dotIndex > 0 ? input.receivedState.slice(dotIndex + 1) : '';
 
-    const transaction = this.repo.findOAuthTransaction(txId);
+    const transaction = await this.repo.findOAuthTransaction(txId);
 
     let effectiveVerifier: string;
     let effectiveNonce: string;
@@ -504,28 +379,31 @@ export class AuthService {
 
     const verified = await this.verifyGoogleIdToken(idToken, effectiveNonce, clientId);
 
-    // Step 11-16: Atomic SQLite commit phase (consumption + identity provisioning + session creation)
-    if (transaction) {
-      const { user, rawToken } = this.consumeTransactionAndProvisionUser(transaction.id, verified);
-      return { user, rawToken, returnTo };
-    } else {
-      // Fallback for tests operating without stored transaction
-      const { user, rawToken } = this.provisionGoogleUserSession(verified);
-      return { user, rawToken, returnTo };
-    }
+    // Step 11-16: Atomic repository-level provisioning phase (consumption + identity provisioning + session creation)
+    const displayName = verified.name || (verified.email ? verified.email.split('@')[0] : 'Participant');
+    const { user, rawToken } = await this.repo.provisionFederatedUserSession({
+      transactionId: transaction?.id,
+      providerType: 'GOOGLE',
+      providerSub: verified.sub,
+      email: verified.email,
+      emailVerified: verified.emailVerified,
+      displayName
+    });
+
+    return { user, rawToken, returnTo };
   }
 
   /**
    * Resolves an active session context by raw session token.
    */
-  resolveSession(rawToken: string): AuthenticatedSessionContext | null {
+  async resolveSession(rawToken: string): Promise<AuthenticatedSessionContext | null> {
     return this.repo.findSessionByToken(rawToken);
   }
 
   /**
    * Invalidates a session token.
    */
-  logout(rawToken: string): void {
-    this.repo.deleteSession(rawToken);
+  async logout(rawToken: string): Promise<void> {
+    await this.repo.deleteSession(rawToken);
   }
 }

@@ -30,21 +30,21 @@ export interface QuizFilter {
 }
 
 export interface QuizRepository {
-  create(data: CreateQuizPayload): Quiz;
-  findById(organizationId: string, id: string): Quiz | null;
-  update(organizationId: string, id: string, updates: UpdateQuizPayload): Quiz | null;
-  list(organizationId: string, filter?: QuizFilter): Quiz[];
-  transitionStatus(organizationId: string, id: string, nextStatus: QuizStatus): Quiz | null;
+  create(data: CreateQuizPayload): Promise<Quiz>;
+  findById(organizationId: string, id: string): Promise<Quiz | null>;
+  update(organizationId: string, id: string, updates: UpdateQuizPayload): Promise<Quiz | null>;
+  list(organizationId: string, filter?: QuizFilter): Promise<Quiz[]>;
+  transitionStatus(organizationId: string, id: string, nextStatus: QuizStatus): Promise<Quiz | null>;
 
   // Question attachments
-  addQuestion(organizationId: string, quizId: string, questionId: string, sortOrder?: number): QuizQuestionItem;
-  removeQuestion(organizationId: string, quizId: string, questionId: string): boolean;
-  reorderQuestions(organizationId: string, quizId: string, questionIdsInOrder: readonly string[]): readonly QuizQuestionItem[];
-  getQuizQuestions(organizationId: string, quizId: string): readonly QuizQuestionItem[];
+  addQuestion(organizationId: string, quizId: string, questionId: string, sortOrder?: number): Promise<QuizQuestionItem>;
+  removeQuestion(organizationId: string, quizId: string, questionId: string): Promise<boolean>;
+  reorderQuestions(organizationId: string, quizId: string, questionIdsInOrder: readonly string[]): Promise<readonly QuizQuestionItem[]>;
+  getQuizQuestions(organizationId: string, quizId: string): Promise<readonly QuizQuestionItem[]>;
 
   // Publication and Snapshot
-  publishQuiz(organizationId: string, quizId: string, publishedByUserId: string): PublishedQuizSnapshot;
-  getPublishedSnapshot(organizationId: string, quizId: string): PublishedQuizSnapshot | null;
+  publishQuiz(organizationId: string, quizId: string, publishedByUserId: string): Promise<PublishedQuizSnapshot>;
+  getPublishedSnapshot(organizationId: string, quizId: string): Promise<PublishedQuizSnapshot | null>;
 
   transaction<T>(action: () => T): T;
   close(): void;
@@ -236,7 +236,87 @@ export class SqliteQuizRepository implements QuizRepository {
     };
   }
 
-  create(data: CreateQuizPayload): Quiz {
+  private _findByIdSync(organizationId: string, id: string): Quiz | null {
+    const stmt = this.db.prepare(`
+      SELECT * FROM quizzes
+      WHERE id = ? AND organization_id = ?
+    `);
+    const row = stmt.get(id, organizationId) as QuizRow | undefined;
+    if (!row) return null;
+
+    const quiz = this._rowToQuiz(row);
+    if (!quiz) return null;
+
+    const questions = this._getQuizQuestionsSync(organizationId, id);
+    return { ...quiz, questions };
+  }
+
+  private _getQuizQuestionsSync(organizationId: string, quizId: string): readonly QuizQuestionItem[] {
+    const stmt = this.db.prepare(`
+      SELECT
+        qq.quiz_id,
+        qq.question_id,
+        qq.sort_order,
+        qq.added_at,
+        q.stem,
+        q.type,
+        q.options_json,
+        q.correct_option_indices_json,
+        q.explanation,
+        q.scripture_reference,
+        q.topic,
+        q.difficulty,
+        q.language,
+        q.status,
+        q.created_at,
+        q.updated_at
+      FROM quiz_questions qq
+      JOIN quizzes qz ON qz.id = qq.quiz_id
+      JOIN questions q ON q.id = qq.question_id
+      WHERE qq.quiz_id = ? AND qz.organization_id = ?
+      ORDER BY qq.sort_order ASC
+    `);
+
+    const rows = stmt.all(quizId, organizationId) as unknown as QuizQuestionRow[];
+    return rows.map((r) => ({
+      quizId: r.quiz_id,
+      questionId: r.question_id,
+      sortOrder: r.sort_order,
+      addedAt: r.added_at,
+      question: r.stem
+        ? {
+            id: r.question_id,
+            organizationId,
+            stem: r.stem,
+            type: r.type as QuestionType,
+            options: JSON.parse(r.options_json || '[]') as string[],
+            correctOptionIndices: JSON.parse(r.correct_option_indices_json || '[]') as number[],
+            explanation: r.explanation || '',
+            scriptureReference: r.scripture_reference || '',
+            topic: r.topic || '',
+            difficulty: r.difficulty as QuestionDifficulty,
+            language: r.language || 'en',
+            status: r.status as QuestionStatus,
+            createdAt: r.created_at || '',
+            updatedAt: r.updated_at || ''
+          }
+        : undefined
+    }));
+  }
+
+  private _getPublishedSnapshotSync(organizationId: string, quizId: string): PublishedQuizSnapshot | null {
+    const row = this.db.prepare(`
+      SELECT * FROM published_quiz_snapshots
+      WHERE quiz_id = ? AND organization_id = ?
+      ORDER BY version_number DESC
+      LIMIT 1
+    `).get(quizId, organizationId) as PublishedSnapshotRow | undefined;
+
+    if (!row) return null;
+    return JSON.parse(row.snapshot_json) as PublishedQuizSnapshot;
+  }
+
+  async create(data: CreateQuizPayload): Promise<Quiz> {
     validateCreateQuizPayload(data);
 
     const id = data.id || crypto.randomUUID();
@@ -268,33 +348,22 @@ export class SqliteQuizRepository implements QuizRepository {
       updatedAt
     );
 
-    const created = this.findById(data.organizationId, id);
+    const created = this._findByIdSync(data.organizationId, id);
     if (!created) {
       throw new Error(`Failed to create quiz with ID ${id}`);
     }
     return created;
   }
 
-  findById(organizationId: string, id: string): Quiz | null {
-    const stmt = this.db.prepare(`
-      SELECT * FROM quizzes
-      WHERE id = ? AND organization_id = ?
-    `);
-    const row = stmt.get(id, organizationId) as QuizRow | undefined;
-    if (!row) return null;
-
-    const quiz = this._rowToQuiz(row);
-    if (!quiz) return null;
-
-    const questions = this.getQuizQuestions(organizationId, id);
-    return { ...quiz, questions };
+  async findById(organizationId: string, id: string): Promise<Quiz | null> {
+    return this._findByIdSync(organizationId, id);
   }
 
-  update(organizationId: string, id: string, updates: UpdateQuizPayload): Quiz | null {
+  async update(organizationId: string, id: string, updates: UpdateQuizPayload): Promise<Quiz | null> {
     validateUpdateQuizPayload(updates);
 
     return this.transaction(() => {
-      const existing = this.findById(organizationId, id);
+      const existing = this._findByIdSync(organizationId, id);
       if (!existing) return null;
 
       if (existing.status !== QuizStatus.DRAFT) {
@@ -341,11 +410,11 @@ export class SqliteQuizRepository implements QuizRepository {
       const sql = `UPDATE quizzes SET ${sets.join(', ')} WHERE id = ? AND organization_id = ?`;
       this.db.prepare(sql).run(...values);
 
-      return this.findById(organizationId, id);
+      return this._findByIdSync(organizationId, id);
     });
   }
 
-  list(organizationId: string, filter: QuizFilter = {}): Quiz[] {
+  async list(organizationId: string, filter: QuizFilter = {}): Promise<Quiz[]> {
     let sql = `SELECT * FROM quizzes WHERE organization_id = ?`;
     const params: (string | number)[] = [organizationId];
 
@@ -365,9 +434,9 @@ export class SqliteQuizRepository implements QuizRepository {
     return rows.map((r) => this._rowToQuiz(r)!);
   }
 
-  transitionStatus(organizationId: string, id: string, nextStatus: QuizStatus): Quiz | null {
+  async transitionStatus(organizationId: string, id: string, nextStatus: QuizStatus): Promise<Quiz | null> {
     return this.transaction(() => {
-      const existing = this.findById(organizationId, id);
+      const existing = this._findByIdSync(organizationId, id);
       if (!existing) return null;
 
       const hasSnapshot = this.hasPublishedSnapshot(id);
@@ -379,7 +448,7 @@ export class SqliteQuizRepository implements QuizRepository {
         WHERE id = ? AND organization_id = ?
       `).run(nextStatus, now, id, organizationId);
 
-      return this.findById(organizationId, id);
+      return this._findByIdSync(organizationId, id);
     });
   }
 
@@ -390,14 +459,14 @@ export class SqliteQuizRepository implements QuizRepository {
     return row.count > 0;
   }
 
-  addQuestion(
+  async addQuestion(
     organizationId: string,
     quizId: string,
     questionId: string,
     sortOrder?: number
-  ): QuizQuestionItem {
+  ): Promise<QuizQuestionItem> {
     return this.transaction(() => {
-      const quiz = this.findById(organizationId, quizId);
+      const quiz = this._findByIdSync(organizationId, quizId);
       if (!quiz) {
         throw new QuizValidationError(`Quiz ${quizId} not found.`);
       }
@@ -452,9 +521,9 @@ export class SqliteQuizRepository implements QuizRepository {
     });
   }
 
-  removeQuestion(organizationId: string, quizId: string, questionId: string): boolean {
+  async removeQuestion(organizationId: string, quizId: string, questionId: string): Promise<boolean> {
     return this.transaction(() => {
-      const quiz = this.findById(organizationId, quizId);
+      const quiz = this._findByIdSync(organizationId, quizId);
       if (!quiz) {
         throw new QuizValidationError(`Quiz ${quizId} not found.`);
       }
@@ -488,13 +557,13 @@ export class SqliteQuizRepository implements QuizRepository {
     });
   }
 
-  reorderQuestions(
+  async reorderQuestions(
     organizationId: string,
     quizId: string,
     questionIdsInOrder: readonly string[]
-  ): readonly QuizQuestionItem[] {
+  ): Promise<readonly QuizQuestionItem[]> {
     return this.transaction(() => {
-      const quiz = this.findById(organizationId, quizId);
+      const quiz = this._findByIdSync(organizationId, quizId);
       if (!quiz) {
         throw new QuizValidationError(`Quiz ${quizId} not found.`);
       }
@@ -544,65 +613,15 @@ export class SqliteQuizRepository implements QuizRepository {
       const now = new Date().toISOString();
       this.db.prepare(`UPDATE quizzes SET updated_at = ? WHERE id = ?`).run(now, quizId);
 
-      return this.getQuizQuestions(organizationId, quizId);
+      return this._getQuizQuestionsSync(organizationId, quizId);
     });
   }
 
-  getQuizQuestions(organizationId: string, quizId: string): readonly QuizQuestionItem[] {
-    // Verified join asserting organization ownership
-    const stmt = this.db.prepare(`
-      SELECT
-        qq.quiz_id,
-        qq.question_id,
-        qq.sort_order,
-        qq.added_at,
-        q.stem,
-        q.type,
-        q.options_json,
-        q.correct_option_indices_json,
-        q.explanation,
-        q.scripture_reference,
-        q.topic,
-        q.difficulty,
-        q.language,
-        q.status,
-        q.created_at,
-        q.updated_at
-      FROM quiz_questions qq
-      JOIN quizzes qz ON qz.id = qq.quiz_id
-      JOIN questions q ON q.id = qq.question_id
-      WHERE qq.quiz_id = ? AND qz.organization_id = ?
-      ORDER BY qq.sort_order ASC
-    `);
-
-    const rows = stmt.all(quizId, organizationId) as unknown as QuizQuestionRow[];
-    return rows.map((r) => ({
-      quizId: r.quiz_id,
-      questionId: r.question_id,
-      sortOrder: r.sort_order,
-      addedAt: r.added_at,
-      question: r.stem
-        ? {
-            id: r.question_id,
-            organizationId,
-            stem: r.stem,
-            type: r.type as QuestionType,
-            options: JSON.parse(r.options_json || '[]') as string[],
-            correctOptionIndices: JSON.parse(r.correct_option_indices_json || '[]') as number[],
-            explanation: r.explanation || '',
-            scriptureReference: r.scripture_reference || '',
-            topic: r.topic || '',
-            difficulty: r.difficulty as QuestionDifficulty,
-            language: r.language || 'en',
-            status: r.status as QuestionStatus,
-            createdAt: r.created_at || '',
-            updatedAt: r.updated_at || ''
-          }
-        : undefined
-    }));
+  async getQuizQuestions(organizationId: string, quizId: string): Promise<readonly QuizQuestionItem[]> {
+    return this._getQuizQuestionsSync(organizationId, quizId);
   }
 
-  publishQuiz(organizationId: string, quizId: string, publishedByUserId: string): PublishedQuizSnapshot {
+  async publishQuiz(organizationId: string, quizId: string, publishedByUserId: string): Promise<PublishedQuizSnapshot> {
     return this.transaction(() => {
       // 1. Fetch quiz
       const quizRow = this.db.prepare(`
@@ -746,16 +765,8 @@ export class SqliteQuizRepository implements QuizRepository {
     });
   }
 
-  getPublishedSnapshot(organizationId: string, quizId: string): PublishedQuizSnapshot | null {
-    const row = this.db.prepare(`
-      SELECT * FROM published_quiz_snapshots
-      WHERE quiz_id = ? AND organization_id = ?
-      ORDER BY version_number DESC
-      LIMIT 1
-    `).get(quizId, organizationId) as PublishedSnapshotRow | undefined;
-
-    if (!row) return null;
-    return JSON.parse(row.snapshot_json) as PublishedQuizSnapshot;
+  async getPublishedSnapshot(organizationId: string, quizId: string): Promise<PublishedQuizSnapshot | null> {
+    return this._getPublishedSnapshotSync(organizationId, quizId);
   }
 
   close(): void {

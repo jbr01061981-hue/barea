@@ -62,12 +62,12 @@ function captureDbAudit(db: DatabaseSync, quizId: string): DbAudit {
   };
 }
 
-function seedApprovedQuestion(
+async function seedApprovedQuestion(
   bankService: QuestionBankService,
   orgId: string,
   stem: string = 'Who built the ark?'
-): string {
-  const q = bankService.createQuestion({
+): Promise<string> {
+  const q = await bankService.createQuestion({
     organizationId: orgId,
     stem,
     type: QuestionType.MULTIPLE_CHOICE,
@@ -79,8 +79,8 @@ function seedApprovedQuestion(
     difficulty: QuestionDifficulty.EASY,
     language: 'en'
   });
-  bankService.transitionStatus(orgId, q.id, QuestionStatus.PENDING_REVIEW);
-  bankService.transitionStatus(orgId, q.id, QuestionStatus.APPROVED);
+  await bankService.transitionStatus(orgId, q.id, QuestionStatus.PENDING_REVIEW);
+  await bankService.transitionStatus(orgId, q.id, QuestionStatus.APPROVED);
   return q.id;
 }
 
@@ -121,12 +121,12 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   // ADV-QZ-01: Cross-tenant quiz read isolation
   await t.test('ADV-QZ-01: Cross-tenant quiz read isolation', async () => {
     const orgB = 'church-berea-beta';
-    const qB = seedApprovedQuestion(bankService, orgB, 'Question from Org B');
-    const quizB = quizService.createQuiz(orgB, {
+    const qB = await seedApprovedQuestion(bankService, orgB, 'Question from Org B');
+    const quizB = await quizService.createQuiz(orgB, {
       organizationId: orgB,
       title: 'Org B Secret Quiz'
     });
-    quizService.addQuestion(orgB, quizB.id, qB);
+    await quizService.addQuestion(orgB, quizB.id, qB);
 
     // Teacher Alpha is active (Org A)
     const readRes = await getQuizByIdAction(quizB.id);
@@ -138,8 +138,8 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   await t.test('ADV-QZ-02: Cross-tenant question attachment rejection', async () => {
     const orgA = 'church-berea-alpha';
     const orgB = 'church-berea-beta';
-    const qB = seedApprovedQuestion(bankService, orgB, 'Question from Org B');
-    const quizA = quizService.createQuiz(orgA, {
+    const qB = await seedApprovedQuestion(bankService, orgB, 'Question from Org B');
+    const quizA = await quizService.createQuiz(orgA, {
       organizationId: orgA,
       title: 'Org A Quiz'
     });
@@ -155,7 +155,7 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   // ADV-QZ-03: Cross-tenant quiz mutation rejection
   await t.test('ADV-QZ-03: Cross-tenant quiz mutation rejection', async () => {
     const orgB = 'church-berea-beta';
-    const quizB = quizService.createQuiz(orgB, {
+    const quizB = await quizService.createQuiz(orgB, {
       organizationId: orgB,
       title: 'Org B Secret Quiz'
     });
@@ -171,12 +171,12 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   // ADV-QZ-04: Cross-tenant publish attempt rejection
   await t.test('ADV-QZ-04: Cross-tenant publish attempt rejection', async () => {
     const orgB = 'church-berea-beta';
-    const qB = seedApprovedQuestion(bankService, orgB, 'Question from Org B');
-    const quizB = quizService.createQuiz(orgB, {
+    const qB = await seedApprovedQuestion(bankService, orgB, 'Question from Org B');
+    const quizB = await quizService.createQuiz(orgB, {
       organizationId: orgB,
       title: 'Org B Secret Quiz'
     });
-    quizService.addQuestion(orgB, quizB.id, qB);
+    await quizService.addQuestion(orgB, quizB.id, qB);
 
     const pubRes = await publishQuizAction(quizB.id);
     assert.equal(pubRes.success, false);
@@ -190,7 +190,7 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   // ADV-QZ-05: Runtime parameter allowlisting
   await t.test('ADV-QZ-05: Rejects or strips unauthorized fields (id, organizationId, status, publishedSnapshot)', async () => {
     const org = 'church-berea-alpha';
-    const quiz = quizService.createQuiz(org, {
+    const quiz = await quizService.createQuiz(org, {
       organizationId: org,
       title: 'Protected Fields Test'
     });
@@ -225,12 +225,12 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   });
 
   // ADV-QZ-06: Unapproved question rejection
-  await t.test('ADV-QZ-06: Adding DRAFT or PENDING_REVIEW question to quiz is strictly rejected', () => {
+  await t.test('ADV-QZ-06: Adding DRAFT or PENDING_REVIEW question to quiz is strictly rejected', async () => {
     const org = 'church-berea-alpha';
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Draft Question Test' });
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Draft Question Test' });
 
     // Seed a DRAFT question
-    const qDraft = bankService.createQuestion({
+    const qDraft = await bankService.createQuestion({
       organizationId: org,
       stem: 'Draft question stem',
       type: QuestionType.TRUE_FALSE,
@@ -242,8 +242,9 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
       language: 'en'
     });
 
-    assert.throws(
-      () => quizService.addQuestion(org, quiz.id, qDraft.id),
+    await assert.rejects(
+      async () => await quizService.addQuestion(org,
+      quiz.id, qDraft.id),
       /Only APPROVED questions can be added/i
     );
 
@@ -252,11 +253,11 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   });
 
   // ADV-QZ-07: Archived question rejection
-  await t.test('ADV-QZ-07: Adding ARCHIVED question to quiz is strictly rejected', () => {
+  await t.test('ADV-QZ-07: Adding ARCHIVED question to quiz is strictly rejected', async () => {
     const org = 'church-berea-alpha';
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Archived Question Test' });
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Archived Question Test' });
 
-    const qArchived = bankService.createQuestion({
+    const qArchived = await bankService.createQuestion({
       organizationId: org,
       stem: 'Archived question stem',
       type: QuestionType.TRUE_FALSE,
@@ -267,10 +268,11 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
       difficulty: QuestionDifficulty.EASY,
       language: 'en'
     });
-    bankService.transitionStatus(org, qArchived.id, QuestionStatus.ARCHIVED);
+    await bankService.transitionStatus(org, qArchived.id, QuestionStatus.ARCHIVED);
 
-    assert.throws(
-      () => quizService.addQuestion(org, quiz.id, qArchived.id),
+    await assert.rejects(
+      async () => await quizService.addQuestion(org,
+      quiz.id, qArchived.id),
       /Only APPROVED questions can be added/i
     );
 
@@ -281,9 +283,9 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   // ADV-QZ-08: TOCTOU question demotion during active publish
   await t.test('ADV-QZ-08: TOCTOU - Question demoted right before publish causes transaction rollback', async () => {
     const org = 'church-berea-alpha';
-    const qId = seedApprovedQuestion(bankService, org, 'TOCTOU Question');
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'TOCTOU Quiz' });
-    quizService.addQuestion(org, quiz.id, qId);
+    const qId = await seedApprovedQuestion(bankService, org, 'TOCTOU Question');
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'TOCTOU Quiz' });
+    await quizService.addQuestion(org, quiz.id, qId);
 
     // Pre-condition audit
     const preAudit = captureDbAudit(db, quiz.id);
@@ -307,9 +309,9 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   // ADV-QZ-25: TOCTOU question demoted back to DRAFT before publish
   await t.test('ADV-QZ-25: TOCTOU - Question demoted to DRAFT before publish causes transaction rollback', async () => {
     const org = 'church-berea-alpha';
-    const qId = seedApprovedQuestion(bankService, org, 'TOCTOU Draft Question');
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'TOCTOU Draft Quiz' });
-    quizService.addQuestion(org, quiz.id, qId);
+    const qId = await seedApprovedQuestion(bankService, org, 'TOCTOU Draft Question');
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'TOCTOU Draft Quiz' });
+    await quizService.addQuestion(org, quiz.id, qId);
 
     // Demote to DRAFT in Question Bank
     db.prepare("UPDATE questions SET status = 'DRAFT' WHERE id = ?").run(qId);
@@ -326,9 +328,9 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   // ADV-QZ-09: TOCTOU question archived before publish
   await t.test('ADV-QZ-09: TOCTOU - Question archived before publish causes atomic rollback', async () => {
     const org = 'church-berea-alpha';
-    const qId = seedApprovedQuestion(bankService, org, 'TOCTOU Archived Question');
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'TOCTOU Archived Quiz' });
-    quizService.addQuestion(org, quiz.id, qId);
+    const qId = await seedApprovedQuestion(bankService, org, 'TOCTOU Archived Question');
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'TOCTOU Archived Quiz' });
+    await quizService.addQuestion(org, quiz.id, qId);
 
     // Archive question right before publish
     db.prepare("UPDATE questions SET status = 'ARCHIVED' WHERE id = ?").run(qId);
@@ -345,7 +347,7 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   // ADV-QZ-10: Empty quiz publication
   await t.test('ADV-QZ-10: Publishing quiz with zero questions fails closed', async () => {
     const org = 'church-berea-alpha';
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Empty Quiz' });
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Empty Quiz' });
 
     const pubRes = await publishQuizAction(quiz.id);
     assert.equal(pubRes.success, false);
@@ -357,15 +359,16 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   });
 
   // ADV-QZ-11: Duplicate question attachment
-  await t.test('ADV-QZ-11: Attaching duplicate question to quiz is rejected', () => {
+  await t.test('ADV-QZ-11: Attaching duplicate question to quiz is rejected', async () => {
     const org = 'church-berea-alpha';
-    const qId = seedApprovedQuestion(bankService, org, 'Duplicate Check Question');
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Duplicate Quiz' });
+    const qId = await seedApprovedQuestion(bankService, org, 'Duplicate Check Question');
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Duplicate Quiz' });
 
-    quizService.addQuestion(org, quiz.id, qId);
+    await quizService.addQuestion(org, quiz.id, qId);
 
-    assert.throws(
-      () => quizService.addQuestion(org, quiz.id, qId),
+    await assert.rejects(
+      async () => await quizService.addQuestion(org,
+      quiz.id, qId),
       /already in quiz/i
     );
 
@@ -374,21 +377,21 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   });
 
   // ADV-QZ-12: Duplicate positions rejected / normalized
-  await t.test('ADV-QZ-12: Question positions remain strictly sequential [1..N]', () => {
+  await t.test('ADV-QZ-12: Question positions remain strictly sequential [1..N]', async () => {
     const org = 'church-berea-alpha';
-    const q1 = seedApprovedQuestion(bankService, org, 'Q1');
-    const q2 = seedApprovedQuestion(bankService, org, 'Q2');
-    const q3 = seedApprovedQuestion(bankService, org, 'Q3');
+    const q1 = await seedApprovedQuestion(bankService, org, 'Q1');
+    const q2 = await seedApprovedQuestion(bankService, org, 'Q2');
+    const q3 = await seedApprovedQuestion(bankService, org, 'Q3');
 
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Order Quiz' });
-    quizService.addQuestion(org, quiz.id, q1);
-    quizService.addQuestion(org, quiz.id, q2);
-    quizService.addQuestion(org, quiz.id, q3);
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Order Quiz' });
+    await quizService.addQuestion(org, quiz.id, q1);
+    await quizService.addQuestion(org, quiz.id, q2);
+    await quizService.addQuestion(org, quiz.id, q3);
 
     // Remove middle question (Q2)
-    quizService.removeQuestion(org, quiz.id, q2);
+    await quizService.removeQuestion(org, quiz.id, q2);
 
-    const questions = quizService.getQuizQuestions(org, quiz.id);
+    const questions = await quizService.getQuizQuestions(org, quiz.id);
     assert.equal(questions.length, 2);
     assert.equal(questions[0].questionId, q1);
     assert.equal(questions[0].sortOrder, 1);
@@ -399,14 +402,14 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   // ADV-QZ-13: Question reordering preserves all items
   await t.test('ADV-QZ-13: Question reordering preserves all items', async () => {
     const org = 'church-berea-alpha';
-    const q1 = seedApprovedQuestion(bankService, org, 'Q1');
-    const q2 = seedApprovedQuestion(bankService, org, 'Q2');
-    const q3 = seedApprovedQuestion(bankService, org, 'Q3');
+    const q1 = await seedApprovedQuestion(bankService, org, 'Q1');
+    const q2 = await seedApprovedQuestion(bankService, org, 'Q2');
+    const q3 = await seedApprovedQuestion(bankService, org, 'Q3');
 
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Reorder Quiz' });
-    quizService.addQuestion(org, quiz.id, q1);
-    quizService.addQuestion(org, quiz.id, q2);
-    quizService.addQuestion(org, quiz.id, q3);
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Reorder Quiz' });
+    await quizService.addQuestion(org, quiz.id, q1);
+    await quizService.addQuestion(org, quiz.id, q2);
+    await quizService.addQuestion(org, quiz.id, q3);
 
     // Reverse order: [q3, q2, q1]
     const reorderRes = await reorderQuizQuestionsAction(quiz.id, [q3, q2, q1]);
@@ -417,14 +420,14 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   // ADV-QZ-14: Question reordering updates sort order sequence deterministically
   await t.test('ADV-QZ-14: Question reordering updates sequence deterministically', async () => {
     const org = 'church-berea-alpha';
-    const q1 = seedApprovedQuestion(bankService, org, 'Q1');
-    const q2 = seedApprovedQuestion(bankService, org, 'Q2');
-    const q3 = seedApprovedQuestion(bankService, org, 'Q3');
+    const q1 = await seedApprovedQuestion(bankService, org, 'Q1');
+    const q2 = await seedApprovedQuestion(bankService, org, 'Q2');
+    const q3 = await seedApprovedQuestion(bankService, org, 'Q3');
 
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Reorder Determinism Quiz' });
-    quizService.addQuestion(org, quiz.id, q1);
-    quizService.addQuestion(org, quiz.id, q2);
-    quizService.addQuestion(org, quiz.id, q3);
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Reorder Determinism Quiz' });
+    await quizService.addQuestion(org, quiz.id, q1);
+    await quizService.addQuestion(org, quiz.id, q2);
+    await quizService.addQuestion(org, quiz.id, q3);
 
     const reorderRes = await reorderQuizQuestionsAction(quiz.id, [q3, q2, q1]);
     assert.equal(reorderRes.success, true);
@@ -439,11 +442,11 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   // ADV-QZ-15: Incomplete / invalid question IDs in reorder payload
   await t.test('ADV-QZ-15: Reordering with missing or foreign question IDs is rejected', async () => {
     const org = 'church-berea-alpha';
-    const q1 = seedApprovedQuestion(bankService, org, 'Q1');
-    const q2 = seedApprovedQuestion(bankService, org, 'Q2');
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Bad Reorder Quiz' });
-    quizService.addQuestion(org, quiz.id, q1);
-    quizService.addQuestion(org, quiz.id, q2);
+    const q1 = await seedApprovedQuestion(bankService, org, 'Q1');
+    const q2 = await seedApprovedQuestion(bankService, org, 'Q2');
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Bad Reorder Quiz' });
+    await quizService.addQuestion(org, quiz.id, q1);
+    await quizService.addQuestion(org, quiz.id, q2);
 
     // Missing q2
     const res1 = await reorderQuizQuestionsAction(quiz.id, [q1]);
@@ -459,10 +462,10 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   // ADV-QZ-16: Modification of published quiz rejected
   await t.test('ADV-QZ-16: Mutations on PUBLISHED quiz are strictly rejected', async () => {
     const org = 'church-berea-alpha';
-    const q1 = seedApprovedQuestion(bankService, org, 'Q1');
-    const q2 = seedApprovedQuestion(bankService, org, 'Q2');
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Published Quiz' });
-    quizService.addQuestion(org, quiz.id, q1);
+    const q1 = await seedApprovedQuestion(bankService, org, 'Q1');
+    const q2 = await seedApprovedQuestion(bankService, org, 'Q2');
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Published Quiz' });
+    await quizService.addQuestion(org, quiz.id, q1);
 
     // Publish
     const pubRes = await publishQuizAction(quiz.id);
@@ -490,34 +493,38 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   });
 
   // ADV-QZ-17: Timer bounds - minimum bound (10s)
-  await t.test('ADV-QZ-17: Timer bounds strictly enforced below minimum (9 seconds)', () => {
+  await t.test('ADV-QZ-17: Timer bounds strictly enforced below minimum (9 seconds)', async () => {
     const org = 'church-berea-alpha';
-    assert.throws(
-      () => quizService.createQuiz(org, { organizationId: org, title: 'T', defaultTimeLimitSeconds: 9 }),
+    await assert.rejects(
+      async () => await quizService.createQuiz(org,
+      { organizationId: org, title: 'T', defaultTimeLimitSeconds: 9 }),
       /between 10 and 120/i
     );
   });
 
   // ADV-QZ-18: Timer bounds - maximum bound (120s) and non-integer
-  await t.test('ADV-QZ-18: Timer bounds strictly enforced above maximum (121s) and non-integer', () => {
+  await t.test('ADV-QZ-18: Timer bounds strictly enforced above maximum (121s) and non-integer', async () => {
     const org = 'church-berea-alpha';
-    assert.throws(
-      () => quizService.createQuiz(org, { organizationId: org, title: 'T', defaultTimeLimitSeconds: 121 }),
+    await assert.rejects(
+      async () => await quizService.createQuiz(org,
+      { organizationId: org, title: 'T', defaultTimeLimitSeconds: 121 }),
       /between 10 and 120/i
     );
-    assert.throws(
-      () => quizService.createQuiz(org, { organizationId: org, title: 'T', defaultTimeLimitSeconds: 30.5 }),
+    await assert.rejects(
+      async () => await quizService.createQuiz(org,
+      { organizationId: org, title: 'T', defaultTimeLimitSeconds: 30.5 }),
       /between 10 and 120/i
     );
-    assert.doesNotThrow(() => quizService.createQuiz(org, { organizationId: org, title: 'T10', defaultTimeLimitSeconds: 10 }));
-    assert.doesNotThrow(() => quizService.createQuiz(org, { organizationId: org, title: 'T120', defaultTimeLimitSeconds: 120 }));
+    await quizService.createQuiz(org, { organizationId: org, title: 'T10', defaultTimeLimitSeconds: 10 });
+    await quizService.createQuiz(org, { organizationId: org, title: 'T120', defaultTimeLimitSeconds: 120 });
   });
 
   // ADV-QZ-19: Invalid scoring style
-  await t.test('ADV-QZ-19: Invalid scoring style string rejected', () => {
+  await t.test('ADV-QZ-19: Invalid scoring style string rejected', async () => {
     const org = 'church-berea-alpha';
-    assert.throws(
-      () => quizService.createQuiz(org, { organizationId: org, title: 'T', scoringStyle: 'EXPONENTIAL' as unknown as ScoringStyle }),
+    await assert.rejects(
+      async () => await quizService.createQuiz(org,
+      { organizationId: org, title: 'T', scoringStyle: 'EXPONENTIAL' as unknown as ScoringStyle }),
       /Invalid scoring style/i
     );
   });
@@ -525,9 +532,9 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   // ADV-QZ-20: Snapshot immutability against Question Bank mutations
   await t.test('ADV-QZ-20: Published snapshot is 100% immune to subsequent Question Bank edits', async () => {
     const org = 'church-berea-alpha';
-    const q1 = seedApprovedQuestion(bankService, org, 'Original Genesis Stem');
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Immutable Snapshot Test' });
-    quizService.addQuestion(org, quiz.id, q1);
+    const q1 = await seedApprovedQuestion(bankService, org, 'Original Genesis Stem');
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Immutable Snapshot Test' });
+    await quizService.addQuestion(org, quiz.id, q1);
 
     const pubRes = await publishQuizAction(quiz.id);
     assert.equal(pubRes.success, true);
@@ -550,9 +557,9 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   // ADV-QZ-21: Snapshot immutability against Question Bank archive
   await t.test('ADV-QZ-21: Published snapshot is 100% immune to subsequent Question Bank archival', async () => {
     const org = 'church-berea-alpha';
-    const q1 = seedApprovedQuestion(bankService, org, 'Original Exodus Stem');
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Archive Snapshot Test' });
-    quizService.addQuestion(org, quiz.id, q1);
+    const q1 = await seedApprovedQuestion(bankService, org, 'Original Exodus Stem');
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Archive Snapshot Test' });
+    await quizService.addQuestion(org, quiz.id, q1);
 
     const pubRes = await publishQuizAction(quiz.id);
     assert.equal(pubRes.success, true);
@@ -566,12 +573,12 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   });
 
   // ADV-QZ-22: Direct SQL UPDATE against published_quiz_snapshots
-  await t.test('ADV-QZ-22: SQLite trigger prevent_snapshot_update aborts direct SQL UPDATE', () => {
+  await t.test('ADV-QZ-22: SQLite trigger prevent_snapshot_update aborts direct SQL UPDATE', async () => {
     const org = 'church-berea-alpha';
-    const q1 = seedApprovedQuestion(bankService, org, 'Stem 1');
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Trigger Update Test' });
-    quizService.addQuestion(org, quiz.id, q1);
-    quizService.publishQuiz(org, quiz.id, 'teacher-1');
+    const q1 = await seedApprovedQuestion(bankService, org, 'Stem 1');
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Trigger Update Test' });
+    await quizService.addQuestion(org, quiz.id, q1);
+    await quizService.publishQuiz(org, quiz.id, 'teacher-1');
 
     assert.throws(
       () => {
@@ -586,12 +593,12 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   });
 
   // ADV-QZ-23: Direct SQL DELETE against published_quiz_snapshots
-  await t.test('ADV-QZ-23: SQLite trigger prevent_snapshot_delete aborts direct SQL DELETE', () => {
+  await t.test('ADV-QZ-23: SQLite trigger prevent_snapshot_delete aborts direct SQL DELETE', async () => {
     const org = 'church-berea-alpha';
-    const q1 = seedApprovedQuestion(bankService, org, 'Stem 1');
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Trigger Delete Test' });
-    quizService.addQuestion(org, quiz.id, q1);
-    quizService.publishQuiz(org, quiz.id, 'teacher-1');
+    const q1 = await seedApprovedQuestion(bankService, org, 'Stem 1');
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Trigger Delete Test' });
+    await quizService.addQuestion(org, quiz.id, q1);
+    await quizService.publishQuiz(org, quiz.id, 'teacher-1');
 
     assert.throws(
       () => {
@@ -605,7 +612,7 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   });
 
   // ADV-QZ-24: Participant answer secrecy projection boundary
-  await t.test('ADV-QZ-24: Participant question projection strips correctOptionIndices and explanation', () => {
+  await t.test('ADV-QZ-24: Participant question projection strips correctOptionIndices and explanation', async () => {
     const snapshotQuestion = {
       id: 'q-100',
       position: 1,
@@ -641,11 +648,11 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   });
 
   // ADV-QZ-26: Deterministic atomic rollback via simulateSnapshotFailure seam
-  await t.test('ADV-QZ-26: Deterministic atomic rollback via simulateSnapshotFailure seam', () => {
+  await t.test('ADV-QZ-26: Deterministic atomic rollback via simulateSnapshotFailure seam', async () => {
     const org = 'church-berea-alpha';
-    const q1 = seedApprovedQuestion(bankService, org, 'Q1');
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Rollback Test Quiz' });
-    quizService.addQuestion(org, quiz.id, q1);
+    const q1 = await seedApprovedQuestion(bankService, org, 'Q1');
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Rollback Test Quiz' });
+    await quizService.addQuestion(org, quiz.id, q1);
 
     const preAudit = captureDbAudit(db, quiz.id);
     assert.equal(preAudit.quizStatus, 'DRAFT');
@@ -654,8 +661,9 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
     // Arm the test seam
     quizRepo.simulateSnapshotFailure = true;
 
-    assert.throws(
-      () => quizService.publishQuiz(org, quiz.id, 'teacher-1'),
+    await assert.rejects(
+      async () => await quizService.publishQuiz(org,
+      quiz.id, 'teacher-1'),
       /TEST_SIMULATED_SNAPSHOT_PERSISTENCE_FAILURE/
     );
 
@@ -666,7 +674,7 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
 
     // Disarm seam and verify publish now succeeds cleanly
     quizRepo.simulateSnapshotFailure = false;
-    assert.doesNotThrow(() => quizService.publishQuiz(org, quiz.id, 'teacher-1'));
+    await quizService.publishQuiz(org, quiz.id, 'teacher-1');
 
     const finalAudit = captureDbAudit(db, quiz.id);
     assert.equal(finalAudit.quizStatus, 'PUBLISHED');
@@ -676,9 +684,9 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   // ADV-QZ-27 (QA Gap 1): Question Options Invalidated TOCTOU
   await t.test('ADV-QZ-27: Question options invalidated TOCTOU before publish causes rollback', async () => {
     const org = 'church-berea-alpha';
-    const q1 = seedApprovedQuestion(bankService, org, 'Stem with options');
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Invalidated Options Quiz' });
-    quizService.addQuestion(org, quiz.id, q1);
+    const q1 = await seedApprovedQuestion(bankService, org, 'Stem with options');
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Invalidated Options Quiz' });
+    await quizService.addQuestion(org, quiz.id, q1);
 
     // Corrupt options in question table (less than 2 options)
     db.prepare("UPDATE questions SET options_json = '[\"OnlyOneOption\"]' WHERE id = ?").run(q1);
@@ -693,12 +701,12 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   });
 
   // ADV-QZ-28 (QA Gap 2): Physical deletion of published quiz is prevented by SQLite trigger
-  await t.test('ADV-QZ-28: SQLite trigger prevent_published_quiz_delete prevents deleting published quiz', () => {
+  await t.test('ADV-QZ-28: SQLite trigger prevent_published_quiz_delete prevents deleting published quiz', async () => {
     const org = 'church-berea-alpha';
-    const q1 = seedApprovedQuestion(bankService, org, 'Q1');
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Cannot Delete Quiz' });
-    quizService.addQuestion(org, quiz.id, q1);
-    quizService.publishQuiz(org, quiz.id, 'teacher-1');
+    const q1 = await seedApprovedQuestion(bankService, org, 'Q1');
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Cannot Delete Quiz' });
+    await quizService.addQuestion(org, quiz.id, q1);
+    await quizService.publishQuiz(org, quiz.id, 'teacher-1');
 
     assert.throws(
       () => {
@@ -714,9 +722,9 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   // ADV-QZ-29 (QA Gap 3): Archived quiz cannot be modified or published
   await t.test('ADV-QZ-29: ARCHIVED quiz is locked out from mutation and publishing', async () => {
     const org = 'church-berea-alpha';
-    const q1 = seedApprovedQuestion(bankService, org, 'Q1');
-    const quiz = quizService.createQuiz(org, { organizationId: org, title: 'Archived Quiz' });
-    quizService.addQuestion(org, quiz.id, q1);
+    const q1 = await seedApprovedQuestion(bankService, org, 'Q1');
+    const quiz = await quizService.createQuiz(org, { organizationId: org, title: 'Archived Quiz' });
+    await quizService.addQuestion(org, quiz.id, q1);
 
     // Archive quiz
     const archRes = await archiveQuizAction(quiz.id);
@@ -739,25 +747,23 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
   });
 
   // ADV-QZ-30: Lifecycle transitions: restore draft archive vs published archive
-  await t.test('ADV-QZ-30: Draft archive can be restored to DRAFT; Published archive cannot', () => {
+  await t.test('ADV-QZ-30: Draft archive can be restored to DRAFT; Published archive cannot', async () => {
     const org = 'church-berea-alpha';
-    const q1 = seedApprovedQuestion(bankService, org, 'Q1');
+    const q1 = await seedApprovedQuestion(bankService, org, 'Q1');
 
     // 1. Draft -> Archived -> Draft
-    const draftQuiz = quizService.createQuiz(org, { organizationId: org, title: 'Draft Archivable' });
-    quizService.archiveQuiz(org, draftQuiz.id);
-    const restored = quizService.restoreDraftQuiz(org, draftQuiz.id);
+    const draftQuiz = await quizService.createQuiz(org, { organizationId: org, title: 'Draft Archivable' });
+    await quizService.archiveQuiz(org, draftQuiz.id);
+    const restored = await quizService.restoreDraftQuiz(org, draftQuiz.id);
     assert.equal(restored?.status, QuizStatus.DRAFT);
 
     // 2. Published -> Archived -> Draft (FORBIDDEN)
-    const pubQuiz = quizService.createQuiz(org, { organizationId: org, title: 'Pub Archivable' });
-    quizService.addQuestion(org, pubQuiz.id, q1);
-    quizService.publishQuiz(org, pubQuiz.id, 'teacher-1');
-    quizService.archiveQuiz(org, pubQuiz.id);
+    const pubQuiz = await quizService.createQuiz(org, { organizationId: org, title: 'Pub Archivable' });
+    await quizService.addQuestion(org, pubQuiz.id, q1);
+    await quizService.publishQuiz(org, pubQuiz.id, 'teacher-1');
+    await quizService.archiveQuiz(org, pubQuiz.id);
 
-    assert.throws(
-      () => quizService.restoreDraftQuiz(org, pubQuiz.id),
-      /Cannot restore a published archived quiz back to DRAFT/i
+    await assert.rejects(async () => await quizService.restoreDraftQuiz(org, pubQuiz.id), /Cannot restore a published archived quiz back to DRAFT/i
     );
   });
 

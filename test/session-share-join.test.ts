@@ -88,14 +88,14 @@ function setupTestEnvironment() {
   return { sharedDb, questionRepo, quizRepo, sessionRepo, bankService, quizService, sessionService, rateLimiter };
 }
 
-function seedPublishedSnapshot(
+async function seedPublishedSnapshot(
   sharedDb: DatabaseSync,
   bankService: QuestionBankService,
   quizService: QuizService,
   orgId: string,
   userId: string,
   title: string = 'Faith Quiz'
-): string {
+): Promise<string> {
   setAuthorizedTeacherContext({
     userId,
     organizationId: orgId,
@@ -103,7 +103,7 @@ function seedPublishedSnapshot(
     role: 'teacher'
   });
 
-  const q = bankService.createQuestion({
+  const q = await bankService.createQuestion({
     organizationId: orgId,
     stem: 'What is faith according to Hebrews 11:1?',
     type: QuestionType.MULTIPLE_CHOICE,
@@ -116,10 +116,10 @@ function seedPublishedSnapshot(
     language: 'en'
   });
 
-  bankService.transitionStatus(orgId, q.id, QuestionStatus.PENDING_REVIEW);
-  bankService.transitionStatus(orgId, q.id, QuestionStatus.APPROVED);
+  await bankService.transitionStatus(orgId, q.id, QuestionStatus.PENDING_REVIEW);
+  await bankService.transitionStatus(orgId, q.id, QuestionStatus.APPROVED);
 
-  const quiz = quizService.createQuiz(orgId, {
+  const quiz = await quizService.createQuiz(orgId, {
     organizationId: orgId,
     title,
     description: 'A study on faith',
@@ -127,15 +127,15 @@ function seedPublishedSnapshot(
     scoringStyle: ScoringStyle.STANDARD
   });
 
-  quizService.addQuestion(orgId, quiz.id, q.id);
-  const snapshot = quizService.publishQuiz(orgId, quiz.id, userId);
+  await quizService.addQuestion(orgId, quiz.id, q.id);
+  const snapshot = await quizService.publishQuiz(orgId, quiz.id, userId);
 
   return snapshot.id;
 }
 
 test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', async (t) => {
 
-  await t.test('Option A: Personal Tenant Isolation & Cross-Tenant Rejection (ADV-TNT-01..05)', () => {
+  await t.test('Option A: Personal Tenant Isolation & Cross-Tenant Rejection (ADV-TNT-01..05)', async () => {
     const { sharedDb, bankService, quizService, sessionService } = setupTestEnvironment();
 
     const personalTenantA = derivePersonalTenantId('user_A');
@@ -143,14 +143,14 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     const orgTenant1 = 'org_berea_central';
     const orgTenant2 = 'org_grace_fellowship';
 
-    const snapPersonalA = seedPublishedSnapshot(sharedDb, bankService, quizService, personalTenantA, 'user_A', 'Personal A Quiz');
-    const snapPersonalB = seedPublishedSnapshot(sharedDb, bankService, quizService, personalTenantB, 'user_B', 'Personal B Quiz');
-    const snapOrg1 = seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant1, 'teacher_org1', 'Org 1 Quiz');
-    const snapOrg2 = seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant2, 'teacher_org2', 'Org 2 Quiz');
+    const snapPersonalA = await seedPublishedSnapshot(sharedDb, bankService, quizService, personalTenantA, 'user_A', 'Personal A Quiz');
+    const snapPersonalB = await seedPublishedSnapshot(sharedDb, bankService, quizService, personalTenantB, 'user_B', 'Personal B Quiz');
+    const snapOrg1 = await seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant1, 'teacher_org1', 'Org 1 Quiz');
+    const snapOrg2 = await seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant2, 'teacher_org2', 'Org 2 Quiz');
 
     // ADV-TNT-01: Personal Creator A vs Personal Creator B Cross-Tenant Rejection
-    assert.throws(() => {
-      sessionService.createSession({
+    await assert.rejects(async () => {
+      await sessionService.createSession({
         workspaceType: WorkspaceType.PERSONAL,
         organizationId: personalTenantA,
         publishedQuizSnapshotId: snapPersonalB,
@@ -172,8 +172,8 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     }, /Tenant mismatch/);
 
     // ADV-TNT-02: Personal Creator referencing Organization Snapshot Rejection
-    assert.throws(() => {
-      sessionService.createSession({
+    await assert.rejects(async () => {
+      await sessionService.createSession({
         workspaceType: WorkspaceType.PERSONAL,
         organizationId: personalTenantA,
         publishedQuizSnapshotId: snapOrg1,
@@ -184,8 +184,8 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     }, (err: unknown) => err instanceof CrossTenantSnapshotError || (err instanceof Error && err.message.includes('Tenant mismatch')));
 
     // ADV-TNT-03: Organization referencing Personal Creator Snapshot Rejection
-    assert.throws(() => {
-      sessionService.createSession({
+    await assert.rejects(async () => {
+      await sessionService.createSession({
         workspaceType: WorkspaceType.ORGANIZATION,
         organizationId: orgTenant1,
         publishedQuizSnapshotId: snapPersonalA,
@@ -196,8 +196,8 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     }, (err: unknown) => err instanceof CrossTenantSnapshotError || (err instanceof Error && err.message.includes('Tenant mismatch')));
 
     // ADV-TNT-04: Organization A referencing Organization B Snapshot Rejection
-    assert.throws(() => {
-      sessionService.createSession({
+    await assert.rejects(async () => {
+      await sessionService.createSession({
         workspaceType: WorkspaceType.ORGANIZATION,
         organizationId: orgTenant1,
         publishedQuizSnapshotId: snapOrg2,
@@ -208,7 +208,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     }, (err: unknown) => err instanceof CrossTenantSnapshotError || (err instanceof Error && err.message.includes('Tenant mismatch')));
 
     // Legitimate creation in Personal Workspace succeeds
-    const legitPersonalSession = sessionService.createSession({
+    const legitPersonalSession = await sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: personalTenantA,
       publishedQuizSnapshotId: snapPersonalA,
@@ -219,7 +219,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     assert.equal(legitPersonalSession.organizationId, personalTenantA);
 
     // Legitimate creation in Organization Workspace succeeds
-    const legitOrgSession = sessionService.createSession({
+    const legitOrgSession = await sessionService.createSession({
       workspaceType: WorkspaceType.ORGANIZATION,
       organizationId: orgTenant1,
       publishedQuizSnapshotId: snapOrg1,
@@ -254,8 +254,8 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     const personalTenantB = derivePersonalTenantId('user_B');
     const orgTenant = 'org_berea_central';
 
-    const snapA = seedPublishedSnapshot(sharedDb, bankService, quizService, personalTenantA, 'user_A', 'Personal A');
-    const snapOrg = seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'org_teacher_1', 'Org Quiz');
+    const snapA = await seedPublishedSnapshot(sharedDb, bankService, quizService, personalTenantA, 'user_A', 'Personal A');
+    const snapOrg = await seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'org_teacher_1', 'Org Quiz');
 
     // Create Personal A session via action
     setAuthorizedTeacherContext({
@@ -335,9 +335,9 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     const { sharedDb, bankService, quizService, sessionService } = setupTestEnvironment();
 
     const personalTenant = derivePersonalTenantId('pastor_john');
-    const snap = seedPublishedSnapshot(sharedDb, bankService, quizService, personalTenant, 'pastor_john', 'Romans 8 Study');
+    const snap = await seedPublishedSnapshot(sharedDb, bankService, quizService, personalTenant, 'pastor_john', 'Romans 8 Study');
 
-    const session = sessionService.createSession({
+    const session = await sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: personalTenant,
       publishedQuizSnapshotId: snap,
@@ -374,9 +374,9 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     const { sharedDb, bankService, quizService, sessionService, rateLimiter } = setupTestEnvironment();
 
     const orgTenant = 'org_berea';
-    const snap = seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_1');
+    const snap = await seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_1');
 
-    const openSession = sessionService.createSession({
+    const openSession = await sessionService.createSession({
       workspaceType: WorkspaceType.ORGANIZATION,
       organizationId: orgTenant,
       publishedQuizSnapshotId: snap,
@@ -438,7 +438,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     }
 
     // ADV-AUTH-08: Token replay across different sessions fails
-    const otherSession = sessionService.createSession({
+    const otherSession = await sessionService.createSession({
       workspaceType: WorkspaceType.ORGANIZATION,
       organizationId: orgTenant,
       publishedQuizSnapshotId: snap,
@@ -474,9 +474,9 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     const { sharedDb, bankService, quizService, sessionService, rateLimiter } = setupTestEnvironment();
 
     const orgTenant = 'org_berea';
-    const snap = seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_1');
+    const snap = await seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_1');
 
-    const restrictedSession = sessionService.createSession({
+    const restrictedSession = await sessionService.createSession({
       workspaceType: WorkspaceType.ORGANIZATION,
       organizationId: orgTenant,
       publishedQuizSnapshotId: snap,
@@ -521,7 +521,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     assert.equal(invitedJoin.success, true);
 
     // ADV-ADM-06: Teacher group lockout on direct join
-    const groupSession = sessionService.createSession({
+    const groupSession = await sessionService.createSession({
       workspaceType: WorkspaceType.ORGANIZATION,
       organizationId: orgTenant,
       publishedQuizSnapshotId: snap,
@@ -540,7 +540,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     const { sharedDb, bankService, quizService, sessionService } = setupTestEnvironment();
 
     const orgTenant = 'org_berea';
-    const snap = seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_1');
+    const snap = await seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_1');
 
     setAuthorizedTeacherContext({
       userId: 'teacher_1',
@@ -549,7 +549,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
       role: 'teacher'
     });
 
-    const session = sessionService.createSession({
+    const session = await sessionService.createSession({
       workspaceType: WorkspaceType.ORGANIZATION,
       organizationId: orgTenant,
       publishedQuizSnapshotId: snap,
@@ -599,9 +599,9 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     const { sharedDb, bankService, quizService, sessionService, rateLimiter } = setupTestEnvironment();
 
     const orgTenant = 'org_berea';
-    const snap = seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_1');
+    const snap = await seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_1');
 
-    const session = sessionService.createSession({
+    const session = await sessionService.createSession({
       workspaceType: WorkspaceType.ORGANIZATION,
       organizationId: orgTenant,
       publishedQuizSnapshotId: snap,
@@ -615,7 +615,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
 
     // ADV-NAT-01: 50 participants join behind the exact same church Wi-Fi NAT IP
     for (let i = 1; i <= 50; i++) {
-      const res = sessionService.joinSession(
+      const res = await sessionService.joinSession(
         session.id,
         {
           userId: `student_${i}`,
@@ -630,7 +630,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
       assert.ok(res.token);
     }
 
-    const info = sessionService.getPublicInfo(session.roomCode);
+    const info = await sessionService.getPublicInfo(session.roomCode);
     assert.equal(info.participantCount, 50);
 
     // ADV-NAT-02: Rapid failed probes from an attacker IP are throttled
@@ -639,24 +639,24 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
       rateLimiter.recordFailedLookup(attackerIp);
     }
 
-    assert.throws(() => {
-      sessionService.getPublicInfo('ZZZZZZ' as RoomCode, attackerIp);
+    await assert.rejects(async () => {
+      await sessionService.getPublicInfo('ZZZZZZ' as RoomCode, attackerIp);
     }, (err: unknown) => err instanceof RateLimitExceededError);
 
     // ADV-NAT-03: Legitimate user on church NAT IP is completely unaffected (no global kill-switch)
-    const legitCheck = sessionService.getPublicInfo(session.roomCode, churchNatIp);
+    const legitCheck = await sessionService.getPublicInfo(session.roomCode, churchNatIp);
     assert.equal(legitCheck.quizTitle, 'Faith Quiz');
   });
 
-  await t.test('Scheduled Start & Milestone Boundary (ADV-SCH-01..03)', () => {
+  await t.test('Scheduled Start & Milestone Boundary (ADV-SCH-01..03)', async () => {
     const { sharedDb, bankService, quizService, sessionService } = setupTestEnvironment();
 
     const orgTenant = 'org_berea';
-    const snap = seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_1');
+    const snap = await seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_1');
 
     // ADV-SCH-01: Past or non-UTC scheduled start time rejected
-    assert.throws(() => {
-      sessionService.createSession({
+    await assert.rejects(async () => {
+      await sessionService.createSession({
         workspaceType: WorkspaceType.ORGANIZATION,
         organizationId: orgTenant,
         publishedQuizSnapshotId: snap,
@@ -668,7 +668,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     }, (err: unknown) => err instanceof InvalidScheduledTimeError);
 
     const futureTime = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-    const scheduledSession = sessionService.createSession({
+    const scheduledSession = await sessionService.createSession({
       workspaceType: WorkspaceType.ORGANIZATION,
       organizationId: orgTenant,
       publishedQuizSnapshotId: snap,
@@ -683,19 +683,19 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     assert.equal(scheduledSession.scheduledStartAt, futureTime);
 
     // ADV-SCH-03: Active live state progression does not exist in BAREA-006
-    const publicInfo = sessionService.getPublicInfo(scheduledSession.roomCode);
+    const publicInfo = await sessionService.getPublicInfo(scheduledSession.roomCode);
     assert.equal(publicInfo.sessionStatus, SessionStatus.LOBBY);
     assert((publicInfo as unknown as Record<string, unknown>).questions === undefined);
   });
 
-  await t.test('Concurrency & Capacity Enforcement (ADV-CONC-01..04)', () => {
+  await t.test('Concurrency & Capacity Enforcement (ADV-CONC-01..04)', async () => {
     const { sharedDb, bankService, quizService, sessionService } = setupTestEnvironment();
 
     const orgTenant = 'org_berea';
-    const snap = seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_1');
+    const snap = await seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_1');
 
     // ADV-CONC-01: Capacity Limit
-    const tinySession = sessionService.createSession({
+    const tinySession = await sessionService.createSession({
       workspaceType: WorkspaceType.ORGANIZATION,
       organizationId: orgTenant,
       publishedQuizSnapshotId: snap,
@@ -706,7 +706,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     });
 
     for (let i = 1; i <= 3; i++) {
-      sessionService.joinSession(tinySession.id, {
+      await sessionService.joinSession(tinySession.id, {
         userId: `tiny_${i}`,
         providerType: 'GOOGLE',
         providerSub: `sub_tiny_${i}`,
@@ -716,8 +716,8 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
       });
     }
 
-    assert.throws(() => {
-      sessionService.joinSession(tinySession.id, {
+    await assert.rejects(async () => {
+      await sessionService.joinSession(tinySession.id, {
         userId: 'tiny_4',
         providerType: 'GOOGLE',
         providerSub: 'sub_tiny_4',
@@ -732,9 +732,9 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     const { sharedDb, bankService, quizService, sessionService, rateLimiter } = setupTestEnvironment();
 
     const orgTenant = 'org_berea_security';
-    const snap = seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_sec');
+    const snap = await seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_sec');
 
-    const session = sessionService.createSession({
+    const session = await sessionService.createSession({
       workspaceType: WorkspaceType.ORGANIZATION,
       organizationId: orgTenant,
       publishedQuizSnapshotId: snap,
@@ -901,7 +901,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
 
     // 8B. CROSS-ROOM ISOLATION:
     // Attacking room A cannot block access to unrelated room B
-    const roomB = sessionService.createSession({
+    const roomB = await sessionService.createSession({
       workspaceType: WorkspaceType.ORGANIZATION,
       organizationId: orgTenant,
       publishedQuizSnapshotId: snap,
@@ -995,9 +995,9 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     const { sharedDb, bankService, quizService, sessionService } = setupTestEnvironment();
 
     const orgTenant = 'org_berea_error_sanitization';
-    const snap = seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_err');
+    const snap = await seedPublishedSnapshot(sharedDb, bankService, quizService, orgTenant, 'teacher_err');
 
-    const session = sessionService.createSession({
+    const session = await sessionService.createSession({
       workspaceType: WorkspaceType.ORGANIZATION,
       organizationId: orgTenant,
       publishedQuizSnapshotId: snap,

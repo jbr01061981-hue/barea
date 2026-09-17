@@ -9,6 +9,26 @@ import type {
   OAuthTransaction
 } from '../domain/auth';
 
+import {
+  AccountNotFoundError,
+  OAuthTransactionReplayedError,
+  AccountCollisionDetectedError
+} from '../domain/domain-errors';
+
+export interface ProvisionFederatedUserSessionPayload {
+  readonly transactionId?: string;
+  readonly providerType: string;
+  readonly providerSub: string;
+  readonly email: string | null;
+  readonly emailVerified: boolean;
+  readonly displayName: string;
+}
+
+export interface ProvisionFederatedUserSessionResult {
+  readonly user: User;
+  readonly rawToken: string;
+}
+
 export interface AuthRepository {
   // Users (Public Safe Domain Model)
   createUser(data: {
@@ -16,17 +36,17 @@ export interface AuthRepository {
     emailVerified?: boolean;
     passwordHash?: string | null;
     displayName: string;
-  }): User;
-  findUserById(id: string): User | null;
-  findUserByEmail(email: string): User | null;
+  }): Promise<User>;
+  findUserById(id: string): Promise<User | null>;
+  findUserByEmail(email: string): Promise<User | null>;
 
   // Federated Identity
-  findFederatedIdentity(providerType: string, providerSub: string): FederatedIdentity | null;
+  findFederatedIdentity(providerType: string, providerSub: string): Promise<FederatedIdentity | null>;
   createFederatedIdentity(data: {
     userId: string;
     providerType: string;
     providerSub: string;
-  }): FederatedIdentity;
+  }): Promise<FederatedIdentity>;
 
   // Sessions
   createSession(
@@ -36,14 +56,19 @@ export interface AuthRepository {
       authProvider?: string;
       providerSub?: string;
     }
-  ): { rawToken: string; session: UserSession };
-  findSessionByToken(rawToken: string): AuthenticatedSessionContext | null;
-  deleteSession(rawToken: string): void;
-  deleteUserSessions(userId: string): void;
+  ): Promise<{ rawToken: string; session: UserSession }>;
+  findSessionByToken(rawToken: string): Promise<AuthenticatedSessionContext | null>;
+  deleteSession(rawToken: string): Promise<void>;
+  deleteUserSessions(userId: string): Promise<void>;
+
+  // Atomic Federated User Session Provisioning
+  provisionFederatedUserSession(
+    payload: ProvisionFederatedUserSessionPayload
+  ): Promise<ProvisionFederatedUserSessionResult>;
 
   // Organization Memberships
-  addOrganizationMembership(organizationId: string, userId: string, role: 'teacher' | 'admin'): void;
-  getOrganizationMemberships(userId: string): OrganizationMembership[];
+  addOrganizationMembership(organizationId: string, userId: string, role: 'teacher' | 'admin'): Promise<void>;
+  getOrganizationMemberships(userId: string): Promise<OrganizationMembership[]>;
 
   // OAuth Transactions
   createOAuthTransaction(data: {
@@ -53,12 +78,11 @@ export interface AuthRepository {
     nonceHash: string;
     returnTo: string;
     ttlSeconds?: number;
-  }): OAuthTransaction;
-  findOAuthTransaction(id: string): OAuthTransaction | null;
-  consumeOAuthTransaction(id: string, nowIso?: string): boolean;
-  pruneExpiredOAuthTransactions(beforeIso?: string): number;
+  }): Promise<OAuthTransaction>;
+  findOAuthTransaction(id: string): Promise<OAuthTransaction | null>;
+  consumeOAuthTransaction(id: string, nowIso?: string): Promise<boolean>;
+  pruneExpiredOAuthTransactions(beforeIso?: string): Promise<number>;
 
-  transaction<T>(action: () => T): T;
   close(): void;
 }
 
@@ -150,7 +174,60 @@ export class SqliteAuthRepository implements AuthRepository {
     }
   }
 
-  createUser(data: {
+  private _findUserByIdSync(id: string): User | null {
+    const row = this.db.prepare(`
+      SELECT id, email, email_verified, display_name, created_at
+      FROM users
+      WHERE id = ?
+    `).get(id) as any;
+
+    if (!row) return null;
+    return {
+      id: row.id,
+      email: row.email,
+      emailVerified: Boolean(row.email_verified),
+      displayName: row.display_name,
+      createdAt: row.created_at
+    };
+  }
+
+  private _findUserByEmailSync(email: string): User | null {
+    if (!email) return null;
+    const normalizedEmail = email.trim().toLowerCase();
+    const row = this.db.prepare(`
+      SELECT id, email, email_verified, display_name, created_at
+      FROM users
+      WHERE email = ?
+    `).get(normalizedEmail) as any;
+
+    if (!row) return null;
+    return {
+      id: row.id,
+      email: row.email,
+      emailVerified: Boolean(row.email_verified),
+      displayName: row.display_name,
+      createdAt: row.created_at
+    };
+  }
+
+  private _findFederatedIdentitySync(providerType: string, providerSub: string): FederatedIdentity | null {
+    const row = this.db.prepare(`
+      SELECT id, user_id, provider_type, provider_sub, created_at
+      FROM federated_identities
+      WHERE provider_type = ? AND provider_sub = ?
+    `).get(providerType.toUpperCase(), providerSub.trim()) as any;
+
+    if (!row) return null;
+    return {
+      id: row.id,
+      userId: row.user_id,
+      providerType: row.provider_type,
+      providerSub: row.provider_sub,
+      createdAt: row.created_at
+    };
+  }
+
+  private _createUserSync(data: {
     email: string | null;
     emailVerified?: boolean;
     passwordHash?: string | null;
@@ -181,60 +258,7 @@ export class SqliteAuthRepository implements AuthRepository {
     };
   }
 
-  findUserById(id: string): User | null {
-    const row = this.db.prepare(`
-      SELECT id, email, email_verified, display_name, created_at
-      FROM users
-      WHERE id = ?
-    `).get(id) as any;
-
-    if (!row) return null;
-    return {
-      id: row.id,
-      email: row.email,
-      emailVerified: Boolean(row.email_verified),
-      displayName: row.display_name,
-      createdAt: row.created_at
-    };
-  }
-
-  findUserByEmail(email: string): User | null {
-    if (!email) return null;
-    const normalizedEmail = email.trim().toLowerCase();
-    const row = this.db.prepare(`
-      SELECT id, email, email_verified, display_name, created_at
-      FROM users
-      WHERE email = ?
-    `).get(normalizedEmail) as any;
-
-    if (!row) return null;
-    return {
-      id: row.id,
-      email: row.email,
-      emailVerified: Boolean(row.email_verified),
-      displayName: row.display_name,
-      createdAt: row.created_at
-    };
-  }
-
-  findFederatedIdentity(providerType: string, providerSub: string): FederatedIdentity | null {
-    const row = this.db.prepare(`
-      SELECT id, user_id, provider_type, provider_sub, created_at
-      FROM federated_identities
-      WHERE provider_type = ? AND provider_sub = ?
-    `).get(providerType.toUpperCase(), providerSub.trim()) as any;
-
-    if (!row) return null;
-    return {
-      id: row.id,
-      userId: row.user_id,
-      providerType: row.provider_type,
-      providerSub: row.provider_sub,
-      createdAt: row.created_at
-    };
-  }
-
-  createFederatedIdentity(data: {
+  private _createFederatedIdentitySync(data: {
     userId: string;
     providerType: string;
     providerSub: string;
@@ -258,7 +282,18 @@ export class SqliteAuthRepository implements AuthRepository {
     };
   }
 
-  createSession(
+  createSessionSync(
+    userId: string,
+    ttlOrOptions?: number | {
+      ttlSeconds?: number;
+      authProvider?: string;
+      providerSub?: string;
+    }
+  ): { rawToken: string; session: UserSession } {
+    return this._createSessionSync(userId, ttlOrOptions);
+  }
+
+  private _createSessionSync(
     userId: string,
     ttlOrOptions?: number | {
       ttlSeconds?: number;
@@ -295,7 +330,75 @@ export class SqliteAuthRepository implements AuthRepository {
     };
   }
 
-  findSessionByToken(rawToken: string): AuthenticatedSessionContext | null {
+  private _consumeOAuthTransactionSync(id: string, nowIso?: string): boolean {
+    if (!id || typeof id !== 'string') return false;
+    const now = nowIso || new Date().toISOString();
+    const result = this.db.prepare(`
+      UPDATE oauth_transactions
+      SET consumed_at = ?
+      WHERE id = ?
+        AND consumed_at IS NULL
+        AND expires_at > ?
+    `).run(now, id, now);
+
+    return (result.changes ?? 0) > 0;
+  }
+
+  private _getOrganizationMembershipsSync(userId: string): OrganizationMembership[] {
+    const rows = this.db.prepare(`
+      SELECT organization_id, user_id, role
+      FROM organization_memberships
+      WHERE user_id = ?
+    `).all(userId) as any[];
+
+    return rows.map((r) => ({
+      organizationId: r.organization_id,
+      userId: r.user_id,
+      role: r.role
+    }));
+  }
+
+  async createUser(data: {
+    email: string | null;
+    emailVerified?: boolean;
+    passwordHash?: string | null;
+    displayName: string;
+  }): Promise<User> {
+    return this._createUserSync(data);
+  }
+
+  async findUserById(id: string): Promise<User | null> {
+    return this._findUserByIdSync(id);
+  }
+
+  async findUserByEmail(email: string): Promise<User | null> {
+    return this._findUserByEmailSync(email);
+  }
+
+  async findFederatedIdentity(providerType: string, providerSub: string): Promise<FederatedIdentity | null> {
+    return this._findFederatedIdentitySync(providerType, providerSub);
+  }
+
+  async createFederatedIdentity(data: {
+    userId: string;
+    providerType: string;
+    providerSub: string;
+  }): Promise<FederatedIdentity> {
+    return this._createFederatedIdentitySync(data);
+  }
+
+  async createSession(
+    userId: string,
+    ttlOrOptions?: number | {
+      ttlSeconds?: number;
+      authProvider?: string;
+      providerSub?: string;
+    }
+  ): Promise<{ rawToken: string; session: UserSession }> {
+    return this._createSessionSync(userId, ttlOrOptions);
+  }
+
+  async findSessionByToken(rawToken: string): Promise<AuthenticatedSessionContext | null> {
     if (!rawToken || typeof rawToken !== 'string') return null;
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     const now = new Date().toISOString();
@@ -308,10 +411,10 @@ export class SqliteAuthRepository implements AuthRepository {
 
     if (!sessionRow) return null;
 
-    const user = this.findUserById(sessionRow.user_id);
+    const user = this._findUserByIdSync(sessionRow.user_id);
     if (!user) return null;
 
-    const memberships = this.getOrganizationMemberships(user.id);
+    const memberships = this._getOrganizationMembershipsSync(user.id);
 
     return {
       user,
@@ -327,7 +430,7 @@ export class SqliteAuthRepository implements AuthRepository {
     };
   }
 
-  deleteSession(rawToken: string): void {
+  async deleteSession(rawToken: string): Promise<void> {
     if (!rawToken || typeof rawToken !== 'string') return;
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     this.db.prepare(`
@@ -335,41 +438,91 @@ export class SqliteAuthRepository implements AuthRepository {
     `).run(tokenHash);
   }
 
-  deleteUserSessions(userId: string): void {
+  async deleteUserSessions(userId: string): Promise<void> {
     this.db.prepare(`
       DELETE FROM user_sessions WHERE user_id = ?
     `).run(userId);
   }
 
-  addOrganizationMembership(organizationId: string, userId: string, role: 'teacher' | 'admin'): void {
+  async provisionFederatedUserSession(
+    payload: ProvisionFederatedUserSessionPayload
+  ): Promise<ProvisionFederatedUserSessionResult> {
+    return this.transaction(() => {
+      // Step 1: Atomically consume OAuth transaction if transactionId provided (single-use invariant)
+      if (payload.transactionId) {
+        const consumed = this._consumeOAuthTransactionSync(payload.transactionId);
+        if (!consumed) {
+          throw new OAuthTransactionReplayedError('OAuth transaction has already been consumed and cannot be replayed.');
+        }
+      }
+
+      let resolvedUser: User;
+
+      // Step 2: Identity resolution (Rule: provider + providerSub is authoritative)
+      const existingFederated = this._findFederatedIdentitySync(payload.providerType, payload.providerSub);
+      if (existingFederated) {
+        const foundUser = this._findUserByIdSync(existingFederated.userId);
+        if (!foundUser) {
+          throw new AccountNotFoundError('User bound to Google account not found.');
+        }
+        resolvedUser = foundUser;
+      } else {
+        // Step 3: Anti-account-hijacking collision check (Rule: Prohibit silent automatic linking to existing email)
+        if (payload.email) {
+          const existingUserByEmail = this._findUserByEmailSync(payload.email);
+          if (existingUserByEmail) {
+            throw new AccountCollisionDetectedError(
+              'An account with this email address is already registered to a different login provider or identity.'
+            );
+          }
+        }
+
+        // Step 4: Create new user
+        const newUser = this._createUserSync({
+          email: payload.email,
+          emailVerified: payload.emailVerified,
+          displayName: payload.displayName
+        });
+
+        // Step 5: Create new federated identity bound to new user
+        this._createFederatedIdentitySync({
+          userId: newUser.id,
+          providerType: payload.providerType,
+          providerSub: payload.providerSub
+        });
+
+        resolvedUser = newUser;
+      }
+
+      // Step 6: Create fresh session
+      const { rawToken } = this.createSessionSync(resolvedUser.id, {
+        authProvider: payload.providerType,
+        providerSub: payload.providerSub
+      });
+
+      return { user: resolvedUser, rawToken };
+    });
+  }
+
+  async addOrganizationMembership(organizationId: string, userId: string, role: 'teacher' | 'admin'): Promise<void> {
     this.db.prepare(`
       INSERT OR REPLACE INTO organization_memberships (organization_id, user_id, role)
       VALUES (?, ?, ?)
     `).run(organizationId, userId, role);
   }
 
-  getOrganizationMemberships(userId: string): OrganizationMembership[] {
-    const rows = this.db.prepare(`
-      SELECT organization_id, user_id, role
-      FROM organization_memberships
-      WHERE user_id = ?
-    `).all(userId) as any[];
-
-    return rows.map((r) => ({
-      organizationId: r.organization_id,
-      userId: r.user_id,
-      role: r.role
-    }));
+  async getOrganizationMemberships(userId: string): Promise<OrganizationMembership[]> {
+    return this._getOrganizationMembershipsSync(userId);
   }
 
-  createOAuthTransaction(data: {
+  async createOAuthTransaction(data: {
     id: string;
     stateHash: string;
     codeVerifier: string;
     nonceHash: string;
     returnTo: string;
     ttlSeconds?: number;
-  }): OAuthTransaction {
+  }): Promise<OAuthTransaction> {
     const now = new Date();
     const createdAt = now.toISOString();
     const ttl = data.ttlSeconds ?? 600; // default 10 minutes (600s)
@@ -400,7 +553,7 @@ export class SqliteAuthRepository implements AuthRepository {
     };
   }
 
-  findOAuthTransaction(id: string): OAuthTransaction | null {
+  async findOAuthTransaction(id: string): Promise<OAuthTransaction | null> {
     if (!id || typeof id !== 'string') return null;
     const row = this.db.prepare(`
       SELECT id, state_hash, code_verifier, nonce_hash, return_to, created_at, expires_at, consumed_at
@@ -421,21 +574,11 @@ export class SqliteAuthRepository implements AuthRepository {
     };
   }
 
-  consumeOAuthTransaction(id: string, nowIso?: string): boolean {
-    if (!id || typeof id !== 'string') return false;
-    const now = nowIso || new Date().toISOString();
-    const result = this.db.prepare(`
-      UPDATE oauth_transactions
-      SET consumed_at = ?
-      WHERE id = ?
-        AND consumed_at IS NULL
-        AND expires_at > ?
-    `).run(now, id, now);
-
-    return (result.changes ?? 0) > 0;
+  async consumeOAuthTransaction(id: string, nowIso?: string): Promise<boolean> {
+    return this._consumeOAuthTransactionSync(id, nowIso);
   }
 
-  pruneExpiredOAuthTransactions(beforeIso?: string): number {
+  async pruneExpiredOAuthTransactions(beforeIso?: string): Promise<number> {
     const cutoff = beforeIso || new Date(Date.now() - 3600 * 1000).toISOString(); // Expired 1 hour ago
     const result = this.db.prepare(`
       DELETE FROM oauth_transactions
@@ -445,7 +588,7 @@ export class SqliteAuthRepository implements AuthRepository {
     return Number(result.changes ?? 0);
   }
 
-  transaction<T>(action: () => T): T {
+  private transaction<T>(action: () => T): T {
     this.db.exec('BEGIN IMMEDIATE TRANSACTION;');
     try {
       const result = action();

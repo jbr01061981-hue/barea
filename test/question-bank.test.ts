@@ -234,9 +234,9 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
   const repo = new SqliteQuestionRepository(':memory:');
   const service = new QuestionBankService(repo);
 
-  await t.test('creates question defaulting to DRAFT and rejects explicit APPROVED create in repository/service', () => {
+  await t.test('creates question defaulting to DRAFT and rejects explicit APPROVED create in repository/service', async () => {
     // Default creation produces DRAFT
-    const defaultCreated = service.createQuestion({
+    const defaultCreated = await service.createQuestion({
       organizationId: 'church-create-test',
       stem: 'Question created with default status',
       type: QuestionType.TRUE_FALSE,
@@ -250,7 +250,7 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
     assert.equal(defaultCreated.status, QuestionStatus.DRAFT);
 
     // Explicit DRAFT creation succeeds
-    const explicitDraft = service.createQuestion({
+    const explicitDraft = await service.createQuestion({
       organizationId: 'church-create-test',
       stem: 'Question created with explicit DRAFT status',
       type: QuestionType.TRUE_FALSE,
@@ -265,8 +265,8 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
     assert.equal(explicitDraft.status, QuestionStatus.DRAFT);
 
     // Direct create with APPROVED status is rejected
-    assert.throws(
-      () => service.createQuestion({
+    await assert.rejects(
+      async () => service.createQuestion({
         organizationId: 'church-create-test',
         stem: 'Question created with explicit APPROVED status',
         type: QuestionType.TRUE_FALSE,
@@ -283,15 +283,15 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
 
     // APPROVED can only be reached through the legitimate review lifecycle:
     // DRAFT -> PENDING_REVIEW -> APPROVED
-    const inReview = service.transitionStatus('church-create-test', defaultCreated.id, QuestionStatus.PENDING_REVIEW);
+    const inReview = await service.transitionStatus('church-create-test', defaultCreated.id, QuestionStatus.PENDING_REVIEW);
     assert.equal(inReview!.status, QuestionStatus.PENDING_REVIEW);
 
-    const approved = service.transitionStatus('church-create-test', defaultCreated.id, QuestionStatus.APPROVED);
+    const approved = await service.transitionStatus('church-create-test', defaultCreated.id, QuestionStatus.APPROVED);
     assert.equal(approved!.status, QuestionStatus.APPROVED);
   });
 
-  await t.test('creates and retrieves question with durable persistence', () => {
-    const created = service.createQuestion({
+  await t.test('creates and retrieves question with durable persistence', async () => {
+    const created = await service.createQuestion({
       organizationId: 'church-alpha',
       stem: 'Where was Paul converted on the road to?',
       type: QuestionType.MULTIPLE_CHOICE,
@@ -312,12 +312,12 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
     assert.equal(created.difficulty, QuestionDifficulty.MEDIUM);
     assert.deepEqual(created.correctOptionIndices, [1]);
 
-    const retrieved = service.getQuestion('church-alpha', created!.id);
+    const retrieved = await service.getQuestion('church-alpha', created!.id);
     assert.deepEqual(retrieved, created);
   });
 
-  await t.test('updates question content and preserves domain invariants', () => {
-    const created = service.createQuestion({
+  await t.test('updates question content and preserves domain invariants', async () => {
+    const created = await service.createQuestion({
       organizationId: 'church-alpha',
       stem: 'Original stem',
       type: QuestionType.MULTIPLE_CHOICE,
@@ -329,7 +329,7 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
       language: 'en'
     });
 
-    const updated = service.updateQuestion('church-alpha', created!.id, {
+    const updated = await service.updateQuestion('church-alpha', created!.id, {
       stem: 'Updated stem with more clarity',
       difficulty: QuestionDifficulty.HARD
     });
@@ -338,8 +338,8 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
     assert.equal(updated!.difficulty, QuestionDifficulty.HARD);
   });
 
-  await t.test('validates lifecycle transition in service', () => {
-    const created = service.createQuestion({
+  await t.test('validates lifecycle transition in service', async () => {
+    const created = await service.createQuestion({
       organizationId: 'church-alpha',
       stem: 'Life transition test',
       type: QuestionType.TRUE_FALSE,
@@ -353,21 +353,21 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
     });
 
     // Valid: DRAFT -> PENDING_REVIEW -> APPROVED
-    const inReview = service.transitionStatus('church-alpha', created!.id, QuestionStatus.PENDING_REVIEW);
+    const inReview = await service.transitionStatus('church-alpha', created!.id, QuestionStatus.PENDING_REVIEW);
     assert.equal(inReview!.status, QuestionStatus.PENDING_REVIEW);
 
-    const approved = service.transitionStatus('church-alpha', created!.id, QuestionStatus.APPROVED);
+    const approved = await service.transitionStatus('church-alpha', created!.id, QuestionStatus.APPROVED);
     assert.equal(approved!.status, QuestionStatus.APPROVED);
 
     // Invalid transition: APPROVED directly to DRAFT (not allowed, must go via ARCHIVED)
-    assert.throws(
-      () => service.transitionStatus('church-alpha', created!.id, QuestionStatus.DRAFT),
+    await assert.rejects(
+      async () => service.transitionStatus('church-alpha', created!.id, QuestionStatus.DRAFT),
       InvalidLifecycleTransitionError
     );
   });
 
-  await t.test('filters by topic, difficulty, type, language, status, and search', () => {
-    const q1 = service.createQuestion({
+  await t.test('filters by topic, difficulty, type, language, status, and search', async () => {
+    const q1 = await service.createQuestion({
       organizationId: 'church-filter-test',
       stem: 'Creation light query',
       type: QuestionType.TRUE_FALSE,
@@ -378,10 +378,10 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
       difficulty: QuestionDifficulty.EASY,
       language: 'en'
     });
-    service.transitionStatus('church-filter-test', q1.id, QuestionStatus.PENDING_REVIEW);
-    service.transitionStatus('church-filter-test', q1.id, QuestionStatus.APPROVED);
+    await service.transitionStatus('church-filter-test', q1.id, QuestionStatus.PENDING_REVIEW);
+    await service.transitionStatus('church-filter-test', q1.id, QuestionStatus.APPROVED);
 
-    service.createQuestion({
+    await service.createQuestion({
       organizationId: 'church-filter-test',
       stem: 'Adam and Eve deep study',
       type: QuestionType.MULTIPLE_CHOICE,
@@ -394,7 +394,7 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
       status: QuestionStatus.DRAFT
     });
 
-    const q3 = service.createQuestion({
+    const q3 = await service.createQuestion({
       organizationId: 'church-filter-test',
       stem: 'David and Goliath battle',
       type: QuestionType.MULTIPLE_CHOICE,
@@ -405,33 +405,33 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
       difficulty: QuestionDifficulty.MEDIUM,
       language: 'en'
     });
-    service.transitionStatus('church-filter-test', q3.id, QuestionStatus.PENDING_REVIEW);
-    service.transitionStatus('church-filter-test', q3.id, QuestionStatus.APPROVED);
+    await service.transitionStatus('church-filter-test', q3.id, QuestionStatus.PENDING_REVIEW);
+    await service.transitionStatus('church-filter-test', q3.id, QuestionStatus.APPROVED);
 
     // Filter by topic
-    const creationQuestions = service.listQuestions('church-filter-test', { topic: 'Creation' });
+    const creationQuestions = await service.listQuestions('church-filter-test', { topic: 'Creation' });
     assert.equal(creationQuestions.length, 2);
 
     // Filter by difficulty
-    const hardQuestions = service.listQuestions('church-filter-test', { difficulty: QuestionDifficulty.HARD });
+    const hardQuestions = await service.listQuestions('church-filter-test', { difficulty: QuestionDifficulty.HARD });
     assert.equal(hardQuestions.length, 1);
     assert.equal(hardQuestions[0].stem, 'Adam and Eve deep study');
 
     // Filter by approved only
-    const approvedQuestions = service.listApprovedQuestions('church-filter-test');
+    const approvedQuestions = await service.listApprovedQuestions('church-filter-test');
     assert.equal(approvedQuestions.length, 2);
     for (const q of approvedQuestions) {
       assert.equal(q.status, QuestionStatus.APPROVED);
     }
 
     // Search by text
-    const searchResults = service.listQuestions('church-filter-test', { search: 'Goliath' });
+    const searchResults = await service.listQuestions('church-filter-test', { search: 'Goliath' });
     assert.equal(searchResults.length, 1);
     assert.equal(searchResults[0].stem, 'David and Goliath battle');
   });
 
-  await t.test('enforces strict organizational ownership isolation', () => {
-    const qA = service.createQuestion({
+  await t.test('enforces strict organizational ownership isolation', async () => {
+    const qA = await service.createQuestion({
       organizationId: 'church-A',
       stem: 'Church A question',
       type: QuestionType.TRUE_FALSE,
@@ -442,10 +442,10 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
       difficulty: QuestionDifficulty.EASY,
       language: 'en'
     });
-    service.transitionStatus('church-A', qA.id, QuestionStatus.PENDING_REVIEW);
-    service.transitionStatus('church-A', qA.id, QuestionStatus.APPROVED);
+    await service.transitionStatus('church-A', qA.id, QuestionStatus.PENDING_REVIEW);
+    await service.transitionStatus('church-A', qA.id, QuestionStatus.APPROVED);
 
-    const qB = service.createQuestion({
+    const qB = await service.createQuestion({
       organizationId: 'church-B',
       stem: 'Church B question',
       type: QuestionType.TRUE_FALSE,
@@ -456,25 +456,25 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
       difficulty: QuestionDifficulty.EASY,
       language: 'en'
     });
-    service.transitionStatus('church-B', qB.id, QuestionStatus.PENDING_REVIEW);
-    service.transitionStatus('church-B', qB.id, QuestionStatus.APPROVED);
+    await service.transitionStatus('church-B', qB.id, QuestionStatus.PENDING_REVIEW);
+    await service.transitionStatus('church-B', qB.id, QuestionStatus.APPROVED);
 
     // Church B cannot retrieve Church A question
-    const crossRetrieve = service.getQuestion('church-B', qA.id);
+    const crossRetrieve = await service.getQuestion('church-B', qA.id);
     assert.equal(crossRetrieve, null);
 
     // Church A cannot list Church B questions
-    const churchAList = service.listQuestions('church-A');
+    const churchAList = await service.listQuestions('church-A');
     assert.equal(churchAList.length, 1);
     assert.equal(churchAList[0].id, qA.id);
 
-    const churchBList = service.listQuestions('church-B');
+    const churchBList = await service.listQuestions('church-B');
     assert.equal(churchBList.length, 1);
     assert.equal(churchBList[0].id, qB.id);
   });
 
-  await t.test('modifying approved question content cannot leave it silently approved (demotes to PENDING_REVIEW)', () => {
-    const draft = service.createQuestion({
+  await t.test('modifying approved question content cannot leave it silently approved (demotes to PENDING_REVIEW)', async () => {
+    const draft = await service.createQuestion({
       organizationId: 'church-review-safe',
       stem: 'Original approved stem question',
       type: QuestionType.MULTIPLE_CHOICE,
@@ -485,13 +485,13 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
       difficulty: QuestionDifficulty.EASY,
       language: 'en'
     });
-    service.transitionStatus('church-review-safe', draft.id, QuestionStatus.PENDING_REVIEW);
-    const created = service.transitionStatus('church-review-safe', draft.id, QuestionStatus.APPROVED);
+    await service.transitionStatus('church-review-safe', draft.id, QuestionStatus.PENDING_REVIEW);
+    const created = await service.transitionStatus('church-review-safe', draft.id, QuestionStatus.APPROVED);
 
     assert.equal(created!.status, QuestionStatus.APPROVED);
 
     // Editing question content without explicit status resets status to PENDING_REVIEW
-    const updatedContent = service.updateQuestion('church-review-safe', created!.id, {
+    const updatedContent = await service.updateQuestion('church-review-safe', created!.id, {
       stem: 'Modified stem text requiring fresh review'
     });
 
@@ -499,31 +499,31 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
     assert.equal(updatedContent!.status, QuestionStatus.PENDING_REVIEW);
 
     // Verify it is no longer returned in listApprovedQuestions
-    const approvedList = service.listApprovedQuestions('church-review-safe');
+    const approvedList = await service.listApprovedQuestions('church-review-safe');
     assert.equal(approvedList.some((q) => q.id === created!.id), false);
 
     // Attempting to edit content while explicitly requesting to remain APPROVED also forces PENDING_REVIEW
-    const approvedAgain = service.transitionStatus('church-review-safe', created!.id, QuestionStatus.APPROVED);
+    const approvedAgain = await service.transitionStatus('church-review-safe', created!.id, QuestionStatus.APPROVED);
     assert.equal(approvedAgain!.status, QuestionStatus.APPROVED);
 
-    const modifiedAgain = service.updateQuestion('church-review-safe', created!.id, {
+    const modifiedAgain = await service.updateQuestion('church-review-safe', created!.id, {
       explanation: 'Updated theological explanation note',
       status: QuestionStatus.APPROVED
     });
     assert.equal(modifiedAgain!.status, QuestionStatus.PENDING_REVIEW);
 
     // Pure status-only transition (e.g. archiving) does not trigger content demotion
-    const reApproved = service.transitionStatus('church-review-safe', created!.id, QuestionStatus.APPROVED);
+    const reApproved = await service.transitionStatus('church-review-safe', created!.id, QuestionStatus.APPROVED);
     assert.equal(reApproved!.status, QuestionStatus.APPROVED);
 
-    const archived = service.updateQuestion('church-review-safe', created!.id, {
+    const archived = await service.updateQuestion('church-review-safe', created!.id, {
       status: QuestionStatus.ARCHIVED
     });
     assert.equal(archived!.status, QuestionStatus.ARCHIVED);
   });
 
-  await t.test('archiveQuestion soft-deletes question to ARCHIVED status', () => {
-    const draft = service.createQuestion({
+  await t.test('archiveQuestion soft-deletes question to ARCHIVED status', async () => {
+    const draft = await service.createQuestion({
       organizationId: 'church-archive-test',
       stem: 'Question to be archived',
       type: QuestionType.TRUE_FALSE,
@@ -534,23 +534,23 @@ test('Question Bank Persistence & Service CRUD Operations', async (t) => {
       difficulty: QuestionDifficulty.EASY,
       language: 'en'
     });
-    service.transitionStatus('church-archive-test', draft.id, QuestionStatus.PENDING_REVIEW);
-    const created = service.transitionStatus('church-archive-test', draft.id, QuestionStatus.APPROVED);
+    await service.transitionStatus('church-archive-test', draft.id, QuestionStatus.PENDING_REVIEW);
+    const created = await service.transitionStatus('church-archive-test', draft.id, QuestionStatus.APPROVED);
 
     assert.equal(created!.status, QuestionStatus.APPROVED);
 
-    const archived = service.archiveQuestion('church-archive-test', created!.id);
+    const archived = await service.archiveQuestion('church-archive-test', created!.id);
     assert.equal(archived!.status, QuestionStatus.ARCHIVED);
 
     // Archived question is excluded from listApprovedQuestions
-    const approvedList = service.listApprovedQuestions('church-archive-test');
+    const approvedList = await service.listApprovedQuestions('church-archive-test');
     assert.equal(approvedList.some((q) => q.id === created!.id), false);
 
     // Can still be retrieved by id and transitioned to DRAFT if unarchived
-    const retrieved = service.getQuestion('church-archive-test', created!.id);
+    const retrieved = await service.getQuestion('church-archive-test', created!.id);
     assert.equal(retrieved!.status, QuestionStatus.ARCHIVED);
 
-    const unarchived = service.transitionStatus('church-archive-test', created!.id, QuestionStatus.DRAFT);
+    const unarchived = await service.transitionStatus('church-archive-test', created!.id, QuestionStatus.DRAFT);
     assert.equal(unarchived!.status, QuestionStatus.DRAFT);
   });
 });
@@ -568,7 +568,7 @@ test('Question Bank Durable Persistence Across File Reopen', async (t) => {
     const service1 = new QuestionBankService(repo1);
 
     // 2. Create question through legitimate review lifecycle
-    const draft = service1.createQuestion({
+    const draft = await service1.createQuestion({
       organizationId: 'church-durable-org',
       stem: 'Is God eternal?',
       type: QuestionType.TRUE_FALSE,
@@ -580,8 +580,8 @@ test('Question Bank Durable Persistence Across File Reopen', async (t) => {
       difficulty: QuestionDifficulty.EASY,
       language: 'en'
     });
-    service1.transitionStatus('church-durable-org', draft.id, QuestionStatus.PENDING_REVIEW);
-    const created = service1.transitionStatus('church-durable-org', draft.id, QuestionStatus.APPROVED);
+    await service1.transitionStatus('church-durable-org', draft.id, QuestionStatus.PENDING_REVIEW);
+    const created = await service1.transitionStatus('church-durable-org', draft.id, QuestionStatus.APPROVED);
     assert.ok(created!.id);
     assert.equal(created!.stem, 'Is God eternal?');
     assert.equal(created!.status, QuestionStatus.APPROVED);
@@ -594,7 +594,7 @@ test('Question Bank Durable Persistence Across File Reopen', async (t) => {
     const service2 = new QuestionBankService(repo2);
 
     // 5. Retrieve question
-    const retrieved = service2.getQuestion('church-durable-org', created!.id);
+    const retrieved = await service2.getQuestion('church-durable-org', created!.id);
 
     // 6. Verify data is still present and matches
     assert.ok(retrieved);

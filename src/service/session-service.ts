@@ -46,7 +46,7 @@ export class SessionService {
     this.rateLimiter = rateLimiter;
   }
 
-  createSession(input: CreateSessionServiceInput): QuizSession {
+  async createSession(input: CreateSessionServiceInput): Promise<QuizSession> {
     // Determine authoritative tenant identity
     let authoritativeTenantId = input.organizationId;
     if (input.workspaceType === WorkspaceType.PERSONAL) {
@@ -59,11 +59,11 @@ export class SessionService {
     });
   }
 
-  getSession(sessionId: string): QuizSession | null {
+  async getSession(sessionId: string): Promise<QuizSession | null> {
     return this.repo.findSessionById(sessionId);
   }
 
-  getPublicInfo(rawRoomCode: string, clientIp?: string | null): SessionPublicInfo {
+  async getPublicInfo(rawRoomCode: string, clientIp?: string | null): Promise<SessionPublicInfo> {
     if (this.rateLimiter) {
       this.rateLimiter.checkUnauthenticatedRequest(clientIp);
       this.rateLimiter.checkRoomLookup(clientIp);
@@ -80,7 +80,7 @@ export class SessionService {
     }
 
     try {
-      return this.repo.getPublicInfo(validatedCode);
+      return await this.repo.getPublicInfo(validatedCode);
     } catch (err) {
       if (err instanceof SessionNotFoundError && this.rateLimiter && clientIp) {
         this.rateLimiter.recordFailedLookup(clientIp);
@@ -89,7 +89,7 @@ export class SessionService {
     }
   }
 
-  joinSession(
+  async joinSession(
     sessionId: string,
     participant: {
       userId: string;
@@ -100,7 +100,7 @@ export class SessionService {
       displayName: string;
     },
     clientIp?: string | null
-  ): { participant: AuthenticatedParticipant; token: ParticipantToken } {
+  ): Promise<{ participant: AuthenticatedParticipant; token: ParticipantToken }> {
     if (this.rateLimiter) {
       this.rateLimiter.checkJoinMutation(participant.userId);
     }
@@ -108,40 +108,40 @@ export class SessionService {
     return this.repo.joinSession(sessionId, participant);
   }
 
-  resumeSession(sessionId: string, token: ParticipantToken): { participant: AuthenticatedParticipant; session: QuizSession } {
+  async resumeSession(sessionId: string, token: ParticipantToken): Promise<{ participant: AuthenticatedParticipant; session: QuizSession }> {
     return this.repo.resumeSession(sessionId, token);
   }
 
-  lockSession(sessionId: string, hostUserId: string, locked: boolean): QuizSession {
+  async lockSession(sessionId: string, hostUserId: string, locked: boolean): Promise<QuizSession> {
     return this.repo.lockSession(sessionId, hostUserId, locked);
   }
 
-  closeSession(sessionId: string, hostUserId: string): QuizSession {
+  async closeSession(sessionId: string, hostUserId: string): Promise<QuizSession> {
     return this.repo.closeSession(sessionId, hostUserId);
   }
 
-  createGroup(sessionId: string, hostUserId: string, groupName: string): SessionGroup {
+  async createGroup(sessionId: string, hostUserId: string, groupName: string): Promise<SessionGroup> {
     return this.repo.createGroup(sessionId, hostUserId, groupName);
   }
 
-  deleteGroup(sessionId: string, hostUserId: string, groupId: string): boolean {
+  async deleteGroup(sessionId: string, hostUserId: string, groupId: string): Promise<boolean> {
     return this.repo.deleteGroup(sessionId, hostUserId, groupId);
   }
 
-  assignPupil(sessionId: string, hostUserId: string, groupId: string, pupilName: string): SessionGroupPupil {
+  async assignPupil(sessionId: string, hostUserId: string, groupId: string, pupilName: string): Promise<SessionGroupPupil> {
     return this.repo.assignPupil(sessionId, hostUserId, groupId, pupilName);
   }
 
-  removePupil(sessionId: string, hostUserId: string, groupId: string, pupilId: string): boolean {
+  async removePupil(sessionId: string, hostUserId: string, groupId: string, pupilId: string): Promise<boolean> {
     return this.repo.removePupil(sessionId, hostUserId, groupId, pupilId);
   }
 
-  getRoster(sessionId: string, hostUserId: string): {
+  async getRoster(sessionId: string, hostUserId: string): Promise<{
     mode: ParticipationMode;
     participants?: readonly AuthenticatedParticipant[];
     groups?: readonly SessionGroup[];
-  } {
-    const session = this.repo.findSessionById(sessionId);
+  }> {
+    const session = await this.repo.findSessionById(sessionId);
     if (!session) throw new SessionNotFoundError(sessionId);
     if (session.hostUserId !== hostUserId) {
       throw new SessionAccessDeniedError('Only host can access session roster.');
@@ -150,12 +150,12 @@ export class SessionService {
     if (session.participationMode === ParticipationMode.TEACHER_GROUP) {
       return {
         mode: session.participationMode,
-        groups: this.repo.listGroups(sessionId)
+        groups: await this.repo.listGroups(sessionId)
       };
     } else {
       return {
         mode: session.participationMode,
-        participants: this.repo.listParticipants(sessionId)
+        participants: await this.repo.listParticipants(sessionId)
       };
     }
   }

@@ -90,7 +90,7 @@ export async function createSessionAction(input: CreateSessionInput): Promise<Ac
       ? teacherContext.organizationId
       : ''; // Handled by service for personal tenant derivation
 
-    const session = service.createSession({
+    const session = await service.createSession({
       workspaceType,
       organizationId,
       publishedQuizSnapshotId: input.publishedQuizSnapshotId,
@@ -114,7 +114,7 @@ export async function closeSessionAction(sessionId: string): Promise<ActionResul
     const teacherContext = await getAuthorizedTeacherContext();
     const service = getSessionService();
 
-    const session = service.getSession(sessionId);
+    const session = await service.getSession(sessionId);
     if (!session) {
       throw new SessionNotFoundError(sessionId);
     }
@@ -122,7 +122,7 @@ export async function closeSessionAction(sessionId: string): Promise<ActionResul
       throw new SessionAccessDeniedError('Unauthorized to manage this session.');
     }
 
-    service.closeSession(sessionId, teacherContext.userId);
+    await service.closeSession(sessionId, teacherContext.userId);
     safeRevalidate('/teacher/quizzes');
     return { success: true, data: { success: true } };
   } catch (err) {
@@ -135,7 +135,7 @@ export async function lockSessionAction(sessionId: string, locked: boolean): Pro
     const teacherContext = await getAuthorizedTeacherContext();
     const service = getSessionService();
 
-    const session = service.getSession(sessionId);
+    const session = await service.getSession(sessionId);
     if (!session) {
       throw new SessionNotFoundError(sessionId);
     }
@@ -143,7 +143,7 @@ export async function lockSessionAction(sessionId: string, locked: boolean): Pro
       throw new SessionAccessDeniedError('Unauthorized to manage this session.');
     }
 
-    const updated = service.lockSession(sessionId, teacherContext.userId, locked);
+    const updated = await service.lockSession(sessionId, teacherContext.userId, locked);
     return { success: true, data: { isLocked: updated.isLocked } };
   } catch (err) {
     return errorResponse(err);
@@ -155,7 +155,7 @@ export async function createSessionGroupAction(sessionId: string, groupName: str
     const teacherContext = await getAuthorizedTeacherContext();
     const service = getSessionService();
 
-    const session = service.getSession(sessionId);
+    const session = await service.getSession(sessionId);
     if (!session) {
       throw new SessionNotFoundError(sessionId);
     }
@@ -163,7 +163,7 @@ export async function createSessionGroupAction(sessionId: string, groupName: str
       throw new SessionAccessDeniedError('Unauthorized to manage groups for this session.');
     }
 
-    const group = service.createGroup(sessionId, teacherContext.userId, groupName);
+    const group = await service.createGroup(sessionId, teacherContext.userId, groupName);
     return { success: true, data: group };
   } catch (err) {
     return errorResponse(err);
@@ -175,7 +175,7 @@ export async function assignPupilAction(sessionId: string, groupId: string, pupi
     const teacherContext = await getAuthorizedTeacherContext();
     const service = getSessionService();
 
-    const session = service.getSession(sessionId);
+    const session = await service.getSession(sessionId);
     if (!session) {
       throw new SessionNotFoundError(sessionId);
     }
@@ -183,7 +183,7 @@ export async function assignPupilAction(sessionId: string, groupId: string, pupi
       throw new SessionAccessDeniedError('Unauthorized to assign pupils in this session.');
     }
 
-    const pupil = service.assignPupil(sessionId, teacherContext.userId, groupId, pupilName);
+    const pupil = await service.assignPupil(sessionId, teacherContext.userId, groupId, pupilName);
     return { success: true, data: pupil };
   } catch (err) {
     return errorResponse(err);
@@ -195,7 +195,7 @@ export async function removePupilAction(sessionId: string, groupId: string, pupi
     const teacherContext = await getAuthorizedTeacherContext();
     const service = getSessionService();
 
-    const session = service.getSession(sessionId);
+    const session = await service.getSession(sessionId);
     if (!session) {
       throw new SessionNotFoundError(sessionId);
     }
@@ -203,7 +203,7 @@ export async function removePupilAction(sessionId: string, groupId: string, pupi
       throw new SessionAccessDeniedError('Unauthorized to remove pupils in this session.');
     }
 
-    const removed = service.removePupil(sessionId, teacherContext.userId, groupId, pupilId);
+    const removed = await service.removePupil(sessionId, teacherContext.userId, groupId, pupilId);
     return { success: true, data: { success: removed } };
   } catch (err) {
     return errorResponse(err);
@@ -215,7 +215,7 @@ export async function deleteSessionGroupAction(sessionId: string, groupId: strin
     const teacherContext = await getAuthorizedTeacherContext();
     const service = getSessionService();
 
-    const session = service.getSession(sessionId);
+    const session = await service.getSession(sessionId);
     if (!session) {
       throw new SessionNotFoundError(sessionId);
     }
@@ -223,7 +223,7 @@ export async function deleteSessionGroupAction(sessionId: string, groupId: strin
       throw new SessionAccessDeniedError('Unauthorized to delete groups in this session.');
     }
 
-    const deleted = service.deleteGroup(sessionId, teacherContext.userId, groupId);
+    const deleted = await service.deleteGroup(sessionId, teacherContext.userId, groupId);
     return { success: true, data: { success: deleted } };
   } catch (err) {
     return errorResponse(err);
@@ -239,7 +239,7 @@ export async function getHostSessionRosterAction(sessionId: string): Promise<Act
     const teacherContext = await getAuthorizedTeacherContext();
     const service = getSessionService();
 
-    const roster = service.getRoster(sessionId, teacherContext.userId);
+    const roster = await service.getRoster(sessionId, teacherContext.userId);
     return { success: true, data: roster };
   } catch (err) {
     return errorResponse(err);
@@ -250,7 +250,7 @@ export async function lookupRoomAction(roomCode: string): Promise<ActionResult<S
   try {
     const clientIp = await resolveServerClientIp();
     const service = getSessionService();
-    const info = service.getPublicInfo(roomCode, clientIp);
+    const info = await service.getPublicInfo(roomCode, clientIp);
     return { success: true, data: info };
   } catch (err) {
     return errorResponse(err);
@@ -263,9 +263,9 @@ export async function joinSessionAction(roomCode: string): Promise<ActionResult<
     const userContext = await getAuthenticatedUserContext();
     const service = getSessionService();
 
-    const sessionInfo = service.getPublicInfo(roomCode, clientIp);
+    const sessionInfo = await service.getPublicInfo(roomCode, clientIp);
 
-    const result = service.joinSession(
+    const result = await service.joinSession(
       sessionInfo.sessionId,
       {
         userId: userContext.userId,
@@ -297,8 +297,8 @@ export async function resumeSessionAction(sessionId: string, token: string): Pro
   try {
     const service = getSessionService();
     const validatedToken = validateParticipantToken(token);
-    const result = service.resumeSession(sessionId, validatedToken);
-    const sessionInfo = service.getPublicInfo(result.session.roomCode);
+    const result = await service.resumeSession(sessionId, validatedToken);
+    const sessionInfo = await service.getPublicInfo(result.session.roomCode);
 
     return {
       success: true,

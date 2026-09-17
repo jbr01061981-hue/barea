@@ -36,7 +36,7 @@ export async function getPendingQuestionsAction(): Promise<ActionResponse<Questi
   try {
     const context = await getAuthorizedTeacherContext();
     const bankService = getQuestionBankService();
-    const all = bankService.listQuestions(context.organizationId, {
+    const all = await bankService.listQuestions(context.organizationId, {
       status: QuestionStatus.PENDING_REVIEW,
     });
     return { success: true, data: all };
@@ -56,7 +56,7 @@ export async function getQuestionByIdAction(
   try {
     const context = await getAuthorizedTeacherContext();
     const bankService = getQuestionBankService();
-    const q = bankService.getQuestion(context.organizationId, questionId);
+    const q = await bankService.getQuestion(context.organizationId, questionId);
     if (!q) {
       return { success: false, error: `Question ${questionId} not found.` };
     }
@@ -105,7 +105,7 @@ export async function updateQuestionAction(
 
     // In accordance with ADR-007 / domain contract:
     // Updating question content must preserve PENDING_REVIEW state (never automatically approve).
-    const updated = bankService.updateQuestion(context.organizationId, questionId, sanitizedUpdates);
+    const updated = await bankService.updateQuestion(context.organizationId, questionId, sanitizedUpdates);
     if (!updated) {
       return { success: false, error: `Failed to update question ${questionId}.` };
     }
@@ -127,7 +127,7 @@ export async function approveQuestionAction(
     const context = await getAuthorizedTeacherContext();
     const bankService = getQuestionBankService();
     // Explicit transition: PENDING_REVIEW -> APPROVED
-    const approved = bankService.transitionStatus(
+    const approved = await bankService.transitionStatus(
       context.organizationId,
       questionId,
       QuestionStatus.APPROVED
@@ -160,7 +160,7 @@ export async function batchApproveQuestionsAction(
     // MUST be transactional: all or nothing
     bankService.transaction(() => {
       for (const id of questionIds) {
-        const res = bankService.transitionStatus(
+        const res = bankService.transitionStatusSync(
           context.organizationId,
           id,
           QuestionStatus.APPROVED
@@ -188,7 +188,7 @@ export async function archiveQuestionAction(
   try {
     const context = await getAuthorizedTeacherContext();
     const bankService = getQuestionBankService();
-    const archived = bankService.archiveQuestion(context.organizationId, questionId);
+    const archived = await bankService.archiveQuestion(context.organizationId, questionId);
     if (!archived) {
       return { success: false, error: `Failed to archive question ${questionId}.` };
     }
@@ -210,7 +210,7 @@ export async function regenerateQuestionAction(
   try {
     const context = await getAuthorizedTeacherContext();
     const bankService = getQuestionBankService();
-    const original = bankService.getQuestion(context.organizationId, originalQuestionId);
+    const original = await bankService.getQuestion(context.organizationId, originalQuestionId);
     if (!original) {
       return { success: false, error: `Original question ${originalQuestionId} not found.` };
     }

@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
     // Canonical redirect URI
     const redirectUri = resolveOAuthRedirectUri(request.nextUrl.origin);
 
-    const { url, transactionId } = authService.generateGoogleOAuthUrl(redirectUri, returnTo);
+    const { url, transactionId } = await authService.generateGoogleOAuthUrl(redirectUri, returnTo);
 
     const response = NextResponse.redirect(url);
 

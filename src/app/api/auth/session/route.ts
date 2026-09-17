@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
   }
 
   const authService = getAuthService();
-  const sessionContext = authService.resolveSession(sessionCookie.value);
+  const sessionContext = await authService.resolveSession(sessionCookie.value);
 
   if (!sessionContext) {
     return NextResponse.json(

@@ -247,7 +247,7 @@ export async function getAuthorizedTeacherContext(): Promise<TeacherContext> {
   const sessionToken = await getSessionTokenFromRequest();
   if (sessionToken) {
     const authService = getAuthService();
-    const sessionContext = authService.resolveSession(sessionToken);
+    const sessionContext = await authService.resolveSession(sessionToken);
     if (sessionContext) {
       // Find teacher or admin membership
       const teacherMembership = sessionContext.memberships.find(m => m.role === 'teacher' || m.role === 'admin');
@@ -329,7 +329,7 @@ export async function getAuthenticatedUserContext(): Promise<AuthenticatedUserCo
   const sessionToken = await getSessionTokenFromRequest();
   if (sessionToken) {
     const authService = getAuthService();
-    const sessionContext = authService.resolveSession(sessionToken);
+    const sessionContext = await authService.resolveSession(sessionToken);
     if (sessionContext) {
       return {
         userId: sessionContext.user.id,
@@ -400,7 +400,7 @@ export async function getUnifiedUserContext(): Promise<UnifiedUserContext | null
   }
 
   const authService = getAuthService();
-  const sessionContext = authService.resolveSession(sessionToken);
+  const sessionContext = await authService.resolveSession(sessionToken);
   if (!sessionContext) {
     return null;
   }

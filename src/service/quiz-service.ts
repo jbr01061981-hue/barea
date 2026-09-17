@@ -15,67 +15,67 @@ export class QuizService {
     this.repo = repo;
   }
 
-  createQuiz(organizationId: string, payload: CreateQuizPayload): Quiz {
+  async createQuiz(organizationId: string, payload: CreateQuizPayload): Promise<Quiz> {
     return this.repo.create({
       ...payload,
       organizationId
     });
   }
 
-  getQuiz(organizationId: string, quizId: string): Quiz | null {
+  async getQuiz(organizationId: string, quizId: string): Promise<Quiz | null> {
     return this.repo.findById(organizationId, quizId);
   }
 
-  listQuizzes(organizationId: string, filter?: QuizFilter): Quiz[] {
+  async listQuizzes(organizationId: string, filter?: QuizFilter): Promise<Quiz[]> {
     return this.repo.list(organizationId, filter);
   }
 
-  updateQuiz(organizationId: string, quizId: string, updates: UpdateQuizPayload): Quiz | null {
+  async updateQuiz(organizationId: string, quizId: string, updates: UpdateQuizPayload): Promise<Quiz | null> {
     return this.repo.update(organizationId, quizId, updates);
   }
 
-  archiveQuiz(organizationId: string, quizId: string): Quiz | null {
+  async archiveQuiz(organizationId: string, quizId: string): Promise<Quiz | null> {
     return this.repo.transitionStatus(organizationId, quizId, QuizStatus.ARCHIVED);
   }
 
-  restoreDraftQuiz(organizationId: string, quizId: string): Quiz | null {
+  async restoreDraftQuiz(organizationId: string, quizId: string): Promise<Quiz | null> {
     return this.repo.transitionStatus(organizationId, quizId, QuizStatus.DRAFT);
   }
 
-  addQuestion(
+  async addQuestion(
     organizationId: string,
     quizId: string,
     questionId: string,
     sortOrder?: number
-  ): QuizQuestionItem {
+  ): Promise<QuizQuestionItem> {
     return this.repo.addQuestion(organizationId, quizId, questionId, sortOrder);
   }
 
-  removeQuestion(organizationId: string, quizId: string, questionId: string): boolean {
+  async removeQuestion(organizationId: string, quizId: string, questionId: string): Promise<boolean> {
     return this.repo.removeQuestion(organizationId, quizId, questionId);
   }
 
-  reorderQuestions(
+  async reorderQuestions(
     organizationId: string,
     quizId: string,
     questionIdsInOrder: readonly string[]
-  ): readonly QuizQuestionItem[] {
+  ): Promise<readonly QuizQuestionItem[]> {
     return this.repo.reorderQuestions(organizationId, quizId, questionIdsInOrder);
   }
 
-  getQuizQuestions(organizationId: string, quizId: string): readonly QuizQuestionItem[] {
+  async getQuizQuestions(organizationId: string, quizId: string): Promise<readonly QuizQuestionItem[]> {
     return this.repo.getQuizQuestions(organizationId, quizId);
   }
 
-  publishQuiz(
+  async publishQuiz(
     organizationId: string,
     quizId: string,
     publishedByUserId: string
-  ): PublishedQuizSnapshot {
+  ): Promise<PublishedQuizSnapshot> {
     return this.repo.publishQuiz(organizationId, quizId, publishedByUserId);
   }
 
-  getPublishedSnapshot(organizationId: string, quizId: string): PublishedQuizSnapshot | null {
+  async getPublishedSnapshot(organizationId: string, quizId: string): Promise<PublishedQuizSnapshot | null> {
     return this.repo.getPublishedSnapshot(organizationId, quizId);
   }
 
