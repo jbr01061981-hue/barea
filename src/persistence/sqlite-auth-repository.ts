@@ -83,7 +83,6 @@ export interface AuthRepository {
   consumeOAuthTransaction(id: string, nowIso?: string): Promise<boolean>;
   pruneExpiredOAuthTransactions(beforeIso?: string): Promise<number>;
 
-  transaction<T>(action: () => T): T;
   close(): void;
 }
 

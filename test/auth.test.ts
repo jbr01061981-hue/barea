@@ -545,7 +545,6 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       findOAuthTransaction: async () => null,
       consumeOAuthTransaction: async () => true,
       pruneExpiredOAuthTransactions: async () => 0,
-      transaction: <T>(fn: () => T) => fn(),
       close: () => {}
     };
     const mockService = new AuthService(pureMockRepo, {
