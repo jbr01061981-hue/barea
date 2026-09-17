@@ -60,12 +60,12 @@ export interface CreateSessionPayload {
 }
 
 export interface SessionRepository {
-  createSession(payload: CreateSessionPayload): QuizSession;
-  findSessionById(sessionId: string): QuizSession | null;
-  findSessionByRoomCode(roomCode: RoomCode): QuizSession | null;
-  getPublicInfo(roomCode: RoomCode): SessionPublicInfo;
-  lockSession(sessionId: string, hostUserId: string, locked: boolean): QuizSession;
-  closeSession(sessionId: string, hostUserId: string): QuizSession;
+  createSession(payload: CreateSessionPayload): Promise<QuizSession>;
+  findSessionById(sessionId: string): Promise<QuizSession | null>;
+  findSessionByRoomCode(roomCode: RoomCode): Promise<QuizSession | null>;
+  getPublicInfo(roomCode: RoomCode): Promise<SessionPublicInfo>;
+  lockSession(sessionId: string, hostUserId: string, locked: boolean): Promise<QuizSession>;
+  closeSession(sessionId: string, hostUserId: string): Promise<QuizSession>;
 
   // Participant Operations
   joinSession(
@@ -78,27 +78,27 @@ export interface SessionRepository {
       verifiedPhone: string | null;
       displayName: string;
     }
-  ): { participant: AuthenticatedParticipant; token: ParticipantToken };
+  ): Promise<{ participant: AuthenticatedParticipant; token: ParticipantToken }>;
 
-  resumeSession(sessionId: string, token: ParticipantToken): { participant: AuthenticatedParticipant; session: QuizSession };
-  listParticipants(sessionId: string): readonly AuthenticatedParticipant[];
+  resumeSession(sessionId: string, token: ParticipantToken): Promise<{ participant: AuthenticatedParticipant; session: QuizSession }>;
+  listParticipants(sessionId: string): Promise<readonly AuthenticatedParticipant[]>;
 
   // Teacher Group Operations
-  createGroup(sessionId: string, hostUserId: string, groupName: string): SessionGroup;
-  deleteGroup(sessionId: string, hostUserId: string, groupId: string): boolean;
-  assignPupil(sessionId: string, hostUserId: string, groupId: string, pupilName: string): SessionGroupPupil;
-  removePupil(sessionId: string, hostUserId: string, groupId: string, pupilId: string): boolean;
-  listGroups(sessionId: string): readonly SessionGroup[];
+  createGroup(sessionId: string, hostUserId: string, groupName: string): Promise<SessionGroup>;
+  deleteGroup(sessionId: string, hostUserId: string, groupId: string): Promise<boolean>;
+  assignPupil(sessionId: string, hostUserId: string, groupId: string, pupilName: string): Promise<SessionGroupPupil>;
+  removePupil(sessionId: string, hostUserId: string, groupId: string, pupilId: string): Promise<boolean>;
+  listGroups(sessionId: string): Promise<readonly SessionGroup[]>;
 
   // Live Quiz Operations (BAREA-007)
-  getLiveSessionState(sessionId: string): LiveSessionState | null;
-  getPublishedQuizSnapshot(snapshotId: string): PublishedQuizSnapshot | null;
-  startLiveSession(sessionId: string, hostUserId: string, question1: SnapshotQuestion): { session: QuizSession; liveState: LiveSessionState };
-  openQuestion(sessionId: string, hostUserId: string, question: SnapshotQuestion, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState };
-  previewQuestion(sessionId: string, hostUserId: string, question: SnapshotQuestion, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState };
-  lockQuestion(sessionId: string, hostUserId: string, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState };
-  advanceQuestion(sessionId: string, hostUserId: string, nextQuestion: SnapshotQuestion | null, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState };
-  completeLiveSession(sessionId: string, hostUserId: string, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState };
+  getLiveSessionState(sessionId: string): Promise<LiveSessionState | null>;
+  getPublishedQuizSnapshot(snapshotId: string): Promise<PublishedQuizSnapshot | null>;
+  startLiveSession(sessionId: string, hostUserId: string, question1: SnapshotQuestion): Promise<{ session: QuizSession; liveState: LiveSessionState }>;
+  openQuestion(sessionId: string, hostUserId: string, question: SnapshotQuestion, expectedVersion?: number): Promise<{ session: QuizSession; liveState: LiveSessionState }>;
+  previewQuestion(sessionId: string, hostUserId: string, question: SnapshotQuestion, expectedVersion?: number): Promise<{ session: QuizSession; liveState: LiveSessionState }>;
+  lockQuestion(sessionId: string, hostUserId: string, expectedVersion?: number): Promise<{ session: QuizSession; liveState: LiveSessionState }>;
+  advanceQuestion(sessionId: string, hostUserId: string, nextQuestion: SnapshotQuestion | null, expectedVersion?: number): Promise<{ session: QuizSession; liveState: LiveSessionState }>;
+  completeLiveSession(sessionId: string, hostUserId: string, expectedVersion?: number): Promise<{ session: QuizSession; liveState: LiveSessionState }>;
   recordAnswerSubmission(submission: {
     sessionId: string;
     questionPosition: number;
@@ -111,12 +111,12 @@ export interface SessionRepository {
     submittedAt?: string;
     clientTimestamp?: string;
     isWithinDeadline?: boolean;
-  }): ParticipantSubmission;
+  }): Promise<ParticipantSubmission>;
   getCurrentTimeMs?(): number;
   setClockForTesting?(clock: (() => number) | null): void;
-  getParticipantSubmission(sessionId: string, questionPosition: number, participantIdOrUserId: string): ParticipantSubmission | null;
-  getGroupSubmission(sessionId: string, questionPosition: number, groupId: string): ParticipantSubmission | null;
-  getSubmissionCountForQuestion(sessionId: string, questionPosition: number): number;
+  getParticipantSubmission(sessionId: string, questionPosition: number, participantIdOrUserId: string): Promise<ParticipantSubmission | null>;
+  getGroupSubmission(sessionId: string, questionPosition: number, groupId: string): Promise<ParticipantSubmission | null>;
+  getSubmissionCountForQuestion(sessionId: string, questionPosition: number): Promise<number>;
 
   transaction<T>(action: () => T): T;
   close(): void;
@@ -399,7 +399,7 @@ export class SqliteSessionRepository implements SessionRepository {
     }
   }
 
-  createSession(payload: CreateSessionPayload): QuizSession {
+  async createSession(payload: CreateSessionPayload): Promise<QuizSession> {
     assertValidModeAdmissionCompatibility(payload.participationMode, payload.admissionPolicy);
 
     const now = new Date();
@@ -477,7 +477,7 @@ export class SqliteSessionRepository implements SessionRepository {
         }
       }
 
-      const created = this.findSessionById(sessionId);
+      const created = this._findSessionByIdSync(sessionId);
       if (!created) {
         throw new Error('Failed to retrieve newly created session.');
       }
@@ -485,13 +485,17 @@ export class SqliteSessionRepository implements SessionRepository {
     });
   }
 
-  findSessionById(sessionId: string): QuizSession | null {
+  private _findSessionByIdSync(sessionId: string): QuizSession | null {
     const stmt = this.db.prepare('SELECT * FROM quiz_sessions WHERE id = ?');
     const row = stmt.get(sessionId) as unknown as SessionRow | undefined;
     return row ? this.mapSessionRow(row) : null;
   }
 
-  findSessionByRoomCode(roomCode: RoomCode): QuizSession | null {
+  async findSessionById(sessionId: string): Promise<QuizSession | null> {
+    return this._findSessionByIdSync(sessionId);
+  }
+
+  private _findSessionByRoomCodeSync(roomCode: RoomCode): QuizSession | null {
     const stmt = this.db.prepare(`
       SELECT * FROM quiz_sessions 
       WHERE room_code = ? AND status IN ('LOBBY', 'ACTIVE')
@@ -505,8 +509,12 @@ export class SqliteSessionRepository implements SessionRepository {
     return session;
   }
 
-  getPublicInfo(roomCode: RoomCode): SessionPublicInfo {
-    const session = this.findSessionByRoomCode(roomCode);
+  async findSessionByRoomCode(roomCode: RoomCode): Promise<QuizSession | null> {
+    return this._findSessionByRoomCodeSync(roomCode);
+  }
+
+  async getPublicInfo(roomCode: RoomCode): Promise<SessionPublicInfo> {
+    const session = this._findSessionByRoomCodeSync(roomCode);
     if (!session) {
       throw new SessionNotFoundError();
     }
@@ -551,9 +559,9 @@ export class SqliteSessionRepository implements SessionRepository {
     };
   }
 
-  lockSession(sessionId: string, hostUserId: string, locked: boolean): QuizSession {
+  async lockSession(sessionId: string, hostUserId: string, locked: boolean): Promise<QuizSession> {
     return this.transaction(() => {
-      const session = this.findSessionById(sessionId);
+      const session = this._findSessionByIdSync(sessionId);
       if (!session) throw new SessionNotFoundError(sessionId);
       if (session.hostUserId !== hostUserId) throw new SessionAccessDeniedError('Only host can lock session.');
       if (session.status === SessionStatus.CLOSED || session.status === SessionStatus.COMPLETED) {
@@ -564,13 +572,13 @@ export class SqliteSessionRepository implements SessionRepository {
         locked ? 1 : 0,
         sessionId
       );
-      return this.findSessionById(sessionId)!;
+      return this._findSessionByIdSync(sessionId)!;
     });
   }
 
-  closeSession(sessionId: string, hostUserId: string): QuizSession {
+  async closeSession(sessionId: string, hostUserId: string): Promise<QuizSession> {
     return this.transaction(() => {
-      const session = this.findSessionById(sessionId);
+      const session = this._findSessionByIdSync(sessionId);
       if (!session) throw new SessionNotFoundError(sessionId);
       if (session.hostUserId !== hostUserId) throw new SessionAccessDeniedError('Only host can close session.');
 
@@ -581,11 +589,11 @@ export class SqliteSessionRepository implements SessionRepository {
         WHERE id = ?
       `).run(nowIso, sessionId);
 
-      return this.findSessionById(sessionId)!;
+      return this._findSessionByIdSync(sessionId)!;
     });
   }
 
-  joinSession(
+  async joinSession(
     sessionId: string,
     participant: {
       userId: string;
@@ -595,9 +603,9 @@ export class SqliteSessionRepository implements SessionRepository {
       verifiedPhone: string | null;
       displayName: string;
     }
-  ): { participant: AuthenticatedParticipant; token: ParticipantToken } {
+  ): Promise<{ participant: AuthenticatedParticipant; token: ParticipantToken }> {
     return this.transaction(() => {
-      const session = this.findSessionById(sessionId);
+      const session = this._findSessionByIdSync(sessionId);
       if (!session) throw new SessionNotFoundError(sessionId);
 
       if (session.status !== SessionStatus.LOBBY && session.status !== SessionStatus.ACTIVE) {
@@ -730,7 +738,7 @@ export class SqliteSessionRepository implements SessionRepository {
     });
   }
 
-  resumeSession(sessionId: string, token: ParticipantToken): { participant: AuthenticatedParticipant; session: QuizSession } {
+  async resumeSession(sessionId: string, token: ParticipantToken): Promise<{ participant: AuthenticatedParticipant; session: QuizSession }> {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const stmt = this.db.prepare(`
       SELECT * FROM session_participants 
@@ -741,7 +749,7 @@ export class SqliteSessionRepository implements SessionRepository {
       throw new InvalidParticipantTokenError();
     }
 
-    const session = this.findSessionById(sessionId);
+    const session = this._findSessionByIdSync(sessionId);
     if (!session) throw new SessionNotFoundError(sessionId);
 
     if (session.status === SessionStatus.CLOSED || session.status === SessionStatus.COMPLETED) {
@@ -763,15 +771,15 @@ export class SqliteSessionRepository implements SessionRepository {
     };
   }
 
-  listParticipants(sessionId: string): readonly AuthenticatedParticipant[] {
+  async listParticipants(sessionId: string): Promise<readonly AuthenticatedParticipant[]> {
     const stmt = this.db.prepare('SELECT * FROM session_participants WHERE session_id = ? ORDER BY joined_at ASC');
     const rows = stmt.all(sessionId) as unknown as unknown as ParticipantRow[];
     return rows.map(r => this.mapParticipantRow(r));
   }
 
-  createGroup(sessionId: string, hostUserId: string, groupName: string): SessionGroup {
+  async createGroup(sessionId: string, hostUserId: string, groupName: string): Promise<SessionGroup> {
     return this.transaction(() => {
-      const session = this.findSessionById(sessionId);
+      const session = this._findSessionByIdSync(sessionId);
       if (!session) throw new SessionNotFoundError(sessionId);
       if (session.hostUserId !== hostUserId) throw new SessionAccessDeniedError('Only host can create groups.');
       if (session.participationMode !== ParticipationMode.TEACHER_GROUP) {
@@ -800,9 +808,9 @@ export class SqliteSessionRepository implements SessionRepository {
     });
   }
 
-  deleteGroup(sessionId: string, hostUserId: string, groupId: string): boolean {
+  async deleteGroup(sessionId: string, hostUserId: string, groupId: string): Promise<boolean> {
     return this.transaction(() => {
-      const session = this.findSessionById(sessionId);
+      const session = this._findSessionByIdSync(sessionId);
       if (!session) throw new SessionNotFoundError(sessionId);
       if (session.hostUserId !== hostUserId) throw new SessionAccessDeniedError('Only host can delete groups.');
 
@@ -811,9 +819,9 @@ export class SqliteSessionRepository implements SessionRepository {
     });
   }
 
-  assignPupil(sessionId: string, hostUserId: string, groupId: string, pupilName: string): SessionGroupPupil {
+  async assignPupil(sessionId: string, hostUserId: string, groupId: string, pupilName: string): Promise<SessionGroupPupil> {
     return this.transaction(() => {
-      const session = this.findSessionById(sessionId);
+      const session = this._findSessionByIdSync(sessionId);
       if (!session) throw new SessionNotFoundError(sessionId);
       if (session.hostUserId !== hostUserId) throw new SessionAccessDeniedError('Only host can assign pupils.');
 
@@ -838,9 +846,9 @@ export class SqliteSessionRepository implements SessionRepository {
     });
   }
 
-  removePupil(sessionId: string, hostUserId: string, groupId: string, pupilId: string): boolean {
+  async removePupil(sessionId: string, hostUserId: string, groupId: string, pupilId: string): Promise<boolean> {
     return this.transaction(() => {
-      const session = this.findSessionById(sessionId);
+      const session = this._findSessionByIdSync(sessionId);
       if (!session) throw new SessionNotFoundError(sessionId);
       if (session.hostUserId !== hostUserId) throw new SessionAccessDeniedError('Only host can remove pupils.');
 
@@ -853,7 +861,7 @@ export class SqliteSessionRepository implements SessionRepository {
     });
   }
 
-  listGroups(sessionId: string): readonly SessionGroup[] {
+  async listGroups(sessionId: string): Promise<readonly SessionGroup[]> {
     const groupStmt = this.db.prepare('SELECT * FROM session_groups WHERE session_id = ? ORDER BY sort_order ASC');
     const groupRows = groupStmt.all(sessionId) as unknown as GroupRow[];
 
@@ -960,11 +968,11 @@ export class SqliteSessionRepository implements SessionRepository {
 
   // --- BAREA-007 Live Quiz Operations ---
 
-  getLiveSessionState(sessionId: string): LiveSessionState | null {
-    const session = this.findSessionById(sessionId);
+  private _getLiveSessionStateSync(sessionId: string): LiveSessionState | null {
+    const session = this._findSessionByIdSync(sessionId);
     if (!session) return null;
 
-    const snapshot = this.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
+    const snapshot = this._getPublishedQuizSnapshotSync(session.publishedQuizSnapshotId);
     const totalQuestions = snapshot ? snapshot.questions.length : 0;
 
     const row = this.db.prepare(
@@ -1021,7 +1029,11 @@ export class SqliteSessionRepository implements SessionRepository {
     };
   }
 
-  getPublishedQuizSnapshot(snapshotId: string): PublishedQuizSnapshot | null {
+  async getLiveSessionState(sessionId: string): Promise<LiveSessionState | null> {
+    return this._getLiveSessionStateSync(sessionId);
+  }
+
+  private _getPublishedQuizSnapshotSync(snapshotId: string): PublishedQuizSnapshot | null {
     const row = this.db.prepare(
       'SELECT id, quiz_id, organization_id, title, description, default_time_limit_seconds, scoring_style, option_shuffle, version_number, snapshot_json, published_at, published_by_user_id FROM published_quiz_snapshots WHERE id = ?'
     ).get(snapshotId) as unknown as {
@@ -1067,9 +1079,13 @@ export class SqliteSessionRepository implements SessionRepository {
     };
   }
 
-  startLiveSession(sessionId: string, hostUserId: string, question1: SnapshotQuestion): { session: QuizSession; liveState: LiveSessionState } {
+  async getPublishedQuizSnapshot(snapshotId: string): Promise<PublishedQuizSnapshot | null> {
+    return this._getPublishedQuizSnapshotSync(snapshotId);
+  }
+
+  async startLiveSession(sessionId: string, hostUserId: string, question1: SnapshotQuestion): Promise<{ session: QuizSession; liveState: LiveSessionState }> {
     return this.transaction(() => {
-      const session = this.findSessionById(sessionId);
+      const session = this._findSessionByIdSync(sessionId);
       if (!session) throw new SessionNotFoundError(sessionId);
       if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
       if (session.status !== SessionStatus.LOBBY) {
@@ -1105,15 +1121,15 @@ export class SqliteSessionRepository implements SessionRepository {
           updated_at = excluded.updated_at
       `).run(sessionId, question1.id, nowIso, deadlineIso, timeLimitSeconds, nowIso);
 
-      const updatedSession = this.findSessionById(sessionId)!;
-      const liveState = this.getLiveSessionState(sessionId)!;
+      const updatedSession = this._findSessionByIdSync(sessionId)!;
+      const liveState = this._getLiveSessionStateSync(sessionId)!;
       return { session: updatedSession, liveState };
     });
   }
 
-  openQuestion(sessionId: string, hostUserId: string, question: SnapshotQuestion, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState } {
+  async openQuestion(sessionId: string, hostUserId: string, question: SnapshotQuestion, expectedVersion?: number): Promise<{ session: QuizSession; liveState: LiveSessionState }> {
     return this.transaction(() => {
-      const session = this.findSessionById(sessionId);
+      const session = this._findSessionByIdSync(sessionId);
       if (!session) throw new SessionNotFoundError(sessionId);
       if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
       if (session.status !== SessionStatus.ACTIVE) throw new SessionNotActiveError();
@@ -1144,15 +1160,15 @@ export class SqliteSessionRepository implements SessionRepository {
         WHERE session_id = ?
       `).run(question.position, question.id, nowIso, deadlineIso, timeLimitSeconds, nowIso, sessionId);
 
-      const updatedSession = this.findSessionById(sessionId)!;
-      const liveState = this.getLiveSessionState(sessionId)!;
+      const updatedSession = this._findSessionByIdSync(sessionId)!;
+      const liveState = this._getLiveSessionStateSync(sessionId)!;
       return { session: updatedSession, liveState };
     });
   }
 
-  previewQuestion(sessionId: string, hostUserId: string, question: SnapshotQuestion, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState } {
+  async previewQuestion(sessionId: string, hostUserId: string, question: SnapshotQuestion, expectedVersion?: number): Promise<{ session: QuizSession; liveState: LiveSessionState }> {
     return this.transaction(() => {
-      const session = this.findSessionById(sessionId);
+      const session = this._findSessionByIdSync(sessionId);
       if (!session) throw new SessionNotFoundError(sessionId);
       if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
       if (session.status !== SessionStatus.ACTIVE) throw new SessionNotActiveError();
@@ -1180,15 +1196,15 @@ export class SqliteSessionRepository implements SessionRepository {
         WHERE session_id = ?
       `).run(question.position, question.id, question.timeLimitSeconds, nowIso, sessionId);
 
-      const updatedSession = this.findSessionById(sessionId)!;
-      const liveState = this.getLiveSessionState(sessionId)!;
+      const updatedSession = this._findSessionByIdSync(sessionId)!;
+      const liveState = this._getLiveSessionStateSync(sessionId)!;
       return { session: updatedSession, liveState };
     });
   }
 
-  lockQuestion(sessionId: string, hostUserId: string, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState } {
+  async lockQuestion(sessionId: string, hostUserId: string, expectedVersion?: number): Promise<{ session: QuizSession; liveState: LiveSessionState }> {
     return this.transaction(() => {
-      const session = this.findSessionById(sessionId);
+      const session = this._findSessionByIdSync(sessionId);
       if (!session) throw new SessionNotFoundError(sessionId);
       if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
       if (session.status !== SessionStatus.ACTIVE) throw new SessionNotActiveError();
@@ -1219,15 +1235,15 @@ export class SqliteSessionRepository implements SessionRepository {
         WHERE session_id = ?
       `).run(nowIso, sessionId);
 
-      const updatedSession = this.findSessionById(sessionId)!;
-      const liveState = this.getLiveSessionState(sessionId)!;
+      const updatedSession = this._findSessionByIdSync(sessionId)!;
+      const liveState = this._getLiveSessionStateSync(sessionId)!;
       return { session: updatedSession, liveState };
     });
   }
 
-  advanceQuestion(sessionId: string, hostUserId: string, nextQuestion: SnapshotQuestion | null, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState } {
+  async advanceQuestion(sessionId: string, hostUserId: string, nextQuestion: SnapshotQuestion | null, expectedVersion?: number): Promise<{ session: QuizSession; liveState: LiveSessionState }> {
     return this.transaction(() => {
-      const session = this.findSessionById(sessionId);
+      const session = this._findSessionByIdSync(sessionId);
       if (!session) throw new SessionNotFoundError(sessionId);
       if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
       if (session.status !== SessionStatus.ACTIVE) throw new SessionNotActiveError();
@@ -1275,15 +1291,15 @@ export class SqliteSessionRepository implements SessionRepository {
         `).run(nowIso, sessionId);
       }
 
-      const updatedSession = this.findSessionById(sessionId)!;
-      const liveState = this.getLiveSessionState(sessionId)!;
+      const updatedSession = this._findSessionByIdSync(sessionId)!;
+      const liveState = this._getLiveSessionStateSync(sessionId)!;
       return { session: updatedSession, liveState };
     });
   }
 
-  completeLiveSession(sessionId: string, hostUserId: string, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState } {
+  async completeLiveSession(sessionId: string, hostUserId: string, expectedVersion?: number): Promise<{ session: QuizSession; liveState: LiveSessionState }> {
     return this.transaction(() => {
-      const session = this.findSessionById(sessionId);
+      const session = this._findSessionByIdSync(sessionId);
       if (!session) throw new SessionNotFoundError(sessionId);
       if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
       if (session.status !== SessionStatus.ACTIVE && session.status !== SessionStatus.LOBBY) {
@@ -1308,13 +1324,13 @@ export class SqliteSessionRepository implements SessionRepository {
         WHERE session_id = ?
       `).run(nowIso, sessionId);
 
-      const updatedSession = this.findSessionById(sessionId)!;
-      const liveState = this.getLiveSessionState(sessionId)!;
+      const updatedSession = this._findSessionByIdSync(sessionId)!;
+      const liveState = this._getLiveSessionStateSync(sessionId)!;
       return { session: updatedSession, liveState };
     });
   }
 
-  recordAnswerSubmission(submission: {
+  async recordAnswerSubmission(submission: {
     sessionId: string;
     questionPosition: number;
     questionId: string;
@@ -1326,9 +1342,9 @@ export class SqliteSessionRepository implements SessionRepository {
     submittedAt?: string;
     clientTimestamp?: string;
     isWithinDeadline?: boolean;
-  }): ParticipantSubmission {
+  }): Promise<ParticipantSubmission> {
     return this.transaction(() => {
-      const session = this.findSessionById(submission.sessionId);
+      const session = this._findSessionByIdSync(submission.sessionId);
       if (!session) throw new SessionNotFoundError(submission.sessionId);
       if (session.status !== SessionStatus.ACTIVE) throw new SessionNotActiveError();
       if (session.isLocked) throw new SessionLockedError();
@@ -1421,7 +1437,7 @@ export class SqliteSessionRepository implements SessionRepository {
     });
   }
 
-  getParticipantSubmission(sessionId: string, questionPosition: number, participantIdOrUserId: string): ParticipantSubmission | null {
+  async getParticipantSubmission(sessionId: string, questionPosition: number, participantIdOrUserId: string): Promise<ParticipantSubmission | null> {
     const row = this.db.prepare(`
       SELECT * FROM session_answers
       WHERE session_id = ? AND question_position = ? AND (user_id = ? OR participant_id = ?)
@@ -1452,7 +1468,7 @@ export class SqliteSessionRepository implements SessionRepository {
     };
   }
 
-  getGroupSubmission(sessionId: string, questionPosition: number, groupId: string): ParticipantSubmission | null {
+  async getGroupSubmission(sessionId: string, questionPosition: number, groupId: string): Promise<ParticipantSubmission | null> {
     const row = this.db.prepare(`
       SELECT * FROM session_answers
       WHERE session_id = ? AND question_position = ? AND session_group_id = ?
@@ -1483,7 +1499,7 @@ export class SqliteSessionRepository implements SessionRepository {
     };
   }
 
-  getSubmissionCountForQuestion(sessionId: string, questionPosition: number): number {
+  async getSubmissionCountForQuestion(sessionId: string, questionPosition: number): Promise<number> {
     const row = this.db.prepare(`
       SELECT COUNT(*) as count FROM session_answers
       WHERE session_id = ? AND question_position = ?

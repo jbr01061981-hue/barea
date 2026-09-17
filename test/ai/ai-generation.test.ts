@@ -257,11 +257,11 @@ test('AI Generation Pipeline Execution & Lifecycle Invariants', async (t) => {
     }
 
     // Must NOT be returned by listApprovedQuestions
-    const approvedList = questionBankService.listApprovedQuestions('church-org-1');
+    const approvedList = await questionBankService.listApprovedQuestions('church-org-1');
     assert.equal(approvedList.length, 0);
 
     // Staged questions can be retrieved via listQuestions with status: PENDING_REVIEW
-    const pendingList = questionBankService.listQuestions('church-org-1', {
+    const pendingList = await questionBankService.listQuestions('church-org-1', {
       status: QuestionStatus.PENDING_REVIEW
     });
     assert.equal(pendingList.length, 3);
@@ -309,7 +309,7 @@ test('AI Generation Pipeline Execution & Lifecycle Invariants', async (t) => {
   });
 
   await t.test('provider failure persists zero questions (fail-closed)', async () => {
-    const initialCount = questionBankService.listQuestions('church-org-fail').length;
+    const initialCount = (await questionBankService.listQuestions('church-org-fail')).length;
     assert.equal(initialCount, 0);
 
     fakeProvider.queueResponse(new Error('Network timeout contacting LLM gateway'));
@@ -325,7 +325,7 @@ test('AI Generation Pipeline Execution & Lifecycle Invariants', async (t) => {
       /AI Provider failed during generation/
     );
 
-    const postFailCount = questionBankService.listQuestions('church-org-fail').length;
+    const postFailCount = (await questionBankService.listQuestions('church-org-fail')).length;
     assert.equal(postFailCount, 0);
   });
 
@@ -360,7 +360,7 @@ test('AI Generation Pipeline Execution & Lifecycle Invariants', async (t) => {
     assert.equal(result.questions[0].status, QuestionStatus.PENDING_REVIEW);
     assert.notEqual(result.questions[0].status, QuestionStatus.APPROVED);
 
-    const approvedList = questionBankService.listApprovedQuestions('church-org-bypass-test');
+    const approvedList = await questionBankService.listApprovedQuestions('church-org-bypass-test');
     assert.equal(approvedList.length, 0);
   });
 
@@ -381,8 +381,8 @@ test('AI Generation Pipeline Execution & Lifecycle Invariants', async (t) => {
       language: 'en'
     });
 
-    const alphaQuestions = questionBankService.listQuestions('church-alpha');
-    const betaQuestions = questionBankService.listQuestions('church-beta');
+    const alphaQuestions = await questionBankService.listQuestions('church-alpha');
+    const betaQuestions = await questionBankService.listQuestions('church-beta');
 
     assert.equal(alphaQuestions.length, 2);
     assert.equal(betaQuestions.length, 2);
@@ -418,7 +418,7 @@ test('AI Generation Pipeline Execution & Lifecycle Invariants', async (t) => {
       /Duplicate correct option index in MULTI_SELECT/
     );
 
-    const persisted = questionBankService.listQuestions('church-duplicate-test');
+    const persisted = await questionBankService.listQuestions('church-duplicate-test');
     assert.equal(persisted.length, 0);
   });
 
@@ -464,10 +464,10 @@ test('AI Generation Pipeline Execution & Lifecycle Invariants', async (t) => {
       ]
     });
 
-    // Mock transitionStatus to throw on the 2nd question after 1st question has been inserted into SQLite
-    const originalTransition = questionBankService.transitionStatus.bind(questionBankService);
+    // Mock transitionStatusSync to throw on the 2nd question after 1st question has been inserted into SQLite
+    const originalTransition = questionBankService.transitionStatusSync.bind(questionBankService);
     let transitionCount = 0;
-    questionBankService.transitionStatus = (oId, qId, nextStatus) => {
+    questionBankService.transitionStatusSync = (oId, qId, nextStatus) => {
       transitionCount++;
       if (transitionCount === 2) {
         throw new Error('Simulated SQLite disk/lock failure during question #2 staging');
@@ -488,11 +488,11 @@ test('AI Generation Pipeline Execution & Lifecycle Invariants', async (t) => {
       );
 
       // Verify strictly: 0 questions exist in database for this organization
-      const persisted = questionBankService.listQuestions(orgId);
+      const persisted = await questionBankService.listQuestions(orgId);
       assert.equal(persisted.length, 0, 'Zero questions must remain in database after transaction rollback');
     } finally {
       // Restore original method
-      questionBankService.transitionStatus = originalTransition;
+      questionBankService.transitionStatusSync = originalTransition;
     }
   });
 
@@ -536,7 +536,7 @@ test('AI Generation Pipeline Execution & Lifecycle Invariants', async (t) => {
     assert.equal(result.questions.length, 2);
     assert.equal(result.status, QuestionStatus.PENDING_REVIEW);
 
-    const persisted = questionBankService.listQuestions(orgId);
+    const persisted = await questionBankService.listQuestions(orgId);
     assert.equal(persisted.length, 2);
     assert.ok(persisted.every((q) => q.status === QuestionStatus.PENDING_REVIEW));
   });

@@ -69,7 +69,7 @@ export async function startLiveQuizAction(sessionId: string): Promise<ActionResu
 
     const teacher = await getAuthorizedTeacherContext();
     const service = getLiveQuizService();
-    const result = service.startLiveQuiz(sessionId, teacher.userId);
+    const result = await service.startLiveQuiz(sessionId, teacher.userId);
 
     safeRevalidate(`/session/${sessionId}`);
     return { success: true, data: result };
@@ -89,7 +89,7 @@ export async function lockQuestionAction(sessionId: string, expectedVersion?: nu
 
     const teacher = await getAuthorizedTeacherContext();
     const service = getLiveQuizService();
-    const result = service.lockQuestion(sessionId, teacher.userId, expectedVersion);
+    const result = await service.lockQuestion(sessionId, teacher.userId, expectedVersion);
 
     safeRevalidate(`/session/${sessionId}`);
     return { success: true, data: result };
@@ -109,7 +109,7 @@ export async function openQuestionAction(sessionId: string, expectedVersion?: nu
 
     const teacher = await getAuthorizedTeacherContext();
     const service = getLiveQuizService();
-    const result = service.openQuestion(sessionId, teacher.userId, expectedVersion);
+    const result = await service.openQuestion(sessionId, teacher.userId, expectedVersion);
 
     safeRevalidate(`/session/${sessionId}`);
     return { success: true, data: result };
@@ -129,7 +129,7 @@ export async function advanceQuestionAction(sessionId: string, expectedVersion?:
 
     const teacher = await getAuthorizedTeacherContext();
     const service = getLiveQuizService();
-    const result = service.advanceQuestion(sessionId, teacher.userId, expectedVersion);
+    const result = await service.advanceQuestion(sessionId, teacher.userId, expectedVersion);
 
     safeRevalidate(`/session/${sessionId}`);
     return { success: true, data: result };
@@ -149,7 +149,7 @@ export async function completeLiveQuizAction(sessionId: string, expectedVersion?
 
     const teacher = await getAuthorizedTeacherContext();
     const service = getLiveQuizService();
-    const result = service.completeLiveQuiz(sessionId, teacher.userId, expectedVersion);
+    const result = await service.completeLiveQuiz(sessionId, teacher.userId, expectedVersion);
 
     safeRevalidate(`/session/${sessionId}`);
     return { success: true, data: result };
@@ -178,7 +178,7 @@ export async function submitAnswerAction(input: SubmitParticipantAnswerInput): P
     const validatedToken = validateParticipantToken(input.token);
     const service = getLiveQuizService();
 
-    const submission = service.submitParticipantAnswer({
+    const submission = await service.submitParticipantAnswer({
       sessionId: input.sessionId,
       token: validatedToken,
       questionPosition: input.questionPosition,
@@ -218,7 +218,7 @@ export async function submitGroupAnswerAction(input: SubmitGroupAnswerInput): Pr
     const teacher = await getAuthorizedTeacherContext();
     const service = getLiveQuizService();
 
-    const submission = service.submitGroupAnswer({
+    const submission = await service.submitGroupAnswer({
       sessionId: input.sessionId,
       hostUserId: teacher.userId,
       groupId: input.groupId,
@@ -250,7 +250,7 @@ export async function getParticipantLiveViewAction(sessionId: string, token: str
 
     const validatedToken = validateParticipantToken(token);
     const service = getLiveQuizService();
-    const view = service.getParticipantLiveView(sessionId, validatedToken);
+    const view = await service.getParticipantLiveView(sessionId, validatedToken);
 
     return { success: true, data: view };
   } catch (err) {
@@ -269,7 +269,7 @@ export async function getHostLiveViewAction(sessionId: string): Promise<ActionRe
 
     const teacher = await getAuthorizedTeacherContext();
     const service = getLiveQuizService();
-    const view = service.getHostLiveView(sessionId, teacher.userId);
+    const view = await service.getHostLiveView(sessionId, teacher.userId);
 
     return { success: true, data: view };
   } catch (err) {
@@ -292,7 +292,7 @@ export async function reconnectLiveSessionAction(
 
     const validatedToken = validateParticipantToken(token);
     const service = getLiveQuizService();
-    const result = service.reconnectParticipant(sessionId, validatedToken, lastSeenSequence);
+    const result = await service.reconnectParticipant(sessionId, validatedToken, lastSeenSequence);
 
     return { success: true, data: result };
   } catch (err) {

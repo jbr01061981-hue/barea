@@ -89,7 +89,7 @@ export class AIGenerationService {
       const results: Question[] = [];
       for (const payload of stagedPayloads) {
         // Creates as DRAFT
-        const created = this.questionBankService.createQuestion({
+        const created = this.questionBankService.createQuestionSync({
           organizationId: payload.organizationId,
           stem: payload.stem,
           type: payload.type,
@@ -103,7 +103,7 @@ export class AIGenerationService {
         });
 
         // Advance to PENDING_REVIEW
-        const staged = this.questionBankService.transitionStatus(
+        const staged = this.questionBankService.transitionStatusSync(
           payload.organizationId,
           created.id,
           QuestionStatus.PENDING_REVIEW

@@ -67,22 +67,22 @@ export class LiveQuizService {
     this.transport = transport;
   }
 
-  startLiveQuiz(sessionId: string, hostUserId: string): { session: QuizSession; liveState: LiveSessionState } {
+  async startLiveQuiz(sessionId: string, hostUserId: string): Promise<{ session: QuizSession; liveState: LiveSessionState }> {
     if (this.rateLimiter) {
       this.rateLimiter.checkLiveMutation(hostUserId);
     }
 
-    const session = this.repo.findSessionById(sessionId);
+    const session = await this.repo.findSessionById(sessionId);
     if (!session) throw new SessionNotFoundError(sessionId);
     if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
 
-    const snapshot = this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
+    const snapshot = await this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
     if (!snapshot || !snapshot.questions || snapshot.questions.length === 0) {
       throw new InvalidLiveStateTransitionError('Cannot start quiz session: published quiz has no questions.');
     }
 
     const question1 = snapshot.questions[0];
-    const result = this.repo.startLiveSession(sessionId, hostUserId, question1);
+    const result = await this.repo.startLiveSession(sessionId, hostUserId, question1);
 
     if (this.transport) {
       this.transport.publish({
@@ -107,16 +107,16 @@ export class LiveQuizService {
     return result;
   }
 
-  lockQuestion(sessionId: string, hostUserId: string, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState } {
+  async lockQuestion(sessionId: string, hostUserId: string, expectedVersion?: number): Promise<{ session: QuizSession; liveState: LiveSessionState }> {
     if (this.rateLimiter) {
       this.rateLimiter.checkLiveMutation(hostUserId);
     }
 
-    const session = this.repo.findSessionById(sessionId);
+    const session = await this.repo.findSessionById(sessionId);
     if (!session) throw new SessionNotFoundError(sessionId);
     if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
 
-    const result = this.repo.lockQuestion(sessionId, hostUserId, expectedVersion);
+    const result = await this.repo.lockQuestion(sessionId, hostUserId, expectedVersion);
 
     if (this.transport) {
       this.transport.publish({
@@ -136,24 +136,24 @@ export class LiveQuizService {
     return result;
   }
 
-  openQuestion(sessionId: string, hostUserId: string, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState } {
+  async openQuestion(sessionId: string, hostUserId: string, expectedVersion?: number): Promise<{ session: QuizSession; liveState: LiveSessionState }> {
     if (this.rateLimiter) {
       this.rateLimiter.checkLiveMutation(hostUserId);
     }
 
-    const session = this.repo.findSessionById(sessionId);
+    const session = await this.repo.findSessionById(sessionId);
     if (!session) throw new SessionNotFoundError(sessionId);
     if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
-    const liveState = this.repo.getLiveSessionState(sessionId);
+    const liveState = await this.repo.getLiveSessionState(sessionId);
     if (!liveState) throw new SessionNotFoundError(sessionId);
 
-    const snapshot = this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
+    const snapshot = await this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
     if (!snapshot) throw new CrossTenantSnapshotError('Quiz snapshot not found.');
 
     const question = snapshot.questions.find(q => q.position === liveState.currentQuestionPosition);
     if (!question) throw new InvalidLiveStateTransitionError('Current question position not found in snapshot.');
 
-    const result = this.repo.openQuestion(sessionId, hostUserId, question, expectedVersion);
+    const result = await this.repo.openQuestion(sessionId, hostUserId, question, expectedVersion);
 
     if (this.transport) {
       this.transport.publish({
@@ -177,24 +177,24 @@ export class LiveQuizService {
     return result;
   }
 
-  advanceQuestion(sessionId: string, hostUserId: string, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState } {
+  async advanceQuestion(sessionId: string, hostUserId: string, expectedVersion?: number): Promise<{ session: QuizSession; liveState: LiveSessionState }> {
     if (this.rateLimiter) {
       this.rateLimiter.checkLiveMutation(hostUserId);
     }
 
-    const session = this.repo.findSessionById(sessionId);
+    const session = await this.repo.findSessionById(sessionId);
     if (!session) throw new SessionNotFoundError(sessionId);
     if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
-    const liveState = this.repo.getLiveSessionState(sessionId);
+    const liveState = await this.repo.getLiveSessionState(sessionId);
     if (!liveState) throw new SessionNotFoundError(sessionId);
 
-    const snapshot = this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
+    const snapshot = await this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
     if (!snapshot) throw new CrossTenantSnapshotError('Quiz snapshot not found.');
 
     const nextPosition = liveState.currentQuestionPosition + 1;
     const nextQuestion = snapshot.questions.find(q => q.position === nextPosition) ?? null;
 
-    const result = this.repo.advanceQuestion(sessionId, hostUserId, nextQuestion, expectedVersion);
+    const result = await this.repo.advanceQuestion(sessionId, hostUserId, nextQuestion, expectedVersion);
 
     if (this.transport) {
       if (nextQuestion) {
@@ -233,16 +233,16 @@ export class LiveQuizService {
     return result;
   }
 
-  completeLiveQuiz(sessionId: string, hostUserId: string, expectedVersion?: number): { session: QuizSession; liveState: LiveSessionState } {
+  async completeLiveQuiz(sessionId: string, hostUserId: string, expectedVersion?: number): Promise<{ session: QuizSession; liveState: LiveSessionState }> {
     if (this.rateLimiter) {
       this.rateLimiter.checkLiveMutation(hostUserId);
     }
 
-    const session = this.repo.findSessionById(sessionId);
+    const session = await this.repo.findSessionById(sessionId);
     if (!session) throw new SessionNotFoundError(sessionId);
     if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
 
-    const result = this.repo.completeLiveSession(sessionId, hostUserId, expectedVersion);
+    const result = await this.repo.completeLiveSession(sessionId, hostUserId, expectedVersion);
 
     if (this.transport) {
       this.transport.publish({
@@ -262,10 +262,10 @@ export class LiveQuizService {
     return result;
   }
 
-  submitParticipantAnswer(input: SubmitParticipantAnswerInput): ParticipantSubmission {
+  async submitParticipantAnswer(input: SubmitParticipantAnswerInput): Promise<ParticipantSubmission> {
     validateParticipantToken(input.token);
 
-    const { participant, session } = this.repo.resumeSession(input.sessionId, input.token);
+    const { participant, session } = await this.repo.resumeSession(input.sessionId, input.token);
     if (!session) throw new SessionNotFoundError(input.sessionId);
     if (session.status !== SessionStatus.ACTIVE) throw new SessionNotActiveError();
 
@@ -274,7 +274,7 @@ export class LiveQuizService {
     }
 
     // 1. Authoritative Live State check
-    const liveState = this.repo.getLiveSessionState(input.sessionId);
+    const liveState = await this.repo.getLiveSessionState(input.sessionId);
     if (!liveState) throw new SessionNotFoundError(input.sessionId);
 
     // 2. Authoritative Question Lifecycle State check
@@ -303,7 +303,7 @@ export class LiveQuizService {
       throw new AnswerDeadlineExpiredError();
     }
 
-    const snapshot = this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
+    const snapshot = await this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
     if (!snapshot) throw new CrossTenantSnapshotError('Quiz snapshot not found.');
 
     const question = snapshot.questions.find(q => q.position === liveState.currentQuestionPosition);
@@ -321,7 +321,7 @@ export class LiveQuizService {
       }
     }
 
-    const submission = this.repo.recordAnswerSubmission({
+    const submission = await this.repo.recordAnswerSubmission({
       sessionId: input.sessionId,
       questionPosition: liveState.currentQuestionPosition,
       questionId: question.id,
@@ -332,7 +332,7 @@ export class LiveQuizService {
     });
 
     if (this.transport) {
-      const submissionCount = this.repo.getSubmissionCountForQuestion(input.sessionId, liveState.currentQuestionPosition);
+      const submissionCount = await this.repo.getSubmissionCountForQuestion(input.sessionId, liveState.currentQuestionPosition);
       this.transport.publish({
         eventId: 'evt_' + crypto.randomUUID(),
         eventType: LiveQuizEventType.ANSWER_SUBMITTED,
@@ -350,18 +350,18 @@ export class LiveQuizService {
     return submission;
   }
 
-  submitGroupAnswer(input: SubmitGroupAnswerInput): ParticipantSubmission {
+  async submitGroupAnswer(input: SubmitGroupAnswerInput): Promise<ParticipantSubmission> {
     if (this.rateLimiter) {
       this.rateLimiter.checkLiveMutation(input.hostUserId);
     }
 
-    const session = this.repo.findSessionById(input.sessionId);
+    const session = await this.repo.findSessionById(input.sessionId);
     if (!session) throw new SessionNotFoundError(input.sessionId);
     if (session.hostUserId !== input.hostUserId) throw new NotSessionHostError();
     if (session.status !== SessionStatus.ACTIVE) throw new SessionNotActiveError();
 
     // 1. Authoritative Live State check
-    const liveState = this.repo.getLiveSessionState(input.sessionId);
+    const liveState = await this.repo.getLiveSessionState(input.sessionId);
     if (!liveState) throw new SessionNotFoundError(input.sessionId);
 
     // 2. Authoritative Question Lifecycle State check
@@ -391,13 +391,13 @@ export class LiveQuizService {
     }
 
     // Verify group belongs to session
-    const groups = this.repo.listGroups(input.sessionId);
+    const groups = await this.repo.listGroups(input.sessionId);
     const targetGroup = groups.find(g => g.id === input.groupId);
     if (!targetGroup) {
       throw new InvalidLiveStateTransitionError('Specified group does not exist in this session.');
     }
 
-    const snapshot = this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
+    const snapshot = await this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
     if (!snapshot) throw new CrossTenantSnapshotError('Quiz snapshot not found.');
 
     const question = snapshot.questions.find(q => q.position === liveState.currentQuestionPosition);
@@ -415,7 +415,7 @@ export class LiveQuizService {
       }
     }
 
-    const submission = this.repo.recordAnswerSubmission({
+    const submission = await this.repo.recordAnswerSubmission({
       sessionId: input.sessionId,
       questionPosition: liveState.currentQuestionPosition,
       questionId: question.id,
@@ -424,7 +424,7 @@ export class LiveQuizService {
     });
 
     if (this.transport) {
-      const submissionCount = this.repo.getSubmissionCountForQuestion(input.sessionId, liveState.currentQuestionPosition);
+      const submissionCount = await this.repo.getSubmissionCountForQuestion(input.sessionId, liveState.currentQuestionPosition);
       this.transport.publish({
         eventId: 'evt_' + crypto.randomUUID(),
         eventType: LiveQuizEventType.ANSWER_SUBMITTED,
@@ -442,10 +442,10 @@ export class LiveQuizService {
     return submission;
   }
 
-  getParticipantLiveView(sessionId: string, token: ParticipantToken): ParticipantLiveView {
+  async getParticipantLiveView(sessionId: string, token: ParticipantToken): Promise<ParticipantLiveView> {
     validateParticipantToken(token);
-    const { participant, session } = this.repo.resumeSession(sessionId, token);
-    const liveState = this.repo.getLiveSessionState(sessionId);
+    const { participant, session } = await this.repo.resumeSession(sessionId, token);
+    const liveState = await this.repo.getLiveSessionState(sessionId);
     if (!liveState) throw new SessionNotFoundError(sessionId);
 
     let projectedQuestion = null;
@@ -453,7 +453,7 @@ export class LiveQuizService {
     let submittedIndices: readonly number[] | null = null;
 
     if (liveState.currentQuestionPosition > 0) {
-      const snapshot = this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
+      const snapshot = await this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
       if (snapshot) {
         const rawQuestion = snapshot.questions.find(q => q.position === liveState.currentQuestionPosition);
         if (rawQuestion) {
@@ -461,7 +461,7 @@ export class LiveQuizService {
         }
       }
 
-      const existingSubmission = this.repo.getParticipantSubmission(
+      const existingSubmission = await this.repo.getParticipantSubmission(
         sessionId,
         liveState.currentQuestionPosition,
         participant.userId
@@ -489,22 +489,22 @@ export class LiveQuizService {
     };
   }
 
-  getHostLiveView(sessionId: string, hostUserId: string): HostLiveView {
-    const session = this.repo.findSessionById(sessionId);
+  async getHostLiveView(sessionId: string, hostUserId: string): Promise<HostLiveView> {
+    const session = await this.repo.findSessionById(sessionId);
     if (!session) throw new SessionNotFoundError(sessionId);
     if (session.hostUserId !== hostUserId) throw new NotSessionHostError();
 
-    const liveState = this.repo.getLiveSessionState(sessionId);
+    const liveState = await this.repo.getLiveSessionState(sessionId);
     if (!liveState) throw new SessionNotFoundError(sessionId);
 
-    const snapshot = this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
+    const snapshot = await this.repo.getPublishedQuizSnapshot(session.publishedQuizSnapshotId);
     const rawQuestion = snapshot?.questions.find(q => q.position === liveState.currentQuestionPosition) ?? null;
 
     const totalSubmissions = liveState.currentQuestionPosition > 0
-      ? this.repo.getSubmissionCountForQuestion(sessionId, liveState.currentQuestionPosition)
+      ? await this.repo.getSubmissionCountForQuestion(sessionId, liveState.currentQuestionPosition)
       : 0;
 
-    const participants = this.repo.listParticipants(sessionId);
+    const participants = await this.repo.listParticipants(sessionId);
 
     return {
       state: liveState,
@@ -514,12 +514,12 @@ export class LiveQuizService {
     };
   }
 
-  reconnectParticipant(
+  async reconnectParticipant(
     sessionId: string,
     token: ParticipantToken,
     lastSeenSequence: number = 0
-  ): { view: ParticipantLiveView; missedEvents: readonly LiveQuizEvent[] } {
-    const view = this.getParticipantLiveView(sessionId, token);
+  ): Promise<{ view: ParticipantLiveView; missedEvents: readonly LiveQuizEvent[] }> {
+    const view = await this.getParticipantLiveView(sessionId, token);
     const missedEvents = this.transport ? this.transport.getHistory(sessionId, lastSeenSequence, 'participant') : [];
     return { view, missedEvents };
   }

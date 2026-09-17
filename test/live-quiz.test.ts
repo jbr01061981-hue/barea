@@ -99,13 +99,13 @@ function setupTestEnvironment(rateLimiterOptions?: { maxLiveMutationsPer5Seconds
   };
 }
 
-function seedMultiQuestionQuiz(
+async function seedMultiQuestionQuiz(
   bankService: QuestionBankService,
   quizService: QuizService,
   orgId: string,
   userId: string,
   questionCount: number = 3
-): string {
+): Promise<string> {
   setAuthorizedTeacherContext({
     userId,
     organizationId: orgId,
@@ -115,7 +115,7 @@ function seedMultiQuestionQuiz(
 
   const questionIds: string[] = [];
   for (let i = 1; i <= questionCount; i++) {
-    const q = bankService.createQuestion({
+    const q = await bankService.createQuestion({
       organizationId: orgId,
       stem: `Question ${i}: What happened in Scripture on day ${i}?`,
       type: QuestionType.MULTIPLE_CHOICE,
@@ -127,12 +127,12 @@ function seedMultiQuestionQuiz(
       difficulty: QuestionDifficulty.EASY,
       language: 'en'
     });
-    bankService.transitionStatus(orgId, q.id, QuestionStatus.PENDING_REVIEW);
-    bankService.transitionStatus(orgId, q.id, QuestionStatus.APPROVED);
+    await bankService.transitionStatus(orgId, q.id, QuestionStatus.PENDING_REVIEW);
+    await bankService.transitionStatus(orgId, q.id, QuestionStatus.APPROVED);
     questionIds.push(q.id);
   }
 
-  const quiz = quizService.createQuiz(orgId, {
+  const quiz = await quizService.createQuiz(orgId, {
     organizationId: orgId,
     title: 'Genesis Quiz',
     description: 'Study of early Genesis',
@@ -141,10 +141,10 @@ function seedMultiQuestionQuiz(
   });
 
   for (const qid of questionIds) {
-    quizService.addQuestion(orgId, quiz.id, qid);
+    await quizService.addQuestion(orgId, quiz.id, qid);
   }
 
-  const snapshot = quizService.publishQuiz(orgId, quiz.id, userId);
+  const snapshot = await quizService.publishQuiz(orgId, quiz.id, userId);
   return snapshot.id;
 }
 
@@ -154,9 +154,9 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const env = setupTestEnvironment();
     const hostId = 'teacher_host_1';
     const orgId = derivePersonalTenantId(hostId);
-    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 3);
+    const snapshotId = await seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 3);
 
-    const session = env.sessionService.createSession({
+    const session = await env.sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: orgId,
       publishedQuizSnapshotId: snapshotId,
@@ -165,7 +165,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       admissionPolicy: AdmissionPolicy.OPEN
     });
 
-    let liveState = env.sessionRepo.getLiveSessionState(session.id);
+    let liveState = await env.sessionRepo.getLiveSessionState(session.id);
     assert.ok(liveState);
     assert.equal(liveState.sessionStatus, SessionStatus.LOBBY);
     assert.equal(liveState.questionLifecycleState, QuestionLifecycleState.NOT_STARTED);
@@ -173,51 +173,51 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     assert.equal(liveState.stateVersion, 1);
 
     // Transition LOBBY -> ACTIVE
-    const { liveState: activeState } = env.liveQuizService.startLiveQuiz(session.id, hostId);
+    const { liveState: activeState } = await env.liveQuizService.startLiveQuiz(session.id, hostId);
     assert.equal(activeState.sessionStatus, SessionStatus.ACTIVE);
     assert.equal(activeState.currentQuestionPosition, 1);
     assert.equal(activeState.questionLifecycleState, QuestionLifecycleState.ANSWERING);
     assert.equal(activeState.stateVersion, 2);
 
     // Invalid transition: cannot start an already active session
-    assert.throws(() => {
-      env.liveQuizService.startLiveQuiz(session.id, hostId);
+    await assert.rejects(async () => {
+      await env.liveQuizService.startLiveQuiz(session.id, hostId);
     }, InvalidLiveStateTransitionError);
 
     // Lock question 1
-    const { liveState: lockedQ1 } = env.liveQuizService.lockQuestion(session.id, hostId);
+    const { liveState: lockedQ1 } = await env.liveQuizService.lockQuestion(session.id, hostId);
     assert.equal(lockedQ1.currentQuestionPosition, 1);
     assert.equal(lockedQ1.questionLifecycleState, QuestionLifecycleState.LOCKED);
     assert.equal(lockedQ1.stateVersion, 3);
 
     // Advance to question 2
-    const { liveState: advancedQ2 } = env.liveQuizService.advanceQuestion(session.id, hostId);
+    const { liveState: advancedQ2 } = await env.liveQuizService.advanceQuestion(session.id, hostId);
     assert.equal(advancedQ2.currentQuestionPosition, 2);
     assert.equal(advancedQ2.questionLifecycleState, QuestionLifecycleState.ANSWERING);
     assert.equal(advancedQ2.stateVersion, 4);
 
     // Lock question 2
-    const { liveState: lockedQ2 } = env.liveQuizService.lockQuestion(session.id, hostId);
+    const { liveState: lockedQ2 } = await env.liveQuizService.lockQuestion(session.id, hostId);
     assert.equal(lockedQ2.currentQuestionPosition, 2);
     assert.equal(lockedQ2.questionLifecycleState, QuestionLifecycleState.LOCKED);
 
     // Advance to question 3
-    const { liveState: advancedQ3 } = env.liveQuizService.advanceQuestion(session.id, hostId);
+    const { liveState: advancedQ3 } = await env.liveQuizService.advanceQuestion(session.id, hostId);
     assert.equal(advancedQ3.currentQuestionPosition, 3);
     assert.equal(advancedQ3.questionLifecycleState, QuestionLifecycleState.ANSWERING);
 
     // Complete session
-    const { liveState: completedState } = env.liveQuizService.completeLiveQuiz(session.id, hostId);
+    const { liveState: completedState } = await env.liveQuizService.completeLiveQuiz(session.id, hostId);
     assert.equal(completedState.sessionStatus, SessionStatus.COMPLETED);
     assert.equal(completedState.questionLifecycleState, QuestionLifecycleState.COMPLETED);
 
     // Completed session rejects any further mutations
-    assert.throws(() => {
-      env.liveQuizService.openQuestion(session.id, hostId);
+    await assert.rejects(async () => {
+      await env.liveQuizService.openQuestion(session.id, hostId);
     }, SessionNotActiveError);
 
-    assert.throws(() => {
-      env.liveQuizService.startLiveQuiz(session.id, hostId);
+    await assert.rejects(async () => {
+      await env.liveQuizService.startLiveQuiz(session.id, hostId);
     }, InvalidLiveStateTransitionError);
   });
 
@@ -226,9 +226,9 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const legitHostId = 'teacher_legit';
     const attackerHostId = 'teacher_attacker';
     const orgId = derivePersonalTenantId(legitHostId);
-    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, legitHostId, 2);
+    const snapshotId = await seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, legitHostId, 2);
 
-    const session = env.sessionService.createSession({
+    const session = await env.sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: orgId,
       publishedQuizSnapshotId: snapshotId,
@@ -238,29 +238,29 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     });
 
     // Attacker teacher attempts to start legit host's session -> NotSessionHostError
-    assert.throws(() => {
-      env.liveQuizService.startLiveQuiz(session.id, attackerHostId);
+    await assert.rejects(async () => {
+      await env.liveQuizService.startLiveQuiz(session.id, attackerHostId);
     }, NotSessionHostError);
 
     // Attacker attempts other mutations
-    assert.throws(() => {
-      env.liveQuizService.openQuestion(session.id, attackerHostId);
+    await assert.rejects(async () => {
+      await env.liveQuizService.openQuestion(session.id, attackerHostId);
     }, NotSessionHostError);
 
-    assert.throws(() => {
-      env.liveQuizService.lockQuestion(session.id, attackerHostId);
+    await assert.rejects(async () => {
+      await env.liveQuizService.lockQuestion(session.id, attackerHostId);
     }, NotSessionHostError);
 
-    assert.throws(() => {
-      env.liveQuizService.advanceQuestion(session.id, attackerHostId);
+    await assert.rejects(async () => {
+      await env.liveQuizService.advanceQuestion(session.id, attackerHostId);
     }, NotSessionHostError);
 
-    assert.throws(() => {
-      env.liveQuizService.completeLiveQuiz(session.id, attackerHostId);
+    await assert.rejects(async () => {
+      await env.liveQuizService.completeLiveQuiz(session.id, attackerHostId);
     }, NotSessionHostError);
 
-    assert.throws(() => {
-      env.liveQuizService.getHostLiveView(session.id, attackerHostId);
+    await assert.rejects(async () => {
+      await env.liveQuizService.getHostLiveView(session.id, attackerHostId);
     }, NotSessionHostError);
 
     // Server actions also enforce host context
@@ -283,9 +283,9 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const env = setupTestEnvironment();
     const hostId = 'teacher_timer';
     const orgId = derivePersonalTenantId(hostId);
-    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
+    const snapshotId = await seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
 
-    const session = env.sessionService.createSession({
+    const session = await env.sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: orgId,
       publishedQuizSnapshotId: snapshotId,
@@ -294,7 +294,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       admissionPolicy: AdmissionPolicy.OPEN
     });
 
-    const participantToken = env.sessionService.joinSession(session.id, {
+    const participantToken = await env.sessionService.joinSession(session.id, {
       userId: 'pupil_timer_1',
       providerType: 'GOOGLE',
       providerSub: 'sub_timer_1',
@@ -304,13 +304,13 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     });
 
     const beforeOpen = Date.now();
-    const { liveState } = env.liveQuizService.startLiveQuiz(session.id, hostId);
+    const { liveState } = await env.liveQuizService.startLiveQuiz(session.id, hostId);
     assert.ok(liveState.answerDeadlineAt);
     const actualDeadline = new Date(liveState.answerDeadlineAt).getTime();
     assert.ok(actualDeadline >= beforeOpen + 19_000);
 
     // Valid submission before deadline
-    const sub = env.liveQuizService.submitParticipantAnswer({
+    const sub = await env.liveQuizService.submitParticipantAnswer({
       sessionId: session.id,
       token: participantToken.token,
       questionPosition: 1,
@@ -330,7 +330,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       WHERE session_id = ?
     `).run(expiredTime, session.id);
 
-    const latePupilToken = env.sessionService.joinSession(session.id, {
+    const latePupilToken = await env.sessionService.joinSession(session.id, {
       userId: 'pupil_late_2',
       providerType: 'GOOGLE',
       providerSub: 'sub_late_2',
@@ -340,8 +340,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     });
 
     // Submitting after authoritative deadline must strictly throw AnswerDeadlineExpiredError
-    assert.throws(() => {
-      env.liveQuizService.submitParticipantAnswer({
+    await assert.rejects(async () => {
+      await env.liveQuizService.submitParticipantAnswer({
         sessionId: session.id,
         token: latePupilToken.token,
         questionPosition: 1,
@@ -355,9 +355,9 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const env = setupTestEnvironment();
     const hostId = 'teacher_sub';
     const orgId = derivePersonalTenantId(hostId);
-    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
+    const snapshotId = await seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
 
-    const session = env.sessionService.createSession({
+    const session = await env.sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: orgId,
       publishedQuizSnapshotId: snapshotId,
@@ -366,7 +366,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       admissionPolicy: AdmissionPolicy.OPEN
     });
 
-    const participantToken = env.sessionService.joinSession(session.id, {
+    const participantToken = await env.sessionService.joinSession(session.id, {
       userId: 'pupil_honest_1',
       providerType: 'GOOGLE',
       providerSub: 'sub_honest_1',
@@ -375,11 +375,11 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       displayName: 'Honest Pupil'
     });
 
-    env.liveQuizService.startLiveQuiz(session.id, hostId);
+    await env.liveQuizService.startLiveQuiz(session.id, hostId);
 
     // Invalid choice indices
-    assert.throws(() => {
-      env.liveQuizService.submitParticipantAnswer({
+    await assert.rejects(async () => {
+      await env.liveQuizService.submitParticipantAnswer({
         sessionId: session.id,
         token: participantToken.token,
         questionPosition: 1,
@@ -388,8 +388,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       });
     }, InvalidQuestionChoiceError);
 
-    assert.throws(() => {
-      env.liveQuizService.submitParticipantAnswer({
+    await assert.rejects(async () => {
+      await env.liveQuizService.submitParticipantAnswer({
         sessionId: session.id,
         token: participantToken.token,
         questionPosition: 1,
@@ -398,8 +398,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       });
     }, InvalidQuestionChoiceError);
 
-    assert.throws(() => {
-      env.liveQuizService.submitParticipantAnswer({
+    await assert.rejects(async () => {
+      await env.liveQuizService.submitParticipantAnswer({
         sessionId: session.id,
         token: participantToken.token,
         questionPosition: 1,
@@ -409,7 +409,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     }, InvalidQuestionChoiceError);
 
     // First accepted answer wins
-    const firstSub = env.liveQuizService.submitParticipantAnswer({
+    const firstSub = await env.liveQuizService.submitParticipantAnswer({
       sessionId: session.id,
       token: participantToken.token,
       questionPosition: 1,
@@ -419,8 +419,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     assert.deepEqual(firstSub.selectedOptionIndices, [1]);
 
     // Second submission must throw DuplicateAnswerSubmissionError
-    assert.throws(() => {
-      env.liveQuizService.submitParticipantAnswer({
+    await assert.rejects(async () => {
+      await env.liveQuizService.submitParticipantAnswer({
         sessionId: session.id,
         token: participantToken.token,
         questionPosition: 1,
@@ -434,9 +434,9 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const env = setupTestEnvironment();
     const hostId = 'teacher_conc';
     const orgId = derivePersonalTenantId(hostId);
-    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
+    const snapshotId = await seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
 
-    const session = env.sessionService.createSession({
+    const session = await env.sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: orgId,
       publishedQuizSnapshotId: snapshotId,
@@ -445,20 +445,20 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       admissionPolicy: AdmissionPolicy.OPEN
     });
 
-    const { liveState: startState } = env.liveQuizService.startLiveQuiz(session.id, hostId);
+    const { liveState: startState } = await env.liveQuizService.startLiveQuiz(session.id, hostId);
     assert.equal(startState.stateVersion, 2);
 
     // Successful mutation with matching expectedVersion (2)
-    const { liveState: lockState } = env.liveQuizService.lockQuestion(session.id, hostId, 2);
+    const { liveState: lockState } = await env.liveQuizService.lockQuestion(session.id, hostId, 2);
     assert.equal(lockState.stateVersion, 3);
 
     // Mismatched expectedVersion throws ConcurrencyConflictError
-    assert.throws(() => {
-      env.liveQuizService.openQuestion(session.id, hostId, 2); // Expected 2, but actual is 3
+    await assert.rejects(async () => {
+      await env.liveQuizService.openQuestion(session.id, hostId, 2); // Expected 2, but actual is 3
     }, ConcurrencyConflictError);
 
     // Supplying current expectedVersion (3) succeeds
-    const { liveState: openState } = env.liveQuizService.openQuestion(session.id, hostId, 3);
+    const { liveState: openState } = await env.liveQuizService.openQuestion(session.id, hostId, 3);
     assert.equal(openState.stateVersion, 4);
   });
 
@@ -466,9 +466,9 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const env = setupTestEnvironment();
     const hostId = 'teacher_group';
     const orgId = derivePersonalTenantId(hostId);
-    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
+    const snapshotId = await seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
 
-    const session = env.sessionService.createSession({
+    const session = await env.sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: orgId,
       publishedQuizSnapshotId: snapshotId,
@@ -478,13 +478,13 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     });
 
     // Create groups
-    const group1 = env.sessionService.createGroup(session.id, hostId, 'Lions');
-    const group2 = env.sessionService.createGroup(session.id, hostId, 'Eagles');
+    const group1 = await env.sessionService.createGroup(session.id, hostId, 'Lions');
+    const group2 = await env.sessionService.createGroup(session.id, hostId, 'Eagles');
 
-    env.liveQuizService.startLiveQuiz(session.id, hostId);
+    await env.liveQuizService.startLiveQuiz(session.id, hostId);
 
     // Teacher submits on behalf of Lions
-    const groupSub = env.liveQuizService.submitGroupAnswer({
+    const groupSub = await env.liveQuizService.submitGroupAnswer({
       sessionId: session.id,
       hostUserId: hostId,
       groupId: group1.id,
@@ -496,8 +496,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     assert.deepEqual(groupSub.selectedOptionIndices, [0]);
 
     // Duplicate submission for group 1 rejected
-    assert.throws(() => {
-      env.liveQuizService.submitGroupAnswer({
+    await assert.rejects(async () => {
+      await env.liveQuizService.submitGroupAnswer({
         sessionId: session.id,
         hostUserId: hostId,
         groupId: group1.id,
@@ -507,7 +507,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     }, DuplicateAnswerSubmissionError);
 
     // Group 2 can still submit
-    const group2Sub = env.liveQuizService.submitGroupAnswer({
+    const group2Sub = await env.liveQuizService.submitGroupAnswer({
       sessionId: session.id,
       hostUserId: hostId,
       groupId: group2.id,
@@ -613,9 +613,9 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const env = setupTestEnvironment();
     const hostId = 'teacher_recon';
     const orgId = derivePersonalTenantId(hostId);
-    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
+    const snapshotId = await seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
 
-    const session = env.sessionService.createSession({
+    const session = await env.sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: orgId,
       publishedQuizSnapshotId: snapshotId,
@@ -624,7 +624,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       admissionPolicy: AdmissionPolicy.OPEN
     });
 
-    const participantToken = env.sessionService.joinSession(session.id, {
+    const participantToken = await env.sessionService.joinSession(session.id, {
       userId: 'pupil_recon_1',
       providerType: 'GOOGLE',
       providerSub: 'sub_recon_1',
@@ -633,10 +633,10 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       displayName: 'Travelling Pupil'
     });
 
-    env.liveQuizService.startLiveQuiz(session.id, hostId);
+    await env.liveQuizService.startLiveQuiz(session.id, hostId);
 
     // Participant submits answer
-    env.liveQuizService.submitParticipantAnswer({
+    await env.liveQuizService.submitParticipantAnswer({
       sessionId: session.id,
       token: participantToken.token,
       questionPosition: 1,
@@ -645,7 +645,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     });
 
     // Simulate page refresh / disconnect and reconnect
-    const reconView = env.liveQuizService.getParticipantLiveView(session.id, participantToken.token);
+    const reconView = await env.liveQuizService.getParticipantLiveView(session.id, participantToken.token);
     assert.equal(reconView.sessionId, session.id);
     assert.equal(reconView.currentQuestionPosition, 1);
     assert.equal(reconView.questionLifecycleState, QuestionLifecycleState.ANSWERING);
@@ -663,9 +663,9 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const env = setupTestEnvironment({ maxLiveMutationsPer5Seconds: 4 });
     const hostId = 'teacher_ratelimit';
     const orgId = derivePersonalTenantId(hostId);
-    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 10);
+    const snapshotId = await seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 10);
 
-    const session = env.sessionService.createSession({
+    const session = await env.sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: orgId,
       publishedQuizSnapshotId: snapshotId,
@@ -675,16 +675,16 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     });
 
     // Start session uses 1 mutation
-    env.liveQuizService.startLiveQuiz(session.id, hostId);
+    await env.liveQuizService.startLiveQuiz(session.id, hostId);
 
     // 3 more mutations (total 4)
-    env.liveQuizService.lockQuestion(session.id, hostId);
-    env.liveQuizService.advanceQuestion(session.id, hostId);
-    env.liveQuizService.lockQuestion(session.id, hostId);
+    await env.liveQuizService.lockQuestion(session.id, hostId);
+    await env.liveQuizService.advanceQuestion(session.id, hostId);
+    await env.liveQuizService.lockQuestion(session.id, hostId);
 
     // 5th mutation exceeds maxLiveMutationsPer5Seconds (4) and throws RateLimitExceededError
-    assert.throws(() => {
-      env.liveQuizService.advanceQuestion(session.id, hostId);
+    await assert.rejects(async () => {
+      await env.liveQuizService.advanceQuestion(session.id, hostId);
     }, RateLimitExceededError);
   });
 
@@ -692,7 +692,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const env = setupTestEnvironment();
     const hostId = 'teacher_actions';
     const orgId = derivePersonalTenantId(hostId);
-    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 3);
+    const snapshotId = await seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 3);
 
     setAuthorizedTeacherContext({
       userId: hostId,
@@ -701,7 +701,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       role: 'teacher'
     });
 
-    const session = env.sessionService.createSession({
+    const session = await env.sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: orgId,
       publishedQuizSnapshotId: snapshotId,
@@ -710,7 +710,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       admissionPolicy: AdmissionPolicy.OPEN
     });
 
-    const participantToken = env.sessionService.joinSession(session.id, {
+    const participantToken = await env.sessionService.joinSession(session.id, {
       userId: 'pupil_act_1',
       providerType: 'GOOGLE',
       providerSub: 'sub_act_1',
@@ -782,9 +782,9 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const env = setupTestEnvironment();
     const hostId = 'teacher_sse_host';
     const orgId = derivePersonalTenantId(hostId);
-    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
+    const snapshotId = await seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
 
-    const session = env.sessionService.createSession({
+    const session = await env.sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: orgId,
       publishedQuizSnapshotId: snapshotId,
@@ -793,7 +793,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       admissionPolicy: AdmissionPolicy.OPEN
     });
 
-    const participantToken = env.sessionService.joinSession(session.id, {
+    const participantToken = await env.sessionService.joinSession(session.id, {
       userId: 'pupil_sse_1',
       providerType: 'GOOGLE',
       providerSub: 'sub_sse_1',
@@ -928,7 +928,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     assert.equal(foreignTokenRes.status, 403);
 
     // Cross-session isolation: Session A credentials cannot subscribe to Session B
-    const sessionB = env.sessionService.createSession({
+    const sessionB = await env.sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: orgId,
       publishedQuizSnapshotId: snapshotId,
@@ -953,9 +953,9 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const env = setupTestEnvironment();
     const hostId = 'teacher_authoritative';
     const orgId = derivePersonalTenantId(hostId);
-    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 3);
+    const snapshotId = await seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 3);
 
-    const session = env.sessionService.createSession({
+    const session = await env.sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: orgId,
       publishedQuizSnapshotId: snapshotId,
@@ -964,7 +964,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       admissionPolicy: AdmissionPolicy.OPEN
     });
 
-    const participantToken = env.sessionService.joinSession(session.id, {
+    const participantToken = await env.sessionService.joinSession(session.id, {
       userId: 'pupil_auth_1',
       providerType: 'GOOGLE',
       providerSub: 'sub_auth_1',
@@ -974,7 +974,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     });
 
     // Start live quiz -> Question 1 active, answering
-    env.liveQuizService.startLiveQuiz(session.id, hostId);
+    await env.liveQuizService.startLiveQuiz(session.id, hostId);
 
     // Helper to count persisted submissions in database
     const getPersistedCount = (): number => {
@@ -987,8 +987,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     assert.equal(getPersistedCount(), 0);
 
     // 1. Answer for non-current question is rejected (current is 1, submitting for 2)
-    assert.throws(() => {
-      env.liveQuizService.submitParticipantAnswer({
+    await assert.rejects(async () => {
+      await env.liveQuizService.submitParticipantAnswer({
         sessionId: session.id,
         token: participantToken.token,
         questionPosition: 2, // Non-current!
@@ -1001,8 +1001,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     assert.equal(getPersistedCount(), 0);
 
     // Attempt for question 0 or negative
-    assert.throws(() => {
-      env.liveQuizService.submitParticipantAnswer({
+    await assert.rejects(async () => {
+      await env.liveQuizService.submitParticipantAnswer({
         sessionId: session.id,
         token: participantToken.token,
         questionPosition: 0,
@@ -1018,8 +1018,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       'UPDATE session_live_states SET answer_deadline_at = ? WHERE session_id = ?'
     ).run(pastDeadline, session.id);
 
-    assert.throws(() => {
-      env.liveQuizService.submitParticipantAnswer({
+    await assert.rejects(async () => {
+      await env.liveQuizService.submitParticipantAnswer({
         sessionId: session.id,
         token: participantToken.token,
         questionPosition: 1,
@@ -1033,8 +1033,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     // 3. ClientTimestamp cannot extend or bypass the deadline
     // Client claims submission was 10 minutes ago, before deadline
     const fakeClientTimestamp = new Date(Date.now() - 600_000).toISOString();
-    assert.throws(() => {
-      env.liveQuizService.submitParticipantAnswer({
+    await assert.rejects(async () => {
+      await env.liveQuizService.submitParticipantAnswer({
         sessionId: session.id,
         token: participantToken.token,
         questionPosition: 1,
@@ -1053,7 +1053,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       'UPDATE session_live_states SET answer_deadline_at = ? WHERE session_id = ?'
     ).run(futureDeadline, session.id);
 
-    const validSubmission = env.liveQuizService.submitParticipantAnswer({
+    const validSubmission = await env.liveQuizService.submitParticipantAnswer({
       sessionId: session.id,
       token: participantToken.token,
       questionPosition: 1,
@@ -1069,8 +1069,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     assert.equal(getPersistedCount(), 1);
 
     // 5. Subsequent duplicate attempt rejected, database count remains 1
-    assert.throws(() => {
-      env.liveQuizService.submitParticipantAnswer({
+    await assert.rejects(async () => {
+      await env.liveQuizService.submitParticipantAnswer({
         sessionId: session.id,
         token: participantToken.token,
         questionPosition: 1,
@@ -1081,7 +1081,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     assert.equal(getPersistedCount(), 1);
 
     // 6. Group answer after deadline is rejected with zero persisted submissions
-    const groupSession = env.sessionService.createSession({
+    const groupSession = await env.sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: orgId,
       publishedQuizSnapshotId: snapshotId,
@@ -1089,16 +1089,16 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       participationMode: ParticipationMode.TEACHER_GROUP,
       admissionPolicy: AdmissionPolicy.TEACHER_ASSIGNED
     });
-    const group1 = env.sessionService.createGroup(groupSession.id, hostId, 'Team Lions');
-    env.liveQuizService.startLiveQuiz(groupSession.id, hostId);
+    const group1 = await env.sessionService.createGroup(groupSession.id, hostId, 'Team Lions');
+    await env.liveQuizService.startLiveQuiz(groupSession.id, hostId);
 
     // Artificially expire group session deadline in database
     env.sharedDb.prepare(
       'UPDATE session_live_states SET answer_deadline_at = ? WHERE session_id = ?'
     ).run(pastDeadline, groupSession.id);
 
-    assert.throws(() => {
-      env.liveQuizService.submitGroupAnswer({
+    await assert.rejects(async () => {
+      await env.liveQuizService.submitGroupAnswer({
         sessionId: groupSession.id,
         hostUserId: hostId,
         groupId: group1.id,
@@ -1120,7 +1120,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       'UPDATE session_live_states SET answer_deadline_at = ? WHERE session_id = ?'
     ).run(futureDeadline, groupSession.id);
 
-    const validGroupSub = env.liveQuizService.submitGroupAnswer({
+    const validGroupSub = await env.liveQuizService.submitGroupAnswer({
       sessionId: groupSession.id,
       hostUserId: hostId,
       groupId: group1.id,
@@ -1137,9 +1137,9 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const env = setupTestEnvironment();
     const hostId = 'teacher_replay_guard';
     const orgId = derivePersonalTenantId(hostId);
-    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
+    const snapshotId = await seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 2);
 
-    const session = env.sessionService.createSession({
+    const session = await env.sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: orgId,
       publishedQuizSnapshotId: snapshotId,
@@ -1148,7 +1148,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       admissionPolicy: AdmissionPolicy.OPEN
     });
 
-    const participantToken = env.sessionService.joinSession(session.id, {
+    const participantToken = await env.sessionService.joinSession(session.id, {
       userId: 'pupil_replay_1',
       providerType: 'GOOGLE',
       providerSub: 'sub_replay_1',
@@ -1315,9 +1315,9 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const env = setupTestEnvironment();
     const hostId = 'teacher_race_guard';
     const orgId = derivePersonalTenantId(hostId);
-    const snapshotId = seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 3);
+    const snapshotId = await seedMultiQuestionQuiz(env.bankService, env.quizService, orgId, hostId, 3);
 
-    const session = env.sessionService.createSession({
+    const session = await env.sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: orgId,
       publishedQuizSnapshotId: snapshotId,
@@ -1326,7 +1326,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       admissionPolicy: AdmissionPolicy.OPEN
     });
 
-    const participantToken = env.sessionService.joinSession(session.id, {
+    const participantToken = await env.sessionService.joinSession(session.id, {
       userId: 'pupil_race_1',
       providerType: 'GOOGLE',
       providerSub: 'sub_race_1',
@@ -1335,7 +1335,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       displayName: 'Race Pupil'
     });
 
-    const participant2Token = env.sessionService.joinSession(session.id, {
+    const participant2Token = await env.sessionService.joinSession(session.id, {
       userId: 'pupil_race_2',
       providerType: 'GOOGLE',
       providerSub: 'sub_race_2',
@@ -1345,7 +1345,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     });
 
     // Start live quiz -> Question 1 active, answering
-    env.liveQuizService.startLiveQuiz(session.id, hostId);
+    await env.liveQuizService.startLiveQuiz(session.id, hostId);
 
     // Get deadline from live state
     const liveRow = env.sharedDb.prepare(
@@ -1378,8 +1378,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       return deadlineMs + 2_000;
     });
 
-    assert.throws(() => {
-      env.liveQuizService.submitParticipantAnswer({
+    await assert.rejects(async () => {
+      await env.liveQuizService.submitParticipantAnswer({
         sessionId: session.id,
         token: participantToken.token,
         questionPosition: 1,
@@ -1392,7 +1392,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     env.sessionRepo.setClockForTesting(null);
 
     // 2. Teacher-Group Race-Boundary Regression Test:
-    const groupSession = env.sessionService.createSession({
+    const groupSession = await env.sessionService.createSession({
       workspaceType: WorkspaceType.PERSONAL,
       organizationId: orgId,
       publishedQuizSnapshotId: snapshotId,
@@ -1400,8 +1400,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       participationMode: ParticipationMode.TEACHER_GROUP,
       admissionPolicy: AdmissionPolicy.TEACHER_ASSIGNED
     });
-    const groupA = env.sessionService.createGroup(groupSession.id, hostId, 'Team Alpha');
-    env.liveQuizService.startLiveQuiz(groupSession.id, hostId);
+    const groupA = await env.sessionService.createGroup(groupSession.id, hostId, 'Team Alpha');
+    await env.liveQuizService.startLiveQuiz(groupSession.id, hostId);
 
     const groupLiveRow = env.sharedDb.prepare(
       'SELECT answer_deadline_at FROM session_live_states WHERE session_id = ?'
@@ -1417,8 +1417,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       return groupDeadlineMs + 3_000; // Expired at persistence check
     });
 
-    assert.throws(() => {
-      env.liveQuizService.submitGroupAnswer({
+    await assert.rejects(async () => {
+      await env.liveQuizService.submitGroupAnswer({
         sessionId: groupSession.id,
         hostUserId: hostId,
         groupId: groupA.id,
@@ -1439,8 +1439,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     // 3. Stale caller-supplied submittedAt or clientTimestamp cannot bypass deadline at persistence
     // Even if caller passes a fake past timestamp, the repository derives fresh server time
     env.sessionRepo.setClockForTesting(() => deadlineMs + 5_000);
-    assert.throws(() => {
-      env.sessionRepo.recordAnswerSubmission({
+    await assert.rejects(async () => {
+      await env.sessionRepo.recordAnswerSubmission({
         sessionId: session.id,
         questionPosition: 1,
         questionId: 'q_fake',
@@ -1457,7 +1457,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     // Set clock before deadline so submissions are in valid window
     env.sessionRepo.setClockForTesting(() => deadlineMs - 5_000);
 
-    const firstSub = env.liveQuizService.submitParticipantAnswer({
+    const firstSub = await env.liveQuizService.submitParticipantAnswer({
       sessionId: session.id,
       token: participantToken.token,
       questionPosition: 1,
@@ -1468,8 +1468,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     assert.equal(getAnswerCount(), 1);
 
     // Competing/duplicate submission by same participant must be rejected
-    assert.throws(() => {
-      env.liveQuizService.submitParticipantAnswer({
+    await assert.rejects(async () => {
+      await env.liveQuizService.submitParticipantAnswer({
         sessionId: session.id,
         token: participantToken.token,
         questionPosition: 1,
@@ -1479,7 +1479,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     assert.equal(getAnswerCount(), 1);
 
     // Second participant CAN submit during open deadline
-    const secondSub = env.liveQuizService.submitParticipantAnswer({
+    const secondSub = await env.liveQuizService.submitParticipantAnswer({
       sessionId: session.id,
       token: participant2Token.token,
       questionPosition: 1,
@@ -1491,7 +1491,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
 
     // 5. No late submission can be persisted after authoritative deadline
     env.sessionRepo.setClockForTesting(() => deadlineMs + 1_000);
-    const participant3Token = env.sessionService.joinSession(session.id, {
+    const participant3Token = await env.sessionService.joinSession(session.id, {
       userId: 'pupil_race_3',
       providerType: 'GOOGLE',
       providerSub: 'sub_race_3',
@@ -1500,8 +1500,8 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       displayName: 'Race Pupil 3'
     });
 
-    assert.throws(() => {
-      env.liveQuizService.submitParticipantAnswer({
+    await assert.rejects(async () => {
+      await env.liveQuizService.submitParticipantAnswer({
         sessionId: session.id,
         token: participant3Token.token,
         questionPosition: 1,

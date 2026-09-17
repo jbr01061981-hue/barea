@@ -9,7 +9,7 @@ export default async function TeacherQuizzesPage() {
   const teacherContext = await ensureAuthorizedTeacherPage('/teacher/quizzes');
   const quizService = getQuizService();
 
-  const quizzes = quizService.listQuizzes(teacherContext.organizationId);
+  const quizzes = await quizService.listQuizzes(teacherContext.organizationId);
 
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">

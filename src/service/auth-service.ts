@@ -70,13 +70,13 @@ export class AuthService {
    * Generates Google OAuth authorization URL with namespaced transaction ID, PKCE challenge, and OIDC nonce.
    * Persists OAuthTransaction in server-side SQLite store.
    */
-  generateGoogleOAuthUrl(redirectUri?: string, returnTo?: string): {
+  async generateGoogleOAuthUrl(redirectUri?: string, returnTo?: string): Promise<{
     url: string;
     transactionId: string;
     state: string;
     codeVerifier: string;
     nonce: string;
-  } {
+  }> {
     const clientId = this.options.googleClientId || process.env.GOOGLE_CLIENT_ID;
     if (!clientId) {
       throw new Error('Google OAuth is not configured: GOOGLE_CLIENT_ID is missing.');
@@ -100,7 +100,7 @@ export class AuthService {
     const sanitizedReturnTo = returnTo || '/home';
 
     // Persist OAuth transaction in server-side store
-    this.repo.createOAuthTransaction({
+    await this.repo.createOAuthTransaction({
       id: transactionId,
       stateHash,
       codeVerifier,
@@ -240,18 +240,19 @@ export class AuthService {
     const displayName = verified.name || (verified.email ? verified.email.split('@')[0] : 'Participant');
 
     return this.repo.transaction(() => {
+      const syncRepo = this.repo as any;
       let resolvedUser: User;
 
-      const existingFederated = this.repo.findFederatedIdentity('GOOGLE', verified.sub);
+      const existingFederated = syncRepo._findFederatedIdentitySync('GOOGLE', verified.sub);
       if (existingFederated) {
-        const foundUser = this.repo.findUserById(existingFederated.userId);
+        const foundUser = syncRepo._findUserByIdSync(existingFederated.userId);
         if (!foundUser) {
           throw new AccountNotFoundError('User bound to Google account not found.');
         }
         resolvedUser = foundUser;
       } else {
         if (verified.email) {
-          const existingUserByEmail = this.repo.findUserByEmail(verified.email);
+          const existingUserByEmail = syncRepo._findUserByEmailSync(verified.email);
           if (existingUserByEmail) {
             throw new AccountCollisionDetectedError(
               'An account with this email address is already registered to a different login provider or identity.'
@@ -259,13 +260,13 @@ export class AuthService {
           }
         }
 
-        const newUser = this.repo.createUser({
+        const newUser = syncRepo._createUserSync({
           email: verified.email,
           emailVerified: verified.emailVerified,
           displayName
         });
 
-        this.repo.createFederatedIdentity({
+        syncRepo._createFederatedIdentitySync({
           userId: newUser.id,
           providerType: 'GOOGLE',
           providerSub: verified.sub
@@ -274,7 +275,10 @@ export class AuthService {
         resolvedUser = newUser;
       }
 
-      const { rawToken } = this.repo.createSession(resolvedUser.id, {
+      const sessionFn = typeof syncRepo.createSessionSync === 'function'
+        ? syncRepo.createSessionSync.bind(syncRepo)
+        : syncRepo._createSessionSync.bind(syncRepo);
+      const { rawToken } = sessionFn(resolvedUser.id, {
         authProvider: 'GOOGLE',
         providerSub: verified.sub
       });
@@ -295,8 +299,10 @@ export class AuthService {
     const displayName = verified.name || (verified.email ? verified.email.split('@')[0] : 'Participant');
 
     return this.repo.transaction(() => {
+      const syncRepo = this.repo as any;
+
       // Step A: Atomically consume OAuth transaction (single-use invariant)
-      const consumed = this.repo.consumeOAuthTransaction(transactionId);
+      const consumed = syncRepo._consumeOAuthTransactionSync(transactionId);
       if (!consumed) {
         throw new OAuthTransactionReplayedError('OAuth transaction has already been consumed and cannot be replayed.');
       }
@@ -304,9 +310,9 @@ export class AuthService {
       let resolvedUser: User;
 
       // Step B: Identity resolution (Rule: provider + Google sub is authoritative)
-      const existingFederated = this.repo.findFederatedIdentity('GOOGLE', verified.sub);
+      const existingFederated = syncRepo._findFederatedIdentitySync('GOOGLE', verified.sub);
       if (existingFederated) {
-        const foundUser = this.repo.findUserById(existingFederated.userId);
+        const foundUser = syncRepo._findUserByIdSync(existingFederated.userId);
         if (!foundUser) {
           throw new AccountNotFoundError('User bound to Google account not found.');
         }
@@ -314,7 +320,7 @@ export class AuthService {
       } else {
         // New Google subject: Check if verified email exists in users table
         if (verified.email) {
-          const existingUserByEmail = this.repo.findUserByEmail(verified.email);
+          const existingUserByEmail = syncRepo._findUserByEmailSync(verified.email);
           if (existingUserByEmail) {
             // STRICT ANTI-HIJACKING INVARIANT: Prohibit silent automatic account linking
             // Do NOT link new Google sub to existing account. Fail closed with collision error.
@@ -325,13 +331,13 @@ export class AuthService {
         }
 
         // New user + new federated identity
-        const newUser = this.repo.createUser({
+        const newUser = syncRepo._createUserSync({
           email: verified.email,
           emailVerified: verified.emailVerified,
           displayName
         });
 
-        this.repo.createFederatedIdentity({
+        syncRepo._createFederatedIdentitySync({
           userId: newUser.id,
           providerType: 'GOOGLE',
           providerSub: verified.sub
@@ -341,7 +347,10 @@ export class AuthService {
       }
 
       // Step C: Fresh BAREA session creation (atomic with consumption & provisioning)
-      const { rawToken } = this.repo.createSession(resolvedUser.id, {
+      const sessionFn = typeof syncRepo.createSessionSync === 'function'
+        ? syncRepo.createSessionSync.bind(syncRepo)
+        : syncRepo._createSessionSync.bind(syncRepo);
+      const { rawToken } = sessionFn(resolvedUser.id, {
         authProvider: 'GOOGLE',
         providerSub: verified.sub
       });
@@ -384,7 +393,7 @@ export class AuthService {
     const txId = dotIndex > 0 ? input.receivedState.slice(0, dotIndex) : input.receivedState;
     const stateSecret = dotIndex > 0 ? input.receivedState.slice(dotIndex + 1) : '';
 
-    const transaction = this.repo.findOAuthTransaction(txId);
+    const transaction = await this.repo.findOAuthTransaction(txId);
 
     let effectiveVerifier: string;
     let effectiveNonce: string;
@@ -518,14 +527,14 @@ export class AuthService {
   /**
    * Resolves an active session context by raw session token.
    */
-  resolveSession(rawToken: string): AuthenticatedSessionContext | null {
+  async resolveSession(rawToken: string): Promise<AuthenticatedSessionContext | null> {
     return this.repo.findSessionByToken(rawToken);
   }
 
   /**
    * Invalidates a session token.
    */
-  logout(rawToken: string): void {
-    this.repo.deleteSession(rawToken);
+  async logout(rawToken: string): Promise<void> {
+    await this.repo.deleteSession(rawToken);
   }
 }

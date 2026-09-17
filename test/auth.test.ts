@@ -182,7 +182,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(result.user.displayName, 'Sarah Teacher');
     assert.ok(result.rawToken.startsWith('bst_'));
 
-    const session = authService.resolveSession(result.rawToken);
+    const session = await authService.resolveSession(result.rawToken);
     assert.ok(session !== null);
     assert.equal(session?.user.id, result.user.id);
   });
@@ -367,7 +367,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('11. unverified email cannot link an existing account and fails closed', async () => {
-    const existing = authRepo.createUser({
+    const existing = await authRepo.createUser({
       email: 'target.victim@church.org',
       emailVerified: true,
       displayName: 'Victim User'
@@ -387,19 +387,19 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
 
     // Verify victim user was NOT hijacked
-    const victimAfter = authRepo.findUserById(existing.id);
+    const victimAfter = await authRepo.findUserById(existing.id);
     assert.equal(victimAfter?.id, existing.id);
-    const federated = authRepo.findFederatedIdentity('GOOGLE', 'attacker-sub-999');
+    const federated = await authRepo.findFederatedIdentity('GOOGLE', 'attacker-sub-999');
     assert.equal(federated, null, 'Federated identity must not be linked');
   });
 
   await t.test('12. verified email with different Google sub CANNOT hijack or link existing account (prohibits silent linking)', async () => {
-    const existing = authRepo.createUser({
+    const existing = await authRepo.createUser({
       email: 'pastor.john@church.org',
       emailVerified: true,
       displayName: 'Pastor John'
     });
-    authRepo.createFederatedIdentity({
+    await authRepo.createFederatedIdentity({
       userId: existing.id,
       providerType: 'GOOGLE',
       providerSub: 'google-sub-original-pastor'
@@ -421,16 +421,16 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
 
     // Verify original account remains bound to original federated identity only
-    const boundIdentity = authRepo.findFederatedIdentity('GOOGLE', 'google-sub-different-attacker');
+    const boundIdentity = await authRepo.findFederatedIdentity('GOOGLE', 'google-sub-different-attacker');
     assert.equal(boundIdentity, null, 'Different sub must not be linked to pastor account');
   });
 
   await t.test('13. existing (GOOGLE, sub) always resolves to the bound BAREA user', async () => {
-    const user = authRepo.createUser({
+    const user = await authRepo.createUser({
       email: 'primary@church.org',
       displayName: 'Original Name'
     });
-    authRepo.createFederatedIdentity({
+    await authRepo.createFederatedIdentity({
       userId: user.id,
       providerType: 'GOOGLE',
       providerSub: 'stable-google-sub-777'
@@ -475,12 +475,19 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
 
     // Mock createSession to throw an error simulating unexpected failure during session issuance
     const originalCreateSession = authRepo.createSession.bind(authRepo);
+    const originalCreateSessionSync = (authRepo as any).createSessionSync?.bind(authRepo);
     let shouldFailSession = true;
     authRepo.createSession = (userId: string, options?: any) => {
       if (shouldFailSession) {
         throw new Error('Simulated failure during session creation');
       }
       return originalCreateSession(userId, options);
+    };
+    (authRepo as any).createSessionSync = (userId: string, options?: any) => {
+      if (shouldFailSession) {
+        throw new Error('Simulated failure during session creation');
+      }
+      return originalCreateSessionSync ? originalCreateSessionSync(userId, options) : (originalCreateSession as any)(userId, options);
     };
 
     try {
@@ -490,12 +497,15 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       );
 
       // Verify transaction rolled back completely: user and federated identity do NOT exist!
-      const userAfterRollback = authRepo.findUserByEmail('atomic@church.org');
+      const userAfterRollback = await authRepo.findUserByEmail('atomic@church.org');
       assert.equal(userAfterRollback, null, 'User creation must roll back atomically if session creation fails');
-      const fedAfterRollback = authRepo.findFederatedIdentity('GOOGLE', 'atomic-sub-1');
+      const fedAfterRollback = await authRepo.findFederatedIdentity('GOOGLE', 'atomic-sub-1');
       assert.equal(fedAfterRollback, null, 'Federated identity creation must roll back atomically if session creation fails');
     } finally {
       authRepo.createSession = originalCreateSession;
+      if (originalCreateSessionSync) {
+        (authRepo as any).createSessionSync = originalCreateSessionSync;
+      }
     }
   });
 
@@ -522,7 +532,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
 
     await assert.rejects(
       async () =>
-        fakeExchangeService.handleGoogleCallback({
+        await fakeExchangeService.handleGoogleCallback({
           code: 'any-code',
           expectedState: 'state-1',
           receivedState: 'state-1',
@@ -560,7 +570,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   await t.test('18. state mismatch fails handleGoogleCallback', async () => {
     await assert.rejects(
       async () =>
-        authService.handleGoogleCallback({
+        await authService.handleGoogleCallback({
           code: 'code-1',
           expectedState: 'state-expected',
           receivedState: 'state-forged',
@@ -571,8 +581,8 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
   });
 
-  await t.test('19. reused OAuth transaction fails (transient cookies consumed)', () => {
-    const res = authService.generateGoogleOAuthUrl(REDIRECT_URI);
+  await t.test('19. reused OAuth transaction fails (transient cookies consumed)', async () => {
+    const res = await authService.generateGoogleOAuthUrl(REDIRECT_URI);
     assert.ok(res.state);
     assert.ok(res.nonce);
     assert.ok(res.codeVerifier);
@@ -581,7 +591,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   await t.test('20. PKCE verifier mismatch causes token exchange failure', async () => {
     await assert.rejects(
       async () =>
-        authService.handleGoogleCallback({
+        await authService.handleGoogleCallback({
           code: 'code-1',
           expectedState: 'state-1',
           receivedState: 'state-1',
@@ -945,16 +955,16 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   // SESSION TESTS (24 - 31)
   // ============================================================
 
-  await t.test('24. session token has sufficient entropy', () => {
-    const user = authRepo.createUser({ email: 'entropy@church.org', displayName: 'Entropy' });
-    const { rawToken } = authRepo.createSession(user.id);
+  await t.test('24. session token has sufficient entropy', async () => {
+    const user = await authRepo.createUser({ email: 'entropy@church.org', displayName: 'Entropy' });
+    const { rawToken } = await authRepo.createSession(user.id);
     assert.ok(rawToken.startsWith('bst_'));
     assert.ok(rawToken.length >= 40, 'Raw token must have at least 256 bits of base64url entropy');
   });
 
-  await t.test('25. database does not store raw session token', () => {
-    const user = authRepo.createUser({ email: 'dbhash@church.org', displayName: 'DbHash' });
-    const { rawToken } = authRepo.createSession(user.id);
+  await t.test('25. database does not store raw session token', async () => {
+    const user = await authRepo.createUser({ email: 'dbhash@church.org', displayName: 'DbHash' });
+    const { rawToken } = await authRepo.createSession(user.id);
 
     const db = authRepo.getDatabase();
     const rows = db.prepare('SELECT id FROM user_sessions WHERE user_id = ?').all(user.id) as any[];
@@ -965,47 +975,47 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(rows[0].id, expectedHash, 'Database must only store SHA-256 hash');
   });
 
-  await t.test('26. valid session resolves', () => {
-    const user = authRepo.createUser({ email: 'resolves@church.org', displayName: 'Resolves' });
-    const { rawToken } = authRepo.createSession(user.id);
-    const session = authService.resolveSession(rawToken);
+  await t.test('26. valid session resolves', async () => {
+    const user = await authRepo.createUser({ email: 'resolves@church.org', displayName: 'Resolves' });
+    const { rawToken } = await authRepo.createSession(user.id);
+    const session = await authService.resolveSession(rawToken);
     assert.ok(session !== null);
     assert.equal(session?.user.id, user.id);
   });
 
-  await t.test('27. expired session fails', () => {
-    const user = authRepo.createUser({ email: 'expired2@church.org', displayName: 'Expired' });
-    const { rawToken } = authRepo.createSession(user.id, -10); // Expired 10 seconds ago
-    assert.equal(authService.resolveSession(rawToken), null);
+  await t.test('27. expired session fails', async () => {
+    const user = await authRepo.createUser({ email: 'expired2@church.org', displayName: 'Expired' });
+    const { rawToken } = await authRepo.createSession(user.id, -10); // Expired 10 seconds ago
+    assert.equal(await authService.resolveSession(rawToken), null);
   });
 
-  await t.test('28. revoked session fails', () => {
-    const user = authRepo.createUser({ email: 'revoked@church.org', displayName: 'Revoked' });
-    const { rawToken } = authRepo.createSession(user.id);
-    authService.logout(rawToken);
-    assert.equal(authService.resolveSession(rawToken), null);
+  await t.test('28. revoked session fails', async () => {
+    const user = await authRepo.createUser({ email: 'revoked@church.org', displayName: 'Revoked' });
+    const { rawToken } = await authRepo.createSession(user.id);
+    await authService.logout(rawToken);
+    assert.equal(await authService.resolveSession(rawToken), null);
   });
 
-  await t.test('29. logout invalidates session', () => {
-    const user = authRepo.createUser({ email: 'logout@church.org', displayName: 'Logout' });
-    const { rawToken } = authRepo.createSession(user.id);
-    assert.ok(authService.resolveSession(rawToken) !== null);
-    authService.logout(rawToken);
-    assert.equal(authService.resolveSession(rawToken), null);
+  await t.test('29. logout invalidates session', async () => {
+    const user = await authRepo.createUser({ email: 'logout@church.org', displayName: 'Logout' });
+    const { rawToken } = await authRepo.createSession(user.id);
+    assert.ok(await authService.resolveSession(rawToken) !== null);
+    await authService.logout(rawToken);
+    assert.equal(await authService.resolveSession(rawToken), null);
   });
 
   await t.test('30. fresh authentication creates a fresh session', async () => {
-    const user = authRepo.createUser({ email: 'fresh@church.org', displayName: 'Fresh' });
+    const user = await authRepo.createUser({ email: 'fresh@church.org', displayName: 'Fresh' });
 
-    const session1 = authRepo.createSession(user.id);
-    const session2 = authRepo.createSession(user.id);
+    const session1 = await authRepo.createSession(user.id);
+    const session2 = await authRepo.createSession(user.id);
 
     assert.notEqual(session1.rawToken, session2.rawToken, 'Subsequent logins must issue distinct session tokens');
   });
 
   await t.test('31. authenticated identity cannot be replaced through client input', async () => {
-    const genuineUser = authRepo.createUser({ email: 'genuine@church.org', displayName: 'Genuine' });
-    const { rawToken } = authRepo.createSession(genuineUser.id, {
+    const genuineUser = await authRepo.createUser({ email: 'genuine@church.org', displayName: 'Genuine' });
+    const { rawToken } = await authRepo.createSession(genuineUser.id, {
       authProvider: 'LOCAL_PASSWORD',
       providerSub: genuineUser.id
     });
@@ -1019,12 +1029,12 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('PROVIDER BINDING: getAuthenticatedUserContext() returns exact provider identity bound to current session, not arbitrary first identity', async () => {
-    const multiUser = authRepo.createUser({ email: 'multi@church.org', displayName: 'Multi User' });
-    authRepo.createFederatedIdentity({ userId: multiUser.id, providerType: 'GOOGLE', providerSub: 'google-sub-first' });
-    authRepo.createFederatedIdentity({ userId: multiUser.id, providerType: 'APPLE', providerSub: 'apple-sub-second' });
+    const multiUser = await authRepo.createUser({ email: 'multi@church.org', displayName: 'Multi User' });
+    await authRepo.createFederatedIdentity({ userId: multiUser.id, providerType: 'GOOGLE', providerSub: 'google-sub-first' });
+    await authRepo.createFederatedIdentity({ userId: multiUser.id, providerType: 'APPLE', providerSub: 'apple-sub-second' });
 
     // Session authenticated via APPLE
-    const { rawToken: appleSessionToken } = authRepo.createSession(multiUser.id, {
+    const { rawToken: appleSessionToken } = await authRepo.createSession(multiUser.id, {
       authProvider: 'APPLE',
       providerSub: 'apple-sub-second'
     });
@@ -1034,7 +1044,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(contextApple.providerSub, 'apple-sub-second', 'Must reflect providerSub from current session');
 
     // Session authenticated via GOOGLE
-    const { rawToken: googleSessionToken } = authRepo.createSession(multiUser.id, {
+    const { rawToken: googleSessionToken } = await authRepo.createSession(multiUser.id, {
       authProvider: 'GOOGLE',
       providerSub: 'google-sub-first'
     });
@@ -1049,8 +1059,8 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   // ============================================================
 
   await t.test('32. authenticated ordinary individual user resolves on unified home with teacher capability locked', async () => {
-    const ordinaryUser = authRepo.createUser({ email: 'ordinary.member@church.org', displayName: 'Ordinary Member' });
-    const { rawToken } = authRepo.createSession(ordinaryUser.id, {
+    const ordinaryUser = await authRepo.createUser({ email: 'ordinary.member@church.org', displayName: 'Ordinary Member' });
+    const { rawToken } = await authRepo.createSession(ordinaryUser.id, {
       authProvider: 'GOOGLE',
       providerSub: 'google-sub-ordinary-1'
     });
@@ -1066,9 +1076,9 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('33. authenticated teacher/admin user resolves on unified home with teacher capability unlocked', async () => {
-    const teacherUser = authRepo.createUser({ email: 'authorized.teacher@church.org', displayName: 'Authorized Teacher' });
-    authRepo.addOrganizationMembership('church-berea-org', teacherUser.id, 'teacher');
-    const { rawToken } = authRepo.createSession(teacherUser.id, {
+    const teacherUser = await authRepo.createUser({ email: 'authorized.teacher@church.org', displayName: 'Authorized Teacher' });
+    await authRepo.addOrganizationMembership('church-berea-org', teacherUser.id, 'teacher');
+    const { rawToken } = await authRepo.createSession(teacherUser.id, {
       authProvider: 'GOOGLE',
       providerSub: 'google-sub-teacher-1'
     });
@@ -1089,8 +1099,8 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('35. ordinary authenticated user cannot reach /teacher/* even with valid session', async () => {
-    const ordinaryUser = authRepo.createUser({ email: 'ordinary2@church.org', displayName: 'Ordinary Two' });
-    const { rawToken } = authRepo.createSession(ordinaryUser.id, {
+    const ordinaryUser = await authRepo.createUser({ email: 'ordinary2@church.org', displayName: 'Ordinary Two' });
+    const { rawToken } = await authRepo.createSession(ordinaryUser.id, {
       authProvider: 'GOOGLE',
       providerSub: 'google-sub-ord-2'
     });
@@ -1104,8 +1114,8 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('36. user gaining teacher membership later unlocks Create & Host capability on same account without separate identity', async () => {
-    const flexibleUser = authRepo.createUser({ email: 'flexible@church.org', displayName: 'Flexible User' });
-    const { rawToken } = authRepo.createSession(flexibleUser.id, {
+    const flexibleUser = await authRepo.createUser({ email: 'flexible@church.org', displayName: 'Flexible User' });
+    const { rawToken } = await authRepo.createSession(flexibleUser.id, {
       authProvider: 'GOOGLE',
       providerSub: 'google-sub-flex-1'
     });
@@ -1116,7 +1126,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(initialHome?.isTeacherAuthorized, false);
 
     // Granted teacher membership later
-    authRepo.addOrganizationMembership('church-berea-org', flexibleUser.id, 'teacher');
+    await authRepo.addOrganizationMembership('church-berea-org', flexibleUser.id, 'teacher');
 
     // Subsequent resolution reflects unlocked capability
     const updatedHome = await getUnifiedUserContext();
@@ -1128,8 +1138,8 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     const { SiteNav } = await import('../src/app/site-nav.js');
 
     // 1. Authenticated session:
-    const authUser = authRepo.createUser({ email: 'nav.user@church.org', displayName: 'Nav User' });
-    const { rawToken } = authRepo.createSession(authUser.id);
+    const authUser = await authRepo.createUser({ email: 'nav.user@church.org', displayName: 'Nav User' });
+    const { rawToken } = await authRepo.createSession(authUser.id);
     setSessionTokenForTesting(rawToken);
 
     const authedNav = await SiteNav();
@@ -1158,8 +1168,8 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   await t.test('36c. post-logout verification: invalidating session guarantees getUnifiedUserContext resolves to null and SiteNav renders public navigation', async () => {
     const { SiteNav } = await import('../src/app/site-nav.js');
 
-    const logoutUser = authRepo.createUser({ email: 'postlogout@church.org', displayName: 'Post Logout User' });
-    const { rawToken } = authRepo.createSession(logoutUser.id);
+    const logoutUser = await authRepo.createUser({ email: 'postlogout@church.org', displayName: 'Post Logout User' });
+    const { rawToken } = await authRepo.createSession(logoutUser.id);
     setSessionTokenForTesting(rawToken);
 
     // Before logout: authenticated
@@ -1168,7 +1178,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(preLogoutContext?.userId, logoutUser.id);
 
     // Perform authoritative server logout
-    authService.logout(rawToken);
+    await authService.logout(rawToken);
     setSessionTokenForTesting(null);
 
     // After logout: must resolve to null
@@ -1189,39 +1199,39 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   // REDIRECT SECURITY TESTS (37 - 43)
   // ============================================================
 
-  await t.test('37. absolute external URL rejected', () => {
+  await t.test('37. absolute external URL rejected', async () => {
     assert.equal(sanitizeReturnTo('https://evil.example.com/steal-session'), '/home');
     assert.equal(sanitizeReturnTo('http://evil.example.com'), '/home');
   });
 
-  await t.test('38. protocol-relative URL rejected', () => {
+  await t.test('38. protocol-relative URL rejected', async () => {
     assert.equal(sanitizeReturnTo('//evil.example.com/path'), '/home');
   });
 
-  await t.test('39. encoded protocol-relative URL rejected', () => {
+  await t.test('39. encoded protocol-relative URL rejected', async () => {
     assert.equal(sanitizeReturnTo('/%2fevil.example.com'), '/home');
     assert.equal(sanitizeReturnTo('%2f%2fevil.example.com'), '/home');
   });
 
-  await t.test('40. backslash URL rejected', () => {
+  await t.test('40. backslash URL rejected', async () => {
     assert.equal(sanitizeReturnTo('/\\evil.example.com'), '/home');
     assert.equal(sanitizeReturnTo('\\\\evil.example.com'), '/home');
     assert.equal(sanitizeReturnTo('/teacher/quizzes\\evil'), '/home');
     assert.equal(sanitizeReturnTo('/teacher%5cevil'), '/home');
   });
 
-  await t.test('41. CRLF injection rejected', () => {
+  await t.test('41. CRLF injection rejected', async () => {
     assert.equal(sanitizeReturnTo('/teacher/quizzes\r\nSet-Cookie: evil=1'), '/home');
     assert.equal(sanitizeReturnTo('/teacher/quizzes\nLocation: http://evil.com'), '/home');
   });
 
-  await t.test('42. javascript/data/vbscript rejected', () => {
+  await t.test('42. javascript/data/vbscript rejected', async () => {
     assert.equal(sanitizeReturnTo('javascript:alert(1)'), '/home');
     assert.equal(sanitizeReturnTo('data:text/html;base64,PHNjcmlwdD4='), '/home');
     assert.equal(sanitizeReturnTo('vbscript:msgbox(1)'), '/home');
   });
 
-  await t.test('43. valid internal path preserved', () => {
+  await t.test('43. valid internal path preserved', async () => {
     assert.equal(sanitizeReturnTo('/teacher/quizzes'), '/teacher/quizzes');
     assert.equal(sanitizeReturnTo('/teacher/review?id=q_123'), '/teacher/review?id=q_123');
     assert.equal(sanitizeReturnTo('/teacher/quizzes#drafts'), '/teacher/quizzes#drafts');
@@ -1233,8 +1243,8 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   // ============================================================
 
   await t.test('44. authenticated non-teacher cannot access teacher workspace', async () => {
-    const user = authRepo.createUser({ email: 'member@church.org', displayName: 'Member' });
-    const { rawToken } = authRepo.createSession(user.id);
+    const user = await authRepo.createUser({ email: 'member@church.org', displayName: 'Member' });
+    const { rawToken } = await authRepo.createSession(user.id);
     setSessionTokenForTesting(rawToken);
 
     await assert.rejects(
@@ -1244,10 +1254,10 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('45. teacher membership grants correct organization', async () => {
-    const user = authRepo.createUser({ email: 'teacher@church.org', displayName: 'Teacher' });
-    authRepo.addOrganizationMembership('church-org-alpha', user.id, 'teacher');
+    const user = await authRepo.createUser({ email: 'teacher@church.org', displayName: 'Teacher' });
+    await authRepo.addOrganizationMembership('church-org-alpha', user.id, 'teacher');
 
-    const { rawToken } = authRepo.createSession(user.id);
+    const { rawToken } = await authRepo.createSession(user.id);
     setSessionTokenForTesting(rawToken);
 
     const ctx = await getAuthorizedTeacherContext();
@@ -1257,10 +1267,10 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('46. admin membership grants correct organization', async () => {
-    const user = authRepo.createUser({ email: 'admin@church.org', displayName: 'Admin' });
-    authRepo.addOrganizationMembership('church-org-beta', user.id, 'admin');
+    const user = await authRepo.createUser({ email: 'admin@church.org', displayName: 'Admin' });
+    await authRepo.addOrganizationMembership('church-org-beta', user.id, 'admin');
 
-    const { rawToken } = authRepo.createSession(user.id);
+    const { rawToken } = await authRepo.createSession(user.id);
     setSessionTokenForTesting(rawToken);
 
     const ctx = await getAuthorizedTeacherContext();
@@ -1270,10 +1280,10 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('47. client-supplied organization cannot change authorization', async () => {
-    const user = authRepo.createUser({ email: 'teacher2@church.org', displayName: 'Teacher 2' });
-    authRepo.addOrganizationMembership('church-org-genuine', user.id, 'teacher');
+    const user = await authRepo.createUser({ email: 'teacher2@church.org', displayName: 'Teacher 2' });
+    await authRepo.addOrganizationMembership('church-org-genuine', user.id, 'teacher');
 
-    const { rawToken } = authRepo.createSession(user.id);
+    const { rawToken } = await authRepo.createSession(user.id);
     setSessionTokenForTesting(rawToken);
 
     // Organization strictly resolves from database membership, not client request
@@ -1282,8 +1292,8 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('48. client-supplied role cannot elevate privileges', async () => {
-    const user = authRepo.createUser({ email: 'pupil@church.org', displayName: 'Pupil' });
-    const { rawToken } = authRepo.createSession(user.id);
+    const user = await authRepo.createUser({ email: 'pupil@church.org', displayName: 'Pupil' });
+    const { rawToken } = await authRepo.createSession(user.id);
     setSessionTokenForTesting(rawToken);
 
     await assert.rejects(
@@ -1313,7 +1323,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
   });
 
-  await t.test('CANONICAL REDIRECT URI: production requires GOOGLE_REDIRECT_URI and development supports local fallback', () => {
+  await t.test('CANONICAL REDIRECT URI: production requires GOOGLE_REDIRECT_URI and development supports local fallback', async () => {
     const prevEnv = process.env.NODE_ENV;
     const prevUri = process.env.GOOGLE_REDIRECT_URI;
     try {
@@ -1337,34 +1347,34 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   // ============================================================
 
   await t.test('LOGOUT 1. Authenticated session can invoke logout and revoke server-side session in database', async () => {
-    const user = authRepo.createUser({ email: 'logout.user@berea.org', displayName: 'Logout Tester' });
-    const { rawToken } = authRepo.createSession(user.id);
+    const user = await authRepo.createUser({ email: 'logout.user@berea.org', displayName: 'Logout Tester' });
+    const { rawToken } = await authRepo.createSession(user.id);
 
     // Verify session exists and resolves prior to logout
-    assert.ok(authService.resolveSession(rawToken), 'Session should resolve initially');
+    assert.ok(await authService.resolveSession(rawToken), 'Session should resolve initially');
 
     // Revoke through authService.logout
-    authService.logout(rawToken);
+    await authService.logout(rawToken);
 
     // Verify session is completely deleted from the database
-    assert.equal(authService.resolveSession(rawToken), null, 'Session must not resolve after logout');
-    assert.equal(authRepo.findSessionByToken(rawToken), null, 'Session record must be removed from user_sessions');
+    assert.equal(await authService.resolveSession(rawToken), null, 'Session must not resolve after logout');
+    assert.equal(await authRepo.findSessionByToken(rawToken), null, 'Session record must be removed from user_sessions');
   });
 
   await t.test('LOGOUT 2. After logout, previously valid session token cannot resolve or authenticate', async () => {
-    const user = authRepo.createUser({ email: 'unauth.user@berea.org', displayName: 'Unauth Tester' });
-    authRepo.addOrganizationMembership('church-berea', user.id, 'teacher');
-    const { rawToken } = authRepo.createSession(user.id);
+    const user = await authRepo.createUser({ email: 'unauth.user@berea.org', displayName: 'Unauth Tester' });
+    await authRepo.addOrganizationMembership('church-berea', user.id, 'teacher');
+    const { rawToken } = await authRepo.createSession(user.id);
 
     setSessionTokenForTesting(rawToken);
     const beforeTeacher = await getAuthorizedTeacherContext();
     assert.equal(beforeTeacher.userId, user.id);
 
     // Logout
-    authService.logout(rawToken);
+    await authService.logout(rawToken);
 
     // Token resolution fails
-    assert.equal(authService.resolveSession(rawToken), null);
+    assert.equal(await authService.resolveSession(rawToken), null);
 
     // Subsequent protected request strictly fails closed
     await assert.rejects(
@@ -1374,8 +1384,8 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('LOGOUT 3. Subsequent protected request using revoked session is strictly unauthorized', async () => {
-    const user = authRepo.createUser({ email: 'protected.user@berea.org', displayName: 'Protected Tester' });
-    const { rawToken } = authRepo.createSession(user.id);
+    const user = await authRepo.createUser({ email: 'protected.user@berea.org', displayName: 'Protected Tester' });
+    const { rawToken } = await authRepo.createSession(user.id);
 
     setSessionTokenForTesting(rawToken);
     // User without teacher role gives TeacherForbiddenError initially
@@ -1385,7 +1395,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
 
     // After logout, token is revoked
-    authService.logout(rawToken);
+    await authService.logout(rawToken);
 
     // Now it gives TeacherUnauthorizedError (invalid/expired session) rather than forbidden
     await assert.rejects(
@@ -1394,81 +1404,81 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
   });
 
-  await t.test('LOGOUT 4. Logout with no session / empty token is safe and idempotent', () => {
+  await t.test('LOGOUT 4. Logout with no session / empty token is safe and idempotent', async () => {
     // Should not throw or fail
-    assert.doesNotThrow(() => authService.logout(''));
+    await authService.logout('');
   });
 
-  await t.test('LOGOUT 5. Logout with an invalid or non-existent session token is safe and idempotent', () => {
-    assert.doesNotThrow(() => authService.logout('bst_totally_invalid_nonexistent_token'));
+  await t.test('LOGOUT 5. Logout with an invalid or non-existent session token is safe and idempotent', async () => {
+    await authService.logout('bst_totally_invalid_nonexistent_token');
   });
 
-  await t.test('LOGOUT 6. Logout cannot revoke a client-selected arbitrary user/session without possessing raw token', () => {
-    const victim = authRepo.createUser({ email: 'victim@berea.org', displayName: 'Victim User' });
-    const attacker = authRepo.createUser({ email: 'attacker@berea.org', displayName: 'Attacker User' });
+  await t.test('LOGOUT 6. Logout cannot revoke a client-selected arbitrary user/session without possessing raw token', async () => {
+    const victim = await authRepo.createUser({ email: 'victim@berea.org', displayName: 'Victim User' });
+    const attacker = await authRepo.createUser({ email: 'attacker@berea.org', displayName: 'Attacker User' });
 
-    const victimSession = authRepo.createSession(victim.id);
-    const attackerSession = authRepo.createSession(attacker.id);
+    const victimSession = await authRepo.createSession(victim.id);
+    const attackerSession = await authRepo.createSession(attacker.id);
 
     // Attacker logs out their own session
-    authService.logout(attackerSession.rawToken);
+    await authService.logout(attackerSession.rawToken);
 
     // Attacker session is revoked
-    assert.equal(authService.resolveSession(attackerSession.rawToken), null);
+    assert.equal(await authService.resolveSession(attackerSession.rawToken), null);
 
     // Victim session remains completely intact and active
-    const victimActive = authService.resolveSession(victimSession.rawToken);
+    const victimActive = await authService.resolveSession(victimSession.rawToken);
     assert.ok(victimActive, 'Victim session must remain active');
     assert.equal(victimActive.user.id, victim.id);
   });
 
-  await t.test('LOGOUT 7. Logout does not modify the BAREA user account', () => {
-    const user = authRepo.createUser({ email: 'persist.user@berea.org', displayName: 'Persist User' });
-    const { rawToken } = authRepo.createSession(user.id);
+  await t.test('LOGOUT 7. Logout does not modify the BAREA user account', async () => {
+    const user = await authRepo.createUser({ email: 'persist.user@berea.org', displayName: 'Persist User' });
+    const { rawToken } = await authRepo.createSession(user.id);
 
-    authService.logout(rawToken);
+    await authService.logout(rawToken);
 
-    const userAfter = authRepo.findUserById(user.id);
+    const userAfter = await authRepo.findUserById(user.id);
     assert.ok(userAfter, 'User must exist');
     assert.equal(userAfter.id, user.id);
     assert.equal(userAfter.email, 'persist.user@berea.org');
     assert.equal(userAfter.displayName, 'Persist User');
   });
 
-  await t.test('LOGOUT 8. Logout does not modify or unlink federated identities', () => {
-    const user = authRepo.createUser({ email: 'fed.user@berea.org', displayName: 'Fed User' });
-    const fed = authRepo.createFederatedIdentity({
+  await t.test('LOGOUT 8. Logout does not modify or unlink federated identities', async () => {
+    const user = await authRepo.createUser({ email: 'fed.user@berea.org', displayName: 'Fed User' });
+    const fed = await authRepo.createFederatedIdentity({
       userId: user.id,
       providerType: 'GOOGLE',
       providerSub: 'google-sub-logout-test'
     });
-    const { rawToken } = authRepo.createSession(user.id, {
+    const { rawToken } = await authRepo.createSession(user.id, {
       authProvider: 'GOOGLE',
       providerSub: fed.providerSub
     });
 
-    authService.logout(rawToken);
+    await authService.logout(rawToken);
 
-    const fedAfter = authRepo.findFederatedIdentity('GOOGLE', 'google-sub-logout-test');
+    const fedAfter = await authRepo.findFederatedIdentity('GOOGLE', 'google-sub-logout-test');
     assert.ok(fedAfter, 'Federated identity must still exist');
     assert.equal(fedAfter.userId, user.id);
     assert.equal(fedAfter.providerSub, 'google-sub-logout-test');
   });
 
-  await t.test('LOGOUT 9. Logout does not modify organization memberships', () => {
-    const user = authRepo.createUser({ email: 'org.user@berea.org', displayName: 'Org User' });
-    authRepo.addOrganizationMembership('church-berea-youth', user.id, 'teacher');
-    const { rawToken } = authRepo.createSession(user.id);
+  await t.test('LOGOUT 9. Logout does not modify organization memberships', async () => {
+    const user = await authRepo.createUser({ email: 'org.user@berea.org', displayName: 'Org User' });
+    await authRepo.addOrganizationMembership('church-berea-youth', user.id, 'teacher');
+    const { rawToken } = await authRepo.createSession(user.id);
 
-    authService.logout(rawToken);
+    await authService.logout(rawToken);
 
-    const memberships = authRepo.getOrganizationMemberships(user.id);
+    const memberships = await authRepo.getOrganizationMemberships(user.id);
     assert.equal(memberships.length, 1);
     assert.equal(memberships[0].organizationId, 'church-berea-youth');
     assert.equal(memberships[0].role, 'teacher');
   });
 
-  await t.test('LOGOUT 10. Redirect sanitization strictly prevents open redirects and enforces internal BAREA path', () => {
+  await t.test('LOGOUT 10. Redirect sanitization strictly prevents open redirects and enforces internal BAREA path', async () => {
     // Verify sanitizeReturnTo ensures all redirects after logout or auth are safe internal paths
     assert.equal(sanitizeReturnTo('http://attacker.com'), '/home');
     assert.equal(sanitizeReturnTo('https://evil.org/phish'), '/home');
@@ -1536,7 +1546,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   // ============================================================
 
   await t.test('OAUTH-TX-01: Normal valid OAuth transaction succeeds and issues fresh session', async () => {
-    const res = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/teacher/quizzes');
+    const res = await authService.generateGoogleOAuthUrl(REDIRECT_URI, '/teacher/quizzes');
     assert.ok(res.transactionId);
     assert.ok(res.state.startsWith(res.transactionId + '.'));
 
@@ -1560,13 +1570,13 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(callbackResult.user.email, 'user.tx01@church.org');
 
     // Verify transaction is marked consumed in database
-    const txAfter = authRepo.findOAuthTransaction(res.transactionId);
+    const txAfter = await authRepo.findOAuthTransaction(res.transactionId);
     assert.ok(txAfter);
     assert.ok(txAfter.consumedAt !== null, 'Transaction must be marked consumed');
   });
 
   await t.test('OAUTH-TX-02: Consumed callback replay fails closed with OAUTH_TRANSACTION_REPLAYED', async () => {
-    const res = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const res = await authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
     const nonce = res.nonce;
     const idToken = await createSignedIdToken({
       sub: 'google-sub-tx-02',
@@ -1586,7 +1596,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     // Immediate replay of same state/transaction fails closed
     await assert.rejects(
       async () =>
-        authService.handleGoogleCallback({
+        await authService.handleGoogleCallback({
           code: 'mock_id_token:' + idToken,
           receivedState: res.state,
           redirectUri: REDIRECT_URI
@@ -1627,7 +1637,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
 
     await assert.rejects(
       async () =>
-        authService.handleGoogleCallback({
+        await authService.handleGoogleCallback({
           code: 'mock_id_token:' + idToken,
           receivedState: state,
           redirectUri: REDIRECT_URI
@@ -1637,12 +1647,12 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('OAUTH-TX-04: Tampered state secret fails closed with OAUTH_STATE_INVALID', async () => {
-    const res = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const res = await authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
     const tamperedState = `${res.transactionId}.tampered_state_secret`;
 
     await assert.rejects(
       async () =>
-        authService.handleGoogleCallback({
+        await authService.handleGoogleCallback({
           code: 'code-tampered',
           receivedState: tamperedState,
           redirectUri: REDIRECT_URI
@@ -1653,9 +1663,9 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
 
   await t.test('OAUTH-TAB-01 & OAUTH-TAB-02: Two simultaneous transactions remain independent; completing B does not invalidate A', async () => {
     // Tab A begins login
-    const txA = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/teacher/quizzes');
+    const txA = await authService.generateGoogleOAuthUrl(REDIRECT_URI, '/teacher/quizzes');
     // Tab B begins login
-    const txB = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const txB = await authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
 
     assert.notEqual(txA.transactionId, txB.transactionId, 'Transactions must have distinct identifiers');
     assert.notEqual(txA.state, txB.state, 'State parameters must be distinct');
@@ -1678,7 +1688,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(resultB.returnTo, '/home');
 
     // Tab A remains unconsumed and valid
-    const txAStatus = authRepo.findOAuthTransaction(txA.transactionId);
+    const txAStatus = await authRepo.findOAuthTransaction(txA.transactionId);
     assert.ok(txAStatus);
     assert.equal(txAStatus.consumedAt, null, 'Transaction A must remain unconsumed after Tab B finishes');
 
@@ -1704,7 +1714,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('OAUTH-TX-CONCURRENCY-01: Two concurrent callbacks for the same transaction produce exactly one success and one replay rejection', async () => {
-    const res = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const res = await authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
     const idToken = await createSignedIdToken({
       sub: 'sub-concurrent-tx',
       email: 'concurrent.tx@church.org',
@@ -1732,7 +1742,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(rejected[0].reason?.name, 'OAuthTransactionReplayedError');
 
     // Verify only 1 user and 1 session were created
-    const foundUser = authRepo.findUserByEmail('concurrent.tx@church.org');
+    const foundUser = await authRepo.findUserByEmail('concurrent.tx@church.org');
     assert.ok(foundUser);
     const db = authRepo.getDatabase();
     const sessions = db.prepare('SELECT id FROM user_sessions WHERE user_id = ?').all(foundUser.id);
@@ -1740,18 +1750,18 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('OAUTH-ID-01: Same email + different Google sub fails closed with AccountCollisionDetectedError', async () => {
-    const existing = authRepo.createUser({
+    const existing = await authRepo.createUser({
       email: 'victim.pastor@church.org',
       emailVerified: true,
       displayName: 'Pastor'
     });
-    authRepo.createFederatedIdentity({
+    await authRepo.createFederatedIdentity({
       userId: existing.id,
       providerType: 'GOOGLE',
       providerSub: 'legitimate-pastor-sub'
     });
 
-    const tx = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const tx = await authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
     const imposterToken = await createSignedIdToken({
       sub: 'imposter-sub-999',
       email: 'victim.pastor@church.org',
@@ -1761,7 +1771,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
 
     await assert.rejects(
       async () =>
-        authService.handleGoogleCallback({
+        await authService.handleGoogleCallback({
           code: 'mock_id_token:' + imposterToken,
           receivedState: tx.state,
           redirectUri: REDIRECT_URI
@@ -1770,14 +1780,14 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
 
     // Verify original account was not hijacked
-    const victim = authRepo.findUserById(existing.id);
+    const victim = await authRepo.findUserById(existing.id);
     assert.equal(victim?.id, existing.id);
-    const imposterIdentity = authRepo.findFederatedIdentity('GOOGLE', 'imposter-sub-999');
+    const imposterIdentity = await authRepo.findFederatedIdentity('GOOGLE', 'imposter-sub-999');
     assert.equal(imposterIdentity, null, 'Imposter sub must not be linked');
   });
 
   await t.test('OAUTH-ID-02: New Google sub + new email creates exactly one BAREA user and federated identity', async () => {
-    const tx = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const tx = await authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
     const idToken = await createSignedIdToken({
       sub: 'brand-new-sub-100',
       email: 'newbie@church.org',
@@ -1795,7 +1805,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(res.user.email, 'newbie@church.org');
     assert.equal(res.user.displayName, 'Newbie Member');
 
-    const fed = authRepo.findFederatedIdentity('GOOGLE', 'brand-new-sub-100');
+    const fed = await authRepo.findFederatedIdentity('GOOGLE', 'brand-new-sub-100');
     assert.ok(fed);
     assert.equal(fed.userId, res.user.id);
   });
@@ -1804,7 +1814,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     // Generate an arbitrary pre-login token
     const preLoginToken = 'bst_' + crypto.randomBytes(32).toString('base64url');
 
-    const tx = authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const tx = await authService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
     const idToken = await createSignedIdToken({
       sub: 'sub-fixation-test',
       email: 'fixation@church.org',
@@ -1820,8 +1830,8 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
 
     // The authenticated session token is brand new and independent of preLoginToken
     assert.notEqual(res.rawToken, preLoginToken);
-    assert.equal(authRepo.findSessionByToken(preLoginToken), null, 'Pre-login token must not resolve to any session');
-    assert.ok(authRepo.findSessionByToken(res.rawToken) !== null, 'New session must resolve');
+    assert.equal(await authRepo.findSessionByToken(preLoginToken), null, 'Pre-login token must not resolve to any session');
+    assert.ok(await authRepo.findSessionByToken(res.rawToken) !== null, 'New session must resolve');
   });
 
   await t.test('OAUTH-NET-01: Google token endpoint timeout aborts cleanly with 8-second error message', async () => {
@@ -1837,11 +1847,11 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
       }
     });
 
-    const tx = customService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
+    const tx = await customService.generateGoogleOAuthUrl(REDIRECT_URI, '/home');
 
     await assert.rejects(
       async () =>
-        customService.handleGoogleCallback({
+        await customService.handleGoogleCallback({
           code: 'code-timeout',
           receivedState: tx.state,
           redirectUri: REDIRECT_URI
@@ -1854,7 +1864,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     );
   });
 
-  await t.test('OAUTH-REDIRECT-01: Malicious returnTo values are rejected/safely redirected to /home', () => {
+  await t.test('OAUTH-REDIRECT-01: Malicious returnTo values are rejected/safely redirected to /home', async () => {
     assert.equal(sanitizeReturnTo('http://evil.com'), '/home');
     assert.equal(sanitizeReturnTo('//evil.com'), '/home');
     assert.equal(sanitizeReturnTo('/\\evil.com'), '/home');
@@ -1863,7 +1873,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(sanitizeReturnTo('/teacher/quizzes/123?edit=true'), '/teacher/quizzes/123?edit=true');
   });
 
-  await t.test('OAUTH-HTTPS-01: resolveOAuthRedirectUri respects explicit HTTPS request origin in development/test', () => {
+  await t.test('OAUTH-HTTPS-01: resolveOAuthRedirectUri respects explicit HTTPS request origin in development/test', async () => {
     const originalEnv = process.env.GOOGLE_REDIRECT_URI;
     delete process.env.GOOGLE_REDIRECT_URI;
     try {
@@ -1876,7 +1886,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     }
   });
 
-  await t.test('OAUTH-HTTPS-02: resolveOAuthRedirectUri prioritizes configured GOOGLE_REDIRECT_URI', () => {
+  await t.test('OAUTH-HTTPS-02: resolveOAuthRedirectUri prioritizes configured GOOGLE_REDIRECT_URI', async () => {
     const originalEnv = process.env.GOOGLE_REDIRECT_URI;
     process.env.GOOGLE_REDIRECT_URI = 'https://localhost:3000/api/auth/callback/google';
     try {
@@ -1895,25 +1905,25 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   // ============================================================
 
   await t.test('LOGOUT-HISTORY-01: Authenticated session logs out -> session revoked in database, session cookie deleted, redirected to public destination', async () => {
-    const user = authRepo.createUser({ email: 'logout-01@church.org', displayName: 'Logout Test User' });
-    const { rawToken } = authRepo.createSession(user.id);
+    const user = await authRepo.createUser({ email: 'logout-01@church.org', displayName: 'Logout Test User' });
+    const { rawToken } = await authRepo.createSession(user.id);
 
     // Verify session is active before logout
-    const preSession = authService.resolveSession(rawToken);
+    const preSession = await authService.resolveSession(rawToken);
     assert.ok(preSession !== null, 'Session must resolve prior to logout');
     assert.equal(preSession?.user.id, user.id);
 
     // Call authoritative logout
-    authService.logout(rawToken);
+    await authService.logout(rawToken);
 
     // Verify server-side session is revoked in database
-    const postSession = authService.resolveSession(rawToken);
+    const postSession = await authService.resolveSession(rawToken);
     assert.equal(postSession, null, 'Revoked session must not resolve in auth service or database');
   });
 
   await t.test('LOGOUT-HISTORY-02: A revoked session cannot authenticate /home and fails closed to null context', async () => {
-    const user = authRepo.createUser({ email: 'logout-02@church.org', displayName: 'Revoked Home User' });
-    const { rawToken } = authRepo.createSession(user.id);
+    const user = await authRepo.createUser({ email: 'logout-02@church.org', displayName: 'Revoked Home User' });
+    const { rawToken } = await authRepo.createSession(user.id);
     setSessionTokenForTesting(rawToken);
 
     // 1. Authenticated
@@ -1922,7 +1932,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(activeContext?.userId, user.id);
 
     // 2. Revoke session server-side
-    authService.logout(rawToken);
+    await authService.logout(rawToken);
 
     // 3. Attempting to resolve /home with the revoked session token fails closed
     const revokedContext = await getUnifiedUserContext();
@@ -1931,9 +1941,9 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('LOGOUT-HISTORY-03: A revoked session cannot access protected teacher routes and fails closed with TeacherUnauthorizedError', async () => {
-    const teacher = authRepo.createUser({ email: 'logout-03-teacher@church.org', displayName: 'Revoked Teacher' });
-    authRepo.addOrganizationMembership('church-berea-org', teacher.id, 'teacher');
-    const { rawToken } = authRepo.createSession(teacher.id);
+    const teacher = await authRepo.createUser({ email: 'logout-03-teacher@church.org', displayName: 'Revoked Teacher' });
+    await authRepo.addOrganizationMembership('church-berea-org', teacher.id, 'teacher');
+    const { rawToken } = await authRepo.createSession(teacher.id);
     setSessionTokenForTesting(rawToken);
 
     // 1. Authorized teacher
@@ -1942,7 +1952,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(activeTeacher.role, 'teacher');
 
     // 2. Revoke session server-side
-    authService.logout(rawToken);
+    await authService.logout(rawToken);
 
     // 3. Attempting teacher resolution with revoked session token strictly throws TeacherUnauthorizedError
     await assert.rejects(
@@ -2016,8 +2026,8 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(Object.prototype.hasOwnProperty.call(bodyNoCookie, 'isTeacherAuthorized'), false, 'Must not disclose isTeacherAuthorized');
 
     // Case 2: Valid active session -> returns strictly { authenticated: true }
-    const activeUser = authRepo.createUser({ email: 'active-session@church.org', displayName: 'Active User' });
-    const { rawToken } = authRepo.createSession(activeUser.id);
+    const activeUser = await authRepo.createUser({ email: 'active-session@church.org', displayName: 'Active User' });
+    const { rawToken } = await authRepo.createSession(activeUser.id);
     const reqActive = {
       cookies: {
         get: (name: string) => (name === 'barea_session' ? { value: rawToken } : undefined)
@@ -2031,7 +2041,7 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
     assert.equal(Object.prototype.hasOwnProperty.call(bodyActive, 'isTeacherAuthorized'), false, 'Must not disclose role capabilities');
 
     // Case 3: Revoked session
-    authService.logout(rawToken);
+    await authService.logout(rawToken);
     const resRevoked = await sessionGet(reqActive as any);
     assert.equal(resRevoked.status, 401);
     const bodyRevoked = await resRevoked.json();
