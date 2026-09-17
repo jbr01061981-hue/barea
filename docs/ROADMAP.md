@@ -31,7 +31,17 @@ Established capabilities:
 - Existing authentication, authorization, tenant-isolation, replay-protection, session, and timing-sensitive security invariants were preserved.
 - 263 unit/integration tests pass, with typecheck, test typecheck, production build, and diff-check all passing after merge.
 
-**MVP scope decision:** generic synchronous transaction seams and `*Sync` service escape hatches that remain in the Question/Quiz/AI areas are intentionally accepted for the current MVP. They are not part of a new refactoring task. Re-evaluate them when the persistence architecture moves beyond the current local `node:sqlite` implementation toward D1/distributed persistence.
+### BAREA-002B — Relational Database Architecture Freeze & Clock Port — COMPLETE
+
+Established capabilities:
+- Frozen 17-table relational schema across Identity, Question Bank, Quiz Authoring, Live Quiz Orchestration, and Finalized Results.
+- Zero generic `transaction<T>()` leaks in public repository contracts (`QuestionRepository`, `QuizRepository`, `SessionRepository`, `AuthRepository`).
+- Domain-specific atomic repository methods (`createPendingReviewBatch`, `approveQuestionBatch`, `publishQuiz`, `finalizeSessionResults`).
+- Injectable `Clock` port (`nowMs()`, `nowIso()`) decoupling time-sensitive logic from persistence abstractions.
+- 16 explicit indexes (14 regular + 2 partial unique indexes `uq_session_results_participant` and `uq_session_results_group`) and pruned redundant indexes.
+- 7 triggers enforcing curriculum snapshot immutability, tenant boundary integrity, quiz deletion prevention, and session result immutability.
+- Added `session_results` table with deterministic ranking: `final_score DESC`, `correct_count DESC`, `final_answer_submitted_at ASC`, `subject_id ASC`.
+- 270 unit, integration, and security tests pass locally.
 
 ## Previous Authentication Milestones
 

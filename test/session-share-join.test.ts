@@ -69,6 +69,13 @@ import {
   resumeSessionAction
 } from '../src/app/session/actions';
 
+function seedUser(sharedDb: DatabaseSync, id: string, name: string = id) {
+  sharedDb.prepare(`
+    INSERT OR IGNORE INTO users (id, email, display_name, created_at)
+    VALUES (?, ?, ?, ?)
+  `).run(id, `${id}@example.test`, name, new Date().toISOString());
+}
+
 function setupTestEnvironment() {
   const sharedDb = new DatabaseSync(':memory:');
   const questionRepo = new SqliteQuestionRepository(sharedDb);
@@ -84,6 +91,23 @@ function setupTestEnvironment() {
   setQuizService(quizService);
   setSessionService(sessionService);
   setRateLimiter(rateLimiter);
+
+  // Pre-seed standard test users for foreign key satisfaction
+  seedUser(sharedDb, 'user_A', 'User A');
+  seedUser(sharedDb, 'user_B', 'User B');
+  seedUser(sharedDb, 'org_teacher_1', 'Org Teacher 1');
+  seedUser(sharedDb, 'org_admin_1', 'Org Admin 1');
+  seedUser(sharedDb, 'teacher_1', 'Teacher 1');
+  seedUser(sharedDb, 'teacher_sec', 'Teacher Sec');
+  seedUser(sharedDb, 'intruder', 'Intruder');
+  seedUser(sharedDb, 'user_david_1', 'David 1');
+  seedUser(sharedDb, 'user_david_2', 'David 2');
+  seedUser(sharedDb, 'user_alice', 'Alice');
+  seedUser(sharedDb, 'user_mallory', 'Mallory');
+  seedUser(sharedDb, 'user_probe', 'Probe User');
+  seedUser(sharedDb, 'exact_room_legit_participant', 'Exact Legit User');
+  seedUser(sharedDb, 'teacher_f1', 'Teacher F1');
+  seedUser(sharedDb, 'user_throttle_test', 'Throttle Test User');
 
   return { sharedDb, questionRepo, quizRepo, sessionRepo, bankService, quizService, sessionService, rateLimiter };
 }
@@ -102,6 +126,11 @@ async function seedPublishedSnapshot(
     displayName: 'Teacher ' + userId,
     role: 'teacher'
   });
+
+  sharedDb.prepare(`
+    INSERT OR IGNORE INTO users (id, email, display_name, created_at)
+    VALUES (?, ?, ?, ?)
+  `).run(userId, `${userId}@example.test`, 'Teacher ' + userId, new Date().toISOString());
 
   const q = await bankService.createQuestion({
     organizationId: orgId,
@@ -615,6 +644,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
 
     // ADV-NAT-01: 50 participants join behind the exact same church Wi-Fi NAT IP
     for (let i = 1; i <= 50; i++) {
+      seedUser(sharedDb, `student_${i}`, `Student ${i}`);
       const res = await sessionService.joinSession(
         session.id,
         {
@@ -706,6 +736,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     });
 
     for (let i = 1; i <= 3; i++) {
+      seedUser(sharedDb, `tiny_${i}`, `Tiny ${i}`);
       await sessionService.joinSession(tinySession.id, {
         userId: `tiny_${i}`,
         providerType: 'GOOGLE',
@@ -717,6 +748,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     }
 
     await assert.rejects(async () => {
+      seedUser(sharedDb, 'tiny_4', 'Tiny 4');
       await sessionService.joinSession(tinySession.id, {
         userId: 'tiny_4',
         providerType: 'GOOGLE',
@@ -785,6 +817,7 @@ test('BAREA-006 Share/Join: Adversarial, Multi-Tenant & Security Test Suite', as
     // 4. Church NAT: 50 participants can join through joinSessionAction from same NAT IP without IP seat quota
     setTrustedClientIpForTesting('203.0.113.88');
     for (let i = 1; i <= 50; i++) {
+      seedUser(sharedDb, `church_nat_member_${i}`, `Nat Member ${i}`);
       setAuthenticatedUserContext({
         userId: `church_nat_member_${i}`,
         providerType: 'GOOGLE',

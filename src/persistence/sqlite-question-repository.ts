@@ -19,7 +19,8 @@ export interface QuestionRepository {
   update(organizationId: string, id: string, updates: UpdateQuestionPayload): Promise<Question | null>;
   list(organizationId: string, filter?: QuestionFilter): Promise<Question[]>;
   transitionStatus(organizationId: string, id: string, targetStatus: QuestionStatus): Promise<Question | null>;
-  transaction<T>(action: () => T): T;
+  createPendingReviewBatch(payloads: readonly CreateQuestionPayload[]): Promise<Question[]>;
+  approveQuestionBatch(organizationId: string, questionIds: readonly string[]): Promise<void>;
   close(): void;
 }
 
@@ -77,7 +78,6 @@ export class SqliteQuestionRepository implements QuestionRepository {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS idx_questions_org ON questions (organization_id);
       CREATE INDEX IF NOT EXISTS idx_questions_org_status ON questions (organization_id, status);
       CREATE INDEX IF NOT EXISTS idx_questions_org_topic ON questions (organization_id, topic);
       CREATE INDEX IF NOT EXISTS idx_questions_org_diff ON questions (organization_id, difficulty);
@@ -292,6 +292,41 @@ export class SqliteQuestionRepository implements QuestionRepository {
 
   async transitionStatus(organizationId: string, id: string, targetStatus: QuestionStatus): Promise<Question | null> {
     return this._transitionStatusSync(organizationId, id, targetStatus);
+  }
+
+  async createPendingReviewBatch(payloads: readonly CreateQuestionPayload[]): Promise<Question[]> {
+    return this.transaction(() => {
+      const results: Question[] = [];
+      for (const payload of payloads) {
+        // Enforce creation as DRAFT first
+        const created = this._createSync({
+          ...payload,
+          status: QuestionStatus.DRAFT
+        });
+        // Atomic transition to PENDING_REVIEW
+        const staged = this._transitionStatusSync(
+          payload.organizationId,
+          created.id,
+          QuestionStatus.PENDING_REVIEW
+        );
+        if (!staged) {
+          throw new Error(`Failed to stage generated question ${created.id} to PENDING_REVIEW.`);
+        }
+        results.push(staged);
+      }
+      return results;
+    });
+  }
+
+  async approveQuestionBatch(organizationId: string, questionIds: readonly string[]): Promise<void> {
+    return this.transaction(() => {
+      for (const id of questionIds) {
+        const res = this._transitionStatusSync(organizationId, id, QuestionStatus.APPROVED);
+        if (!res) {
+          throw new Error(`Failed to transition question ${id} to APPROVED.`);
+        }
+      }
+    });
   }
 
   close(): void {

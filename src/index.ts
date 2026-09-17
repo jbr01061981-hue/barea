@@ -159,9 +159,25 @@ export {
 } from './service/live-quiz-service';
 
 export {
+  type Clock,
+  SystemClock
+} from './service/clock';
+
+export {
+  ResultSubjectType,
+  type SessionResult,
+  type FinalizeResultPayload
+} from './domain/session-result';
+
+export {
   type SubscriberRole,
   type RealtimeSubscriber,
   type RealtimeTransport,
   InMemoryRealtimeTransport,
   projectEventForRole
 } from './transport/realtime-transport';
+
+export {
+  SqliteAuthRepository,
+  type AuthRepository
+} from './persistence/sqlite-auth-repository';

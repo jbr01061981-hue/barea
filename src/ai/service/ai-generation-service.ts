@@ -82,41 +82,10 @@ export class AIGenerationService {
 
     // 6. True all-or-nothing atomic persistence boundary
     // Create each question through the QuestionBankService as DRAFT and transition to PENDING_REVIEW
-    // inside a single SQLite transaction. If any question fails to insert or transition,
-    // the transaction rolls back completely, ensuring zero questions remain persisted.
+    // inside an atomic domain batch. If any question fails to insert or transition,
+    // the operation rolls back completely, ensuring zero questions remain persisted.
     // (Preserving BAREA-002 invariant: questions can never be created directly as APPROVED)
-    const persistedQuestions: Question[] = this.questionBankService.transaction(() => {
-      const results: Question[] = [];
-      for (const payload of stagedPayloads) {
-        // Creates as DRAFT
-        const created = this.questionBankService.createQuestionSync({
-          organizationId: payload.organizationId,
-          stem: payload.stem,
-          type: payload.type,
-          options: payload.options,
-          correctOptionIndices: payload.correctOptionIndices,
-          explanation: payload.explanation,
-          scriptureReference: payload.scriptureReference,
-          topic: payload.topic,
-          difficulty: payload.difficulty,
-          language: payload.language
-        });
-
-        // Advance to PENDING_REVIEW
-        const staged = this.questionBankService.transitionStatusSync(
-          payload.organizationId,
-          created.id,
-          QuestionStatus.PENDING_REVIEW
-        );
-
-        if (!staged) {
-          throw new Error(`Failed to stage generated question ${created.id} to PENDING_REVIEW.`);
-        }
-
-        results.push(staged);
-      }
-      return results;
-    });
+    const persistedQuestions: Question[] = await this.questionBankService.createPendingReviewBatch(stagedPayloads);
 
     return {
       questions: persistedQuestions,

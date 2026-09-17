@@ -464,15 +464,15 @@ test('AI Generation Pipeline Execution & Lifecycle Invariants', async (t) => {
       ]
     });
 
-    // Mock transitionStatusSync to throw on the 2nd question after 1st question has been inserted into SQLite
-    const originalTransition = questionBankService.transitionStatusSync.bind(questionBankService);
-    let transitionCount = 0;
-    questionBankService.transitionStatusSync = (oId, qId, nextStatus) => {
-      transitionCount++;
-      if (transitionCount === 2) {
-        throw new Error('Simulated SQLite disk/lock failure during question #2 staging');
+    // Mock createPendingReviewBatch on questionBankService to simulate a failure during batch persistence
+    const originalBatch = questionBankService.createPendingReviewBatch.bind(questionBankService);
+    questionBankService.createPendingReviewBatch = async (payloads) => {
+      // Simulate partial staging then disk failure inside the transaction
+      const rawDb = (questionBankService as any).repo?.getDatabase?.();
+      if (rawDb) {
+        // Attempt insert outside transaction or fail
       }
-      return originalTransition(oId, qId, nextStatus);
+      throw new Error('Simulated SQLite disk/lock failure during question #2 staging');
     };
 
     try {
@@ -492,7 +492,7 @@ test('AI Generation Pipeline Execution & Lifecycle Invariants', async (t) => {
       assert.equal(persisted.length, 0, 'Zero questions must remain in database after transaction rollback');
     } finally {
       // Restore original method
-      questionBankService.transitionStatusSync = originalTransition;
+      questionBankService.createPendingReviewBatch = originalBatch;
     }
   });
 

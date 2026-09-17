@@ -158,18 +158,7 @@ export async function batchApproveQuestionsAction(
     const bankService = getQuestionBankService();
 
     // MUST be transactional: all or nothing
-    bankService.transaction(() => {
-      for (const id of questionIds) {
-        const res = bankService.transitionStatusSync(
-          context.organizationId,
-          id,
-          QuestionStatus.APPROVED
-        );
-        if (!res) {
-          throw new Error(`Failed to transition question ${id} to APPROVED.`);
-        }
-      }
-    });
+    await bankService.approveQuestionBatch(context.organizationId, questionIds);
 
     safeRevalidate('/teacher/review');
     return { success: true, data: { approvedCount: questionIds.length } };

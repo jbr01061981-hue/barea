@@ -33,7 +33,8 @@ import {
   SessionNotActiveError,
   InvalidQuestionChoiceError,
   ConcurrencyConflictError,
-  RateLimitExceededError
+  RateLimitExceededError,
+  type Clock
 } from '../src/index';
 
 import { NextRequest } from 'next/server';
@@ -64,6 +65,13 @@ import {
   submitGroupAnswerAction
 } from '../src/app/session/live-actions';
 
+function seedUser(sharedDb: DatabaseSync, id: string, name: string = id) {
+  sharedDb.prepare(`
+    INSERT OR IGNORE INTO users (id, email, display_name, created_at)
+    VALUES (?, ?, ?, ?)
+  `).run(id, `${id}@example.test`, name, new Date().toISOString());
+}
+
 function setupTestEnvironment(rateLimiterOptions?: { maxLiveMutationsPer5Seconds?: number }) {
   const sharedDb = new DatabaseSync(':memory:');
   const questionRepo = new SqliteQuestionRepository(sharedDb);
@@ -75,7 +83,11 @@ function setupTestEnvironment(rateLimiterOptions?: { maxLiveMutationsPer5Seconds
   const rateLimiter = new InMemoryRateLimiter(undefined, rateLimiterOptions);
   const sessionService = new SessionService(sessionRepo, rateLimiter);
   const realtimeTransport = new InMemoryRealtimeTransport();
-  const liveQuizService = new LiveQuizService(sessionRepo, rateLimiter, realtimeTransport);
+  const testClock: Clock = {
+    nowMs: () => sessionRepo.getCurrentTimeMs(),
+    nowIso: () => new Date(sessionRepo.getCurrentTimeMs()).toISOString()
+  };
+  const liveQuizService = new LiveQuizService(sessionRepo, rateLimiter, realtimeTransport, testClock);
 
   setSessionRepository(sessionRepo);
   setQuestionBankService(bankService);
@@ -84,6 +96,26 @@ function setupTestEnvironment(rateLimiterOptions?: { maxLiveMutationsPer5Seconds
   setRateLimiter(rateLimiter);
   setRealtimeTransport(realtimeTransport);
   setLiveQuizService(liveQuizService);
+
+  // Pre-seed participants and test users for foreign key satisfaction
+  seedUser(sharedDb, 'pupil_timer_1', 'Quick Pupil');
+  seedUser(sharedDb, 'pupil_late_2', 'Late Pupil');
+  seedUser(sharedDb, 'pupil_honest_1', 'Honest Pupil');
+  seedUser(sharedDb, 'pupil_recon_1', 'Travelling Pupil');
+  seedUser(sharedDb, 'user_action_pupil', 'Action Pupil');
+  seedUser(sharedDb, 'user_participant_1', 'Participant 1');
+  seedUser(sharedDb, 'user_intruder', 'Intruder');
+  seedUser(sharedDb, 'pupil_timing_1', 'Timing Pupil 1');
+  seedUser(sharedDb, 'user_replay_pupil', 'Replay Pupil');
+  seedUser(sharedDb, 'pupil_boundary_1', 'Boundary Pupil 1');
+  seedUser(sharedDb, 'pupil_act_1', 'Action Pupil');
+  seedUser(sharedDb, 'pupil_sse_1', 'SSE Pupil');
+  seedUser(sharedDb, 'teacher_intruder', 'Intruder Teacher');
+  seedUser(sharedDb, 'pupil_auth_1', 'Authoritative Pupil');
+  seedUser(sharedDb, 'pupil_replay_1', 'Replay Pupil');
+  seedUser(sharedDb, 'pupil_race_1', 'Race Pupil');
+  seedUser(sharedDb, 'pupil_race_2', 'Race Pupil 2');
+  seedUser(sharedDb, 'pupil_race_3', 'Race Pupil 3');
 
   return {
     sharedDb,
@@ -112,6 +144,14 @@ async function seedMultiQuestionQuiz(
     displayName: 'Teacher ' + userId,
     role: 'teacher'
   });
+
+  const db = (quizService as any).repo?.getDatabase?.();
+  if (db) {
+    db.prepare(`
+      INSERT OR IGNORE INTO users (id, email, display_name, created_at)
+      VALUES (?, ?, ?, ?)
+    `).run(userId, `${userId}@example.test`, 'Teacher ' + userId, new Date().toISOString());
+  }
 
   const questionIds: string[] = [];
   for (let i = 1; i <= questionCount; i++) {

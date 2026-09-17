@@ -55,10 +55,20 @@ The system exposes three distinct user experiences:
 - Executes structural validation to ensure response integrity before placing items into pending review.
 - Distinguishes structural system validation from human theological review: content is not approved until a teacher reviews and confirms biblical faithfulness.
 
-### 2.4 Data Persistence & Session State
-- Persistent storage for user accounts, question bank items, quizzes, and session history.
-- Live session state store managing active room memberships, connection mappings, and live timer ticks.
-- Specific database engines, ORMs, and caching technologies remain open decisions deferred to future milestones.
+### 2.4 Data Persistence & Relational Schema Freeze (ADR-014)
+- **Persistence Architecture**:
+  - Development / CI: Native SQLite via `node:sqlite` (pure Promise-based repository contracts).
+  - Production Relational Storage: Cloudflare D1 (serverless relational database).
+  - Production Real-Time Coordination: Cloudflare Durable Objects (authoritative state machine, timers, live tick loops).
+- **Decoupled Architecture Ports**:
+  - **Clock Port**: Injectable `Clock` (`nowMs()`, `nowIso()`) decoupling application timing from persistence layer.
+  - **Zero Transaction Leakage**: Public repository interfaces contain zero generic `transaction<T>()` callbacks; multi-statement workflows are exposed as domain-specific atomic repository methods (`createPendingReviewBatch`, `approveQuestionBatch`, `publishQuiz`, `finalizeSessionResults`).
+- **Relational Schema Freeze**:
+  - **17 Tables**: `users`, `federated_identities`, `user_sessions`, `oauth_transactions`, `organization_memberships`, `questions`, `quizzes`, `quiz_questions`, `published_quiz_snapshots`, `quiz_sessions`, `session_participants`, `session_groups`, `session_group_pupils`, `session_invitations`, `session_live_states`, `session_answers`, `session_results`.
+  - **16 Explicit Indexes**: 14 regular query-path indexes + 2 partial unique indexes (`uq_session_results_participant` and `uq_session_results_group`). Redundant index definitions are pruned.
+  - **7 Immutability & Tenant Triggers**: Snapshot update/delete prevention (`prevent_snapshot_update`, `prevent_snapshot_delete`), published quiz delete prevention (`prevent_published_quiz_delete`), tenant boundary enforcement (`trg_enforce_session_snapshot_tenant_insert`, `trg_prevent_session_tenant_mutation`), and session result immutability (`prevent_session_result_update`, `prevent_session_result_delete`).
+  - **0 Views**: Dynamic parameterized queries only.
+  - **Deterministic Ranking**: Finalized podium positions in `session_results` strictly resolved by `final_score DESC`, `correct_count DESC`, `final_answer_submitted_at ASC`, and `subject_id ASC`.
 
 ---
 

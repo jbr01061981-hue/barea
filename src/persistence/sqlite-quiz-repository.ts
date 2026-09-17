@@ -46,7 +46,6 @@ export interface QuizRepository {
   publishQuiz(organizationId: string, quizId: string, publishedByUserId: string): Promise<PublishedQuizSnapshot>;
   getPublishedSnapshot(organizationId: string, quizId: string): Promise<PublishedQuizSnapshot | null>;
 
-  transaction<T>(action: () => T): T;
   close(): void;
 }
 
@@ -135,6 +134,15 @@ export class SqliteQuizRepository implements QuizRepository {
   init(): void {
     this.db.exec('PRAGMA foreign_keys = ON;');
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE,
+        email_verified INTEGER NOT NULL DEFAULT 0 CHECK(email_verified IN (0, 1)),
+        password_hash TEXT,
+        display_name TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS quizzes (
         id TEXT PRIMARY KEY,
         organization_id TEXT NOT NULL,
@@ -148,7 +156,6 @@ export class SqliteQuizRepository implements QuizRepository {
         updated_at TEXT NOT NULL
       );
 
-      CREATE INDEX IF NOT EXISTS idx_quizzes_org ON quizzes (organization_id);
       CREATE INDEX IF NOT EXISTS idx_quizzes_org_status ON quizzes (organization_id, status);
 
       CREATE TABLE IF NOT EXISTS quiz_questions (
@@ -160,7 +167,7 @@ export class SqliteQuizRepository implements QuizRepository {
         UNIQUE (quiz_id, sort_order)
       );
 
-      CREATE INDEX IF NOT EXISTS idx_quiz_questions_quiz ON quiz_questions (quiz_id);
+      CREATE INDEX IF NOT EXISTS idx_quiz_questions_quiz ON quiz_questions (quiz_id, sort_order);
 
       CREATE TABLE IF NOT EXISTS published_quiz_snapshots (
         id TEXT PRIMARY KEY,
@@ -174,11 +181,10 @@ export class SqliteQuizRepository implements QuizRepository {
         version_number INTEGER NOT NULL DEFAULT 1 CHECK(version_number >= 1),
         snapshot_json TEXT NOT NULL,
         published_at TEXT NOT NULL,
-        published_by_user_id TEXT NOT NULL,
+        published_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
         UNIQUE (quiz_id, version_number)
       );
 
-      CREATE INDEX IF NOT EXISTS idx_snapshots_quiz ON published_quiz_snapshots (quiz_id);
       CREATE INDEX IF NOT EXISTS idx_snapshots_org ON published_quiz_snapshots (organization_id);
 
       -- Trigger: Immutability on UPDATE

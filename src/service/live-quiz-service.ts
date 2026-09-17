@@ -35,6 +35,7 @@ import {
 import type { SessionRepository } from '../persistence/sqlite-session-repository';
 import type { RateLimiter } from './rate-limiter';
 import type { RealtimeTransport } from '../transport/realtime-transport';
+import { type Clock, SystemClock } from './clock';
 
 export interface SubmitParticipantAnswerInput {
   readonly sessionId: string;
@@ -56,15 +57,18 @@ export class LiveQuizService {
   private repo: SessionRepository;
   private rateLimiter?: RateLimiter;
   private transport?: RealtimeTransport;
+  private clock: Clock;
 
   constructor(
     repo: SessionRepository,
     rateLimiter?: RateLimiter,
-    transport?: RealtimeTransport
+    transport?: RealtimeTransport,
+    clock?: Clock
   ) {
     this.repo = repo;
     this.rateLimiter = rateLimiter;
     this.transport = transport;
+    this.clock = clock ?? new SystemClock();
   }
 
   async startLiveQuiz(sessionId: string, hostUserId: string): Promise<{ session: QuizSession; liveState: LiveSessionState }> {
@@ -295,9 +299,7 @@ export class LiveQuizService {
     if (!liveState.answerDeadlineAt) {
       throw new InvalidLiveStateTransitionError('No active answer deadline configured for current question.');
     }
-    const nowServerMs = typeof (this.repo as any).getCurrentTimeMs === 'function'
-      ? (this.repo as any).getCurrentTimeMs()
-      : Date.now();
+    const nowServerMs = this.clock.nowMs();
     const deadlineMs = new Date(liveState.answerDeadlineAt).getTime();
     if (nowServerMs > deadlineMs) {
       throw new AnswerDeadlineExpiredError();
@@ -382,9 +384,7 @@ export class LiveQuizService {
     if (!liveState.answerDeadlineAt) {
       throw new InvalidLiveStateTransitionError('No active answer deadline configured for current question.');
     }
-    const nowServerMs = typeof (this.repo as any).getCurrentTimeMs === 'function'
-      ? (this.repo as any).getCurrentTimeMs()
-      : Date.now();
+    const nowServerMs = this.clock.nowMs();
     const deadlineMs = new Date(liveState.answerDeadlineAt).getTime();
     if (nowServerMs > deadlineMs) {
       throw new AnswerDeadlineExpiredError();

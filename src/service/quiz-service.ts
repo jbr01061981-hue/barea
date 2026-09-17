@@ -78,8 +78,4 @@ export class QuizService {
   async getPublishedSnapshot(organizationId: string, quizId: string): Promise<PublishedQuizSnapshot | null> {
     return this.repo.getPublishedSnapshot(organizationId, quizId);
   }
-
-  transaction<T>(action: () => T): T {
-    return this.repo.transaction(action);
-  }
 }

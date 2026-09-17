@@ -158,7 +158,6 @@ export class SqliteAuthRepository implements AuthRepository {
       CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
       CREATE INDEX IF NOT EXISTS idx_org_memberships_user ON organization_memberships(user_id);
       CREATE INDEX IF NOT EXISTS idx_oauth_transactions_expires_at ON oauth_transactions(expires_at);
-      CREATE INDEX IF NOT EXISTS idx_oauth_transactions_state_hash ON oauth_transactions(state_hash);
     `);
 
     // Migration helper for existing databases: ensure auth_provider and provider_sub exist

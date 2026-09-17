@@ -18,6 +18,8 @@ This document tracks architectural principles, established decisions, and open t
 - [ADR-010: BAREA Frontend Application Stack](#adr-010-barea-frontend-application-stack)
 - [ADR-011: BAREA Design System and UI Component Strategy](#adr-011-barea-design-system-and-ui-component-strategy)
 - [ADR-012: Edge Reverse Proxy and Origin Ingress Trust Boundary](#adr-012-edge-reverse-proxy-and-origin-ingress-trust-boundary)
+- [ADR-013: Authoritative Live Quiz State Machine, Timing & Real-Time Transport (BAREA-007)](#adr-013-authoritative-live-quiz-state-machine-timing--real-time-transport-barea-007)
+- [ADR-014: Relational Database Architecture Freeze, Clock Port & Durable Storage Boundaries](#adr-014-relational-database-architecture-freeze-clock-port--durable-storage-boundaries)
 - [Open Technical Decisions](#open-technical-decisions)
 
 ---
@@ -428,11 +430,42 @@ In accordance with BAREA architectural constraints (church-scale usage, cost, op
 
 ---
 
+## ADR-014: Relational Database Architecture Freeze, Clock Port & Durable Storage Boundaries
+
+- **Status**: **ACCEPTED**
+- **Date**: 2026-09-18
+- **Context**: As part of the Phase 2 stabilization on `barea-002b-database-freeze`, BAREA established a finalized relational schema covering identity, question bank, quiz authoring, live quiz orchestration, and finalized podium results. To ensure zero client lock-in and seamless future deployment across local SQLite (`node:sqlite`) and Cloudflare D1/Durable Objects, generic transaction primitives (`transaction<T>()`) must be eliminated from public repository contracts, system time dependencies must be decoupled via an injectable Clock port, and finalized results must be immutably recorded with deterministic ranking.
+- **Decision**:
+  1. **Public Repository Contract Boundaries**:
+     - Generic transaction primitives (`transaction<T>()`) are eliminated from all public repository interfaces (`QuestionRepository`, `QuizRepository`, `SessionRepository`, `AuthRepository`).
+     - Multi-statement transactional workflows are encapsulated into domain-specific atomic repository methods:
+       - `QuestionRepository.createPendingReviewBatch()`
+       - `QuestionRepository.approveQuestionBatch()`
+       - `QuizRepository.publishQuiz()`
+       - `SessionRepository.finalizeSessionResults()`
+     - Concrete repository implementations execute these atomically using internal database transactions (`BEGIN IMMEDIATE` in SQLite, atomic batch in Cloudflare D1).
+  2. **Injectable Clock Port**:
+     - `getCurrentTimeMs()` is removed from public repository contracts.
+     - A dedicated `Clock` port (`nowMs(): number`, `nowIso(): string`) with default `SystemClock` is established in `src/service/clock.ts` and injected into services (`LiveQuizService`, `SqliteSessionRepository`).
+  3. **Schema Specification & Freeze**:
+     - Exactly 17 relational tables, 16 explicit indexes (14 regular + 2 partial unique), 7 triggers, and 0 views.
+     - New `session_results` table stores immutable finalized results with partial unique indexes `uq_session_results_participant` and `uq_session_results_group`.
+     - Deterministic podium ranking rule: `final_score DESC`, `correct_count DESC`, `final_answer_submitted_at ASC`, `subject_id ASC`.
+     - Immutability triggers `prevent_session_result_update` and `prevent_session_result_delete` abort any direct modification to finalized scores.
+     - Check constraint `chk_answer_subject_validity` on `session_answers` prevents orphan answer records (strictly enforces either individual or group identity).
+  4. **Target Runtime Boundaries**:
+     - **Local / CI**: In-memory and file-based SQLite via `node:sqlite`.
+     - **Production Edge (Cloudflare)**:
+       - Cloudflare D1: Relational storage for users, question bank, quizzes, snapshots, participants, answers, and immutable session results.
+       - Cloudflare Durable Objects: Authoritative real-time state machine for active session ticks, countdown timers, and live SSE/WebSocket broadcast. `session_live_states` acts as the persistent recovery checkpoint updated only on major stage transitions.
+
+---
+
 ## Open Technical Decisions
 
 The following technical selections remain intentionally deferred:
 
-1. **Database & Data Layer for Distributed Environments**: Relational database engine, schema management, and live session state storage for multi-server deployment.
+1. **Database & Data Layer for Distributed Environments**: **RESOLVED — ADR-014 Relational Database Architecture Freeze (Cloudflare D1 + Durable Objects edge architecture)**.
 2. **HTTP/API Contract**: Specific API style and validation/transport implementation.
 3. **Authentication/Authorization**: Teacher/host authentication implementation and authorization model.
 4. **Deployment/Hosting Target**: **RESOLVED — CLOUDFLARE EDGE + CLOUDFLARE TUNNEL (`cloudflared`)** (ADR-012). Physical provisioning in progress.

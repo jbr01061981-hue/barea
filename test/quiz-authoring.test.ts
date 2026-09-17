@@ -110,6 +110,16 @@ test('BAREA-005: Quiz Domain, Authoring, Snapshot Immutability & Adversarial Tes
       displayName: 'Teacher Alpha',
       role: 'teacher'
     });
+
+    db.prepare(`
+      INSERT OR IGNORE INTO users (id, email, display_name, created_at)
+      VALUES (?, ?, ?, ?)
+    `).run('teacher-primary-1', 'teacher-primary-1@example.test', 'Teacher Alpha', new Date().toISOString());
+
+    db.prepare(`
+      INSERT OR IGNORE INTO users (id, email, display_name, created_at)
+      VALUES (?, ?, ?, ?)
+    `).run('teacher-1', 'teacher-1@example.test', 'Teacher One', new Date().toISOString());
   });
 
   t.afterEach(() => {
