@@ -4,28 +4,38 @@ This roadmap reconciles the core product phases with the implementation mileston
 
 ## Current Development Status
 
-**Main branch baseline: PR #22 merged on 2026-09-16.**
+**Main branch baseline: PR #23 merged on 2026-09-17.**
 
-Merge commit: `345f72d0f86de61373a6ed080a42372492ab017b`
+Merge commit: `935e5a767bf11b796e628e5e674739f51467734c`
 
-PR #22 (`fix(auth): harden logout history restoration`) completed and merged the logout/browser-history/bfcache hardening milestone. The implementation protects authenticated BAREA surfaces against stale browser history restoration after logout while preserving server-authoritative session enforcement.
+PR #23 (`BAREA-002A — Async Repository Contract Modernization`) completed the repository contract modernization milestone and was merged into `main` with a standard merge commit. The approved final correction removed the public `AuthRepository.transaction<T>(...)` escape hatch while retaining transaction mechanics privately inside `SqliteAuthRepository` for atomic federated provisioning.
 
-Verified PR #22 final state:
+Verified PR #23 final state:
 - `npm test` — **263 passing / 0 failing**
 - `npm run typecheck` — **PASS**
+- `npx tsc -p tsconfig.test.json` — **PASS**
 - `npm run build:next` — **PASS**
 - `git diff --check` — **CLEAN**
-- PR #22 merged with a standard merge commit; no squash/rebase.
+- PR #23 merged with a standard merge commit; no squash/rebase.
 
-PR #22 scope was independently cleaned before merge. Only the intended eight files entered `main`:
-- `next.config.js`
-- `src/app/api/auth/session/route.ts`
-- `src/app/history-bfcache-guard.tsx`
-- `src/app/home/page.tsx`
-- `src/app/login/actions.ts`
-- `src/app/site-nav.tsx`
-- `src/app/teacher/layout.tsx`
-- `test/auth.test.ts`
+### BAREA-002A — Async Repository Contract Modernization — COMPLETE
+
+Established capabilities:
+- Four repository contracts were modernized to Promise-based public data-access methods.
+- SQLite adapters were modernized while retaining synchronous `node:sqlite` transaction internals appropriate to the current MVP persistence architecture.
+- Calling services, route handlers, server actions, and server components were updated to await asynchronous repository operations.
+- SQLite schema and database behavior were preserved unchanged.
+- Federated user/session provisioning remains atomic and transactionally encapsulated inside `SqliteAuthRepository`.
+- The public `AuthRepository.transaction<T>(...)` transaction seam was removed.
+- `AuthService` no longer bypasses its repository abstraction through SQLite private implementation details.
+- Existing authentication, authorization, tenant-isolation, replay-protection, session, and timing-sensitive security invariants were preserved.
+- 263 unit/integration tests pass, with typecheck, test typecheck, production build, and diff-check all passing after merge.
+
+**MVP scope decision:** generic synchronous transaction seams and `*Sync` service escape hatches that remain in the Question/Quiz/AI areas are intentionally accepted for the current MVP. They are not part of a new refactoring task. Re-evaluate them when the persistence architecture moves beyond the current local `node:sqlite` implementation toward D1/distributed persistence.
+
+## Previous Authentication Milestones
+
+PR #22 (`fix(auth): harden logout history restoration`) completed the logout/browser-history/bfcache hardening milestone before PR #23. Its implementation protects authenticated BAREA surfaces against stale browser history restoration after logout while preserving server-authoritative session enforcement.
 
 The PR #22 merge did **not** introduce the LAN OAuth development-origin changes from PR #21. Those remain isolated in PR #21 / `barea-dev-lan-origin` until separately merged and verified.
 
@@ -82,7 +92,7 @@ Established capabilities:
 - Create & Host remains server-authorized; the UI lock is not a security boundary.
 - Host cannot participate in their own real live session as a normal participant.
 
-The authentication/home milestone was implemented in PR #20 and merged to `main` as commit `298eccbabc7090531c9c31c2bc94c79592d11edb`. PR #22 subsequently added and verified logout/history/bfcache hardening and is now merged as `345f72d0f86de61373a6ed080a42372492ab017b`.
+The authentication/home milestone was implemented in PR #20 and merged to `main` as commit `298eccbabc7090531c9c31c2bc94c79592d11edb`. PR #22 subsequently added and verified logout/history/bfcache hardening and was merged as `345f72d0f86de61373a6ed080a42372492ab017b`. PR #23 subsequently completed the repository contract modernization and is now the current `main` baseline.
 
 ## Phase 2 — Share, Join & Live Quiz
 
