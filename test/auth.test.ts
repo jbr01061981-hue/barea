@@ -510,13 +510,51 @@ test('BAREA Authentication Architecture & Comprehensive Security Test Suite', as
   });
 
   await t.test('15b. TRUST BOUNDARY: caller cannot bypass token verification or mint session with arbitrary claims', async () => {
-    // 1. provisionGoogleUserSession is not exposed as a public method on AuthService
-    // (TypeScript enforces this at compile time; runtime check confirms method is not publicly intended)
+    // 1. AuthService exposes no backdoor session-minting or provisioning bypass methods
     assert.strictEqual(
-      typeof (authService as any).provisionGoogleUserSession,
-      'function', // JS runtime has the function, but TS compiler rejects external access
-      'Private method exists internally'
+      (authService as any).provisionGoogleUserSession,
+      undefined,
+      'Internal bypass provisionGoogleUserSession must not exist on AuthService'
     );
+    assert.strictEqual(
+      (authService as any).provisionFederatedUserSession,
+      undefined,
+      'AuthService must not expose provisionFederatedUserSession directly'
+    );
+
+    // 1b. REPOSITORY ABSTRACTION (Point 10.F): AuthService functions against a pure typed AuthRepository mock without any SQLite details or `as any`
+    const pureMockRepo: AuthRepository = {
+      createUser: async () => { throw new Error('Not implemented'); },
+      findUserById: async () => null,
+      findUserByEmail: async () => null,
+      findFederatedIdentity: async () => null,
+      createFederatedIdentity: async () => { throw new Error('Not implemented'); },
+      createSession: async () => { throw new Error('Not implemented'); },
+      findSessionByToken: async () => null,
+      deleteSession: async () => {},
+      deleteUserSessions: async () => {},
+      provisionFederatedUserSession: async () => ({
+        user: { id: 'mock-user', email: 'mock@test.com', emailVerified: true, displayName: 'Mock', createdAt: new Date().toISOString() },
+        rawToken: 'mock-token'
+      }),
+      addOrganizationMembership: async () => {},
+      getOrganizationMemberships: async () => [],
+      createOAuthTransaction: async () => ({
+        id: 'tx-1', stateHash: 'sh', codeVerifier: 'cv', nonceHash: 'nh', returnTo: '/', createdAt: new Date().toISOString(), expiresAt: new Date().toISOString(), consumedAt: null
+      }),
+      findOAuthTransaction: async () => null,
+      consumeOAuthTransaction: async () => true,
+      pruneExpiredOAuthTransactions: async () => 0,
+      transaction: <T>(fn: () => T) => fn(),
+      close: () => {}
+    };
+    const mockService = new AuthService(pureMockRepo, {
+      googleClientId: CLIENT_ID,
+      googleClientSecret: CLIENT_SECRET,
+      googleRedirectUri: REDIRECT_URI,
+      jwksResolver: localJwksResolver
+    });
+    assert.ok(mockService, 'AuthService successfully instantiated with pure AuthRepository interface');
 
     // 2. Caller attempting to fabricate claims directly cannot mint a session without cryptographic ID token verification
     // Passing fabricated claims into handleGoogleCallback is impossible since handleGoogleCallback only accepts

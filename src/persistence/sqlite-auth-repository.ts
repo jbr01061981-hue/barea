@@ -9,6 +9,26 @@ import type {
   OAuthTransaction
 } from '../domain/auth';
 
+import {
+  AccountNotFoundError,
+  OAuthTransactionReplayedError,
+  AccountCollisionDetectedError
+} from '../domain/domain-errors';
+
+export interface ProvisionFederatedUserSessionPayload {
+  readonly transactionId?: string;
+  readonly providerType: string;
+  readonly providerSub: string;
+  readonly email: string | null;
+  readonly emailVerified: boolean;
+  readonly displayName: string;
+}
+
+export interface ProvisionFederatedUserSessionResult {
+  readonly user: User;
+  readonly rawToken: string;
+}
+
 export interface AuthRepository {
   // Users (Public Safe Domain Model)
   createUser(data: {
@@ -40,6 +60,11 @@ export interface AuthRepository {
   findSessionByToken(rawToken: string): Promise<AuthenticatedSessionContext | null>;
   deleteSession(rawToken: string): Promise<void>;
   deleteUserSessions(userId: string): Promise<void>;
+
+  // Atomic Federated User Session Provisioning
+  provisionFederatedUserSession(
+    payload: ProvisionFederatedUserSessionPayload
+  ): Promise<ProvisionFederatedUserSessionResult>;
 
   // Organization Memberships
   addOrganizationMembership(organizationId: string, userId: string, role: 'teacher' | 'admin'): Promise<void>;
@@ -418,6 +443,66 @@ export class SqliteAuthRepository implements AuthRepository {
     this.db.prepare(`
       DELETE FROM user_sessions WHERE user_id = ?
     `).run(userId);
+  }
+
+  async provisionFederatedUserSession(
+    payload: ProvisionFederatedUserSessionPayload
+  ): Promise<ProvisionFederatedUserSessionResult> {
+    return this.transaction(() => {
+      // Step 1: Atomically consume OAuth transaction if transactionId provided (single-use invariant)
+      if (payload.transactionId) {
+        const consumed = this._consumeOAuthTransactionSync(payload.transactionId);
+        if (!consumed) {
+          throw new OAuthTransactionReplayedError('OAuth transaction has already been consumed and cannot be replayed.');
+        }
+      }
+
+      let resolvedUser: User;
+
+      // Step 2: Identity resolution (Rule: provider + providerSub is authoritative)
+      const existingFederated = this._findFederatedIdentitySync(payload.providerType, payload.providerSub);
+      if (existingFederated) {
+        const foundUser = this._findUserByIdSync(existingFederated.userId);
+        if (!foundUser) {
+          throw new AccountNotFoundError('User bound to Google account not found.');
+        }
+        resolvedUser = foundUser;
+      } else {
+        // Step 3: Anti-account-hijacking collision check (Rule: Prohibit silent automatic linking to existing email)
+        if (payload.email) {
+          const existingUserByEmail = this._findUserByEmailSync(payload.email);
+          if (existingUserByEmail) {
+            throw new AccountCollisionDetectedError(
+              'An account with this email address is already registered to a different login provider or identity.'
+            );
+          }
+        }
+
+        // Step 4: Create new user
+        const newUser = this._createUserSync({
+          email: payload.email,
+          emailVerified: payload.emailVerified,
+          displayName: payload.displayName
+        });
+
+        // Step 5: Create new federated identity bound to new user
+        this._createFederatedIdentitySync({
+          userId: newUser.id,
+          providerType: payload.providerType,
+          providerSub: payload.providerSub
+        });
+
+        resolvedUser = newUser;
+      }
+
+      // Step 6: Create fresh session
+      const { rawToken } = this.createSessionSync(resolvedUser.id, {
+        authProvider: payload.providerType,
+        providerSub: payload.providerSub
+      });
+
+      return { user: resolvedUser, rawToken };
+    });
   }
 
   async addOrganizationMembership(organizationId: string, userId: string, role: 'teacher' | 'admin'): Promise<void> {

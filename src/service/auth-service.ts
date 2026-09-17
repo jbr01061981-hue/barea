@@ -3,7 +3,6 @@ import type { AuthRepository } from '../persistence/sqlite-auth-repository';
 import type { User, AuthenticatedSessionContext } from '../domain/auth';
 import type { RateLimiter } from './rate-limiter';
 import {
-  AccountNotFoundError,
   OAuthStateError,
   OAuthCallbackError,
   OAuthTransactionNotFoundError,
@@ -231,139 +230,6 @@ export class AuthService {
     };
   }
 
-  /**
-   * Fallback for tests operating without stored transaction:
-   * Performs strict non-linking identity resolution (rejecting email collisions)
-   * and creates a fresh server session in an atomic SQLite transaction.
-   */
-  private provisionGoogleUserSession(verified: VerifiedGoogleClaims): { user: User; rawToken: string } {
-    const displayName = verified.name || (verified.email ? verified.email.split('@')[0] : 'Participant');
-
-    return this.repo.transaction(() => {
-      const syncRepo = this.repo as any;
-      let resolvedUser: User;
-
-      const existingFederated = syncRepo._findFederatedIdentitySync('GOOGLE', verified.sub);
-      if (existingFederated) {
-        const foundUser = syncRepo._findUserByIdSync(existingFederated.userId);
-        if (!foundUser) {
-          throw new AccountNotFoundError('User bound to Google account not found.');
-        }
-        resolvedUser = foundUser;
-      } else {
-        if (verified.email) {
-          const existingUserByEmail = syncRepo._findUserByEmailSync(verified.email);
-          if (existingUserByEmail) {
-            throw new AccountCollisionDetectedError(
-              'An account with this email address is already registered to a different login provider or identity.'
-            );
-          }
-        }
-
-        const newUser = syncRepo._createUserSync({
-          email: verified.email,
-          emailVerified: verified.emailVerified,
-          displayName
-        });
-
-        syncRepo._createFederatedIdentitySync({
-          userId: newUser.id,
-          providerType: 'GOOGLE',
-          providerSub: verified.sub
-        });
-
-        resolvedUser = newUser;
-      }
-
-      const sessionFn = typeof syncRepo.createSessionSync === 'function'
-        ? syncRepo.createSessionSync.bind(syncRepo)
-        : syncRepo._createSessionSync.bind(syncRepo);
-      const { rawToken } = sessionFn(resolvedUser.id, {
-        authProvider: 'GOOGLE',
-        providerSub: verified.sub
-      });
-
-      return { user: resolvedUser, rawToken };
-    });
-  }
-
-  /**
-   * Atomically consumes the OAuth transaction, verifies Google claims,
-   * performs strict non-linking identity resolution (rejecting email collisions),
-   * and creates a fresh server session in one atomic SQLite transaction.
-   */
-  private consumeTransactionAndProvisionUser(
-    transactionId: string,
-    verified: VerifiedGoogleClaims
-  ): { user: User; rawToken: string } {
-    const displayName = verified.name || (verified.email ? verified.email.split('@')[0] : 'Participant');
-
-    return this.repo.transaction(() => {
-      const syncRepo = this.repo as any;
-
-      // Step A: Atomically consume OAuth transaction (single-use invariant)
-      const consumed = syncRepo._consumeOAuthTransactionSync(transactionId);
-      if (!consumed) {
-        throw new OAuthTransactionReplayedError('OAuth transaction has already been consumed and cannot be replayed.');
-      }
-
-      let resolvedUser: User;
-
-      // Step B: Identity resolution (Rule: provider + Google sub is authoritative)
-      const existingFederated = syncRepo._findFederatedIdentitySync('GOOGLE', verified.sub);
-      if (existingFederated) {
-        const foundUser = syncRepo._findUserByIdSync(existingFederated.userId);
-        if (!foundUser) {
-          throw new AccountNotFoundError('User bound to Google account not found.');
-        }
-        resolvedUser = foundUser;
-      } else {
-        // New Google subject: Check if verified email exists in users table
-        if (verified.email) {
-          const existingUserByEmail = syncRepo._findUserByEmailSync(verified.email);
-          if (existingUserByEmail) {
-            // STRICT ANTI-HIJACKING INVARIANT: Prohibit silent automatic account linking
-            // Do NOT link new Google sub to existing account. Fail closed with collision error.
-            throw new AccountCollisionDetectedError(
-              'An account with this email address is already registered to a different login provider or identity.'
-            );
-          }
-        }
-
-        // New user + new federated identity
-        const newUser = syncRepo._createUserSync({
-          email: verified.email,
-          emailVerified: verified.emailVerified,
-          displayName
-        });
-
-        syncRepo._createFederatedIdentitySync({
-          userId: newUser.id,
-          providerType: 'GOOGLE',
-          providerSub: verified.sub
-        });
-
-        resolvedUser = newUser;
-      }
-
-      // Step C: Fresh BAREA session creation (atomic with consumption & provisioning)
-      const sessionFn = typeof syncRepo.createSessionSync === 'function'
-        ? syncRepo.createSessionSync.bind(syncRepo)
-        : syncRepo._createSessionSync.bind(syncRepo);
-      const { rawToken } = sessionFn(resolvedUser.id, {
-        authProvider: 'GOOGLE',
-        providerSub: verified.sub
-      });
-
-      return { user: resolvedUser, rawToken };
-    });
-  }
-
-  /**
-   * Exchanges Google auth code for tokens, cryptographically verifies ID token,
-   * validates state, PKCE, and nonce against server-stored OAuthTransaction,
-   * and atomically consumes transaction + provisions identity + creates session.
-   */
   async handleGoogleCallback(input: {
     code: string;
     receivedState: string;
@@ -513,15 +379,18 @@ export class AuthService {
 
     const verified = await this.verifyGoogleIdToken(idToken, effectiveNonce, clientId);
 
-    // Step 11-16: Atomic SQLite commit phase (consumption + identity provisioning + session creation)
-    if (transaction) {
-      const { user, rawToken } = this.consumeTransactionAndProvisionUser(transaction.id, verified);
-      return { user, rawToken, returnTo };
-    } else {
-      // Fallback for tests operating without stored transaction
-      const { user, rawToken } = this.provisionGoogleUserSession(verified);
-      return { user, rawToken, returnTo };
-    }
+    // Step 11-16: Atomic repository-level provisioning phase (consumption + identity provisioning + session creation)
+    const displayName = verified.name || (verified.email ? verified.email.split('@')[0] : 'Participant');
+    const { user, rawToken } = await this.repo.provisionFederatedUserSession({
+      transactionId: transaction?.id,
+      providerType: 'GOOGLE',
+      providerSub: verified.sub,
+      email: verified.email,
+      emailVerified: verified.emailVerified,
+      displayName
+    });
+
+    return { user, rawToken, returnTo };
   }
 
   /**
