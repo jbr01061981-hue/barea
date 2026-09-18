@@ -191,6 +191,12 @@ Target experience:
 
 BAREA-009 must not invent authentication, authorization, tenant, quiz, or live-session behavior. It must consume existing server contracts and fail closed when authorization is unavailable.
 
+### BAREA-010 — Quiz Builder
+
+**Status: NEXT FRONTEND MILESTONE**
+
+Next implementation target is the teacher-facing quiz builder/question authoring experience, consuming the existing quiz and approved-question contracts without inventing new authorization or persistence boundaries.
+
 ## Phase 3 — Results & Leaderboard
 
 **Status: PLANNED**
@@ -238,7 +244,7 @@ Existing BAREA-008/008A homepage work is foundation, not a declaration that the 
 
 ## Infrastructure Validation — Cloudflare HTTPS
 
-**Status: DEFERRED — DOMAIN REQUIRED**
+**Status: NEXT — DEPLOYMENT VALIDATION FOR `growinfaith.app`**
 
 The intended architecture remains:
 
