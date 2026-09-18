@@ -79,9 +79,9 @@ Every implementation decision must respect these foundational pillars:
 
 ## 4. Current Milestone Scope
 
-Refer to [docs/ROADMAP.md](./docs/ROADMAP.md) for the active milestone:
-- **Active**: BAREA-004 Teacher Review/Approval.
-- **Purpose**: Build the teacher review/approval capability for AI-generated PENDING_REVIEW questions, within the approved architectural boundaries.
-- **Frontend reference**: `docs/FRONTEND-STANDARD.md` and ADR-010/ADR-011.
-- **Verification reference**: `docs/VERIFICATION-GATES.md`.
-- **Constraint**: Do not start BAREA-005 or later functionality unless the roadmap explicitly advances to it.
+Refer to [docs/ROADMAP.md](./docs/ROADMAP.md) for current milestone status and sequencing:
+- **Completed / Merged**: BAREA-009 Teacher Workspace / Quiz Library redesign (merged via PR #26).
+- **Next Product Milestone**: **BAREA-010 Quiz Builder** (teacher-facing quiz builder and question authoring experience, consuming existing quiz and approved-question contracts without inventing new authorization or persistence boundaries).
+- **Infrastructure / Platform Sequencing**: Cloudflare Gates 0–8 represent a dedicated infrastructure/deployment migration sequence (Gate 0 Documentation Reconciliation through Gate 8 Durable Object live-room foundation) and must not be confused with product milestone authorization.
+- **Milestone Discipline**: Do not begin implementation of BAREA-010, subsequent product milestones, or Cloudflare Gate 1 until formally initiated. Future product milestones remain unauthorized until the roadmap explicitly advances to them.
+- **Frontend & Verification Reference**: Follow `docs/FRONTEND-STANDARD.md`, ADR-010/ADR-011, and `docs/VERIFICATION-GATES.md`. Existing architectural, security, and tenant invariants remain strictly enforced.

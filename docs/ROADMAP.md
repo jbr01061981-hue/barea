@@ -255,31 +255,71 @@ Existing BAREA-008/008A homepage work is foundation, not a declaration that the 
 - Fix the highest-value problems.
 - Re-test with the church.
 
-## Infrastructure Validation — Cloudflare Production Path
+## Infrastructure & Cloudflare Deployment Sequencing
 
-**Status: NEXT — DEPLOYMENT VALIDATION FOR `growinfaith.app`**
+**Status: IN PROGRESS — GATE 0: DOCUMENTATION RECONCILIATION**
 
-The intended architecture remains:
+### Current Implementation State vs. Accepted Production Target
+
+1. **Current Implementation State**: Pre-migration codebase on `main` (local development and CI run on Node.js with native SQLite via `node:sqlite`). No Cloudflare resources (Workers, D1, Durable Objects) or DNS records have been deployed yet.
+2. **Accepted Production Architecture**:
+   ```text
+                       growinfaith.app
+                             │
+                             ▼
+                      Cloudflare Edge
+                             │
+                             ▼
+                     Cloudflare Worker
+                        │           │
+                        ▼           ▼
+                     D1 DB     Durable Objects
+                                   │
+                              Live Quiz Rooms
+
+                    Future large media
+                             │
+                             ▼
+                        Cloudflare R2
+   ```
+3. **Environment Strategy**:
+   - **Local**: Worker-compatible runtime + Wrangler + Local D1
+   - **Preview**: Cloudflare Worker + Preview D1
+   - **Production**: Cloudflare Worker + Production D1 + Durable Objects (Custom domain: `growinfaith.app`)
+4. **Historical / Superseded Context (Preserved for Reference)**:
+   - Earlier design iterations (e.g. ADR-012) evaluated and selected a private Node.js origin fronted by a Cloudflare Tunnel (`cloudflared`). That topology (`Cloudflare Edge → Cloudflare Tunnel → private Node.js Next.js origin`) has been **formally superseded** for production deployment by the serverless Cloudflare-native architecture above (ADR-015).
+   - The existing legacy service `berea-api-production.jbr01061981.workers.dev` remains separate and completely untouched.
+   - Direct `node:sqlite` / `barea.db`, VPS hosting, Windows PC production hosting, and private Node origins are explicitly not the production architecture.
+
+### Deployment & Migration Gates
 
 ```text
-PUBLIC INTERNET (HTTPS)
-        ↓
-CLOUDFLARE EDGE
-        ↓
-CLOUDFLARE TUNNEL
-        ↓
-PRIVATE BAREA ORIGIN
-        ↓
-Next.js App Router :3000
+Gate 0: Documentation reconciliation (CURRENT)
+        │
+        ▼
+Gate 1: Cloudflare runtime / Next.js compatibility + local Worker foundation
+        │
+        ▼
+Gate 2: D1 migration system
+        │
+        ▼
+Gate 3: D1 repository migration
+        │
+        ▼
+Gate 4: Local Wrangler + D1 verification
+        │
+        ▼
+Gate 5: Authentication/session verification on D1
+        │
+        ▼
+Gate 6: Preview Worker + Preview D1
+        │
+        ▼
+Gate 7: Production Worker + Production D1 (`growinfaith.app`)
+        │
+        ▼
+Gate 8: Durable Object live-room foundation
 ```
-
-Current deployment target:
-- Custom domain: `growinfaith.app` (owner-designated deployment target).
-- Intended topology remains Cloudflare Edge → Cloudflare Tunnel → private Node.js Next.js origin.
-- The existing `berea-api-production.jbr01061981.workers.dev` service is a separate backend/legacy Worker and remains untouched.
-- This documentation correction does not provision or modify DNS, tunnel, Worker, or OAuth configuration.
-
-Deployment validation is the next operational step. A stable HTTPS/OAuth test will use `growinfaith.app` after Cloudflare DNS and tunnel configuration is verified and provisioned. A Quick Tunnel may be used only for non-OAuth connectivity smoke testing.
 
 ## Sequencing and scope rules
 

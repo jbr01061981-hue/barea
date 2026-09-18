@@ -287,7 +287,12 @@ This approach separates three concerns: React Aria provides robust interaction a
 ## ADR-012: Edge Reverse Proxy and Origin Ingress Trust Boundary
 
 ### Status
-**ACCEPTED (BAREA-006 ARCHITECTURE SPECIFICATION)**
+**SUPERSEDED FOR PRODUCTION DEPLOYMENT TARGET (HISTORICAL REFERENCE / ORIGIN SECURITY PRINCIPLES PRESERVED)**
+
+> [!NOTE]
+> **Superseded Context**: The specific production deployment target selected below (Candidate A: Cloudflare Tunnel to a private Node.js origin) has been **formally superseded** by the serverless Cloudflare-native architecture (Cloudflare Edge → Cloudflare Worker → D1 + Durable Objects on `growinfaith.app`), as established in ADR-015 and the finalized owner architecture.
+>
+> The edge reverse-proxy trust boundary principles, header stripping guarantees, edge attestation defense-in-depth concepts, and origin-isolation rationale established in this ADR remain preserved as architectural reference. Production deployment does not use Cloudflare Tunnel or a private Node.js origin.
 
 ### Context
 In BAREA-006, unauthenticated participants join quiz lobbies via short room codes or direct links. Abuse controls (15 failed lookups/min, /24 subnet containment, 30 unauth requests/10s) protect against room code enumeration and denial-of-service.
