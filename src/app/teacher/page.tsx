@@ -58,13 +58,13 @@ export default async function TeacherWorkspacePage() {
       </section>
 
       <section aria-label="Workspace summary" className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Link href="/teacher/quizzes?status=DRAFT" className="border border-stone-200 bg-white p-5 hover:border-stone-300">
+        <Link href="/teacher/quizzes" className="border border-stone-200 bg-white p-5 hover:border-stone-300">
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-stone-500">Draft quizzes</p>
           <p className="mt-2 font-serif text-3xl font-semibold text-stone-900">{draftCount}</p>
           <p className="mt-1 text-xs text-stone-500">Continue preparing</p>
         </Link>
 
-        <Link href="/teacher/quizzes?status=PUBLISHED" className="border border-stone-200 bg-white p-5 hover:border-stone-300">
+        <Link href="/teacher/quizzes" className="border border-stone-200 bg-white p-5 hover:border-stone-300">
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-stone-500">Published</p>
           <p className="mt-2 font-serif text-3xl font-semibold text-stone-900">{publishedCount}</p>
           <p className="mt-1 text-xs text-stone-500">Ready to host</p>
