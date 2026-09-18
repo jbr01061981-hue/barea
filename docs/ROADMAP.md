@@ -38,7 +38,7 @@ Established capabilities:
 - Zero generic `transaction<T>()` leaks in public repository contracts (`QuestionRepository`, `QuizRepository`, `SessionRepository`, `AuthRepository`).
 - Domain-specific atomic repository methods (`createPendingReviewBatch`, `approveQuestionBatch`, `publishQuiz`, `finalizeSessionResults`).
 - Injectable `Clock` port (`nowMs()`, `nowIso()`) decoupling time-sensitive logic from persistence abstractions.
-- 16 explicit indexes (14 regular + 2 partial unique indexes `uq_session_results_participant` and `uq_session_results_group`) and pruned redundant indexes.
+- 18 explicit physical indexes (16 query-path indexes + 2 partial unique indexes `uq_session_results_participant` and `uq_session_results_group`) and pruned redundant indexes.
 - 7 triggers enforcing curriculum snapshot immutability, tenant boundary integrity, quiz deletion prevention, and session result immutability.
 - Added `session_results` table with deterministic ranking: `final_score DESC`, `correct_count DESC`, `final_answer_submitted_at ASC`, `subject_id ASC`.
 - 270 unit, integration, and security tests pass locally.
