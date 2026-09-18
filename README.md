@@ -1,6 +1,8 @@
 # BAREA
 
-BAREA is a synchronized church quiz platform designed for Sunday schools, youth ministries, Bible study groups, and church-wide fellowship events.
+BAREA (Grow in Faith) is a synchronized church quiz platform designed for Sunday schools, youth ministries, Bible study groups, and church-wide fellowship events.
+
+**Current production architecture:** Cloudflare Workers + D1 + Durable Objects, with `growinfaith.app` as the owner-designated production domain. Local development uses Wrangler/local D1. Production does not use a VPS, Windows PC server, Cloudflare Tunnel, Neon/PostgreSQL, or direct `node:sqlite`/`barea.db` persistence.
 
 ---
 
@@ -150,3 +152,17 @@ The repository also contains the implemented foundations represented by BAREA-00
 The next major product phase is **Share, Join & Live Quiz**, while the frontend sequencing currently settles the public homepage refinement track before the **BAREA-009 Teacher Workspace / Quiz Library** redesign.
 
 Frontend work must preserve the existing authentication, authorization, tenant isolation, human-review, live-state, timing, scoring, and answer-secrecy contracts. A frontend screen must not invent or weaken backend behavior to make the UI appear complete.
+
+
+---
+
+## Future Platform Capabilities
+
+BAREA's architecture deliberately reserves the following future capabilities without making them current MVP dependencies:
+
+- **Transactional email** for registration, invitations, quiz participation/completion, results, and future resource notifications. Delivery will be asynchronous and auditable.
+- **Product analytics** through server-authoritative events, with privacy/data minimization and separation from technical observability.
+- **Advertising and monetization** as a future option; ads must not interrupt synchronized live gameplay or become part of authoritative quiz/session state. Sponsorship and premium/ad-free options may also be evaluated.
+- **Worship/music content** including song lyrics, licensed sing-along lyric videos, downloadable video, and stem-based music tracks for church singing without live instruments. Large media will use R2 when implemented and requires appropriate licensing.
+
+These capabilities are future directions and should be implemented only through authorized milestones.

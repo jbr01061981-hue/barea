@@ -20,6 +20,11 @@ This document tracks architectural principles, established decisions, and open t
 - [ADR-012: Edge Reverse Proxy and Origin Ingress Trust Boundary](#adr-012-edge-reverse-proxy-and-origin-ingress-trust-boundary)
 - [ADR-013: Authoritative Live Quiz State Machine, Timing & Real-Time Transport (BAREA-007)](#adr-013-authoritative-live-quiz-state-machine-timing--real-time-transport-barea-007)
 - [ADR-014: Relational Database Architecture Freeze, Clock Port & Durable Storage Boundaries](#adr-014-relational-database-architecture-freeze-clock-port--durable-storage-boundaries)
+- [ADR-015: Cloudflare-Native Production Platform](#adr-015-cloudflare-native-production-platform)
+- [ADR-016: Transactional Email as a First-Class Platform Capability](#adr-016-transactional-email-as-a-first-class-platform-capability)
+- [ADR-017: Product Analytics and Technical Observability Boundary](#adr-017-product-analytics-and-technical-observability-boundary)
+- [ADR-018: Advertising and Monetization Boundary](#adr-018-advertising-and-monetization-boundary)
+- [ADR-019: Worship and Music Media — Future Capability](#adr-019-worship-and-music-media--future-capability)
 - [Open Technical Decisions](#open-technical-decisions)
 
 ---
@@ -461,6 +466,70 @@ In accordance with BAREA architectural constraints (church-scale usage, cost, op
 
 ---
 
+## ADR-015: Cloudflare-Native Production Platform
+
+### Status
+**ACCEPTED — OWNER DECISION (September 2026)**
+
+### Context
+Earlier ADR-012 selected Cloudflare Tunnel plus a private Node.js origin. The owner has since selected a Cloudflare-native application architecture.
+
+### Decision
+1. Production application runtime: **Cloudflare Workers**.
+2. Production relational storage: **Cloudflare D1**.
+3. Production live quiz coordination: **Cloudflare Durable Objects**.
+4. Production domain: **`growinfaith.app`**.
+5. Production does not use Cloudflare Tunnel, a VPS, a Windows PC server, Neon/PostgreSQL, or direct `node:sqlite`/`barea.db` application persistence.
+6. Local development uses Wrangler/local D1; preview and production use separate D1 resources/bindings.
+7. One D1 database is the initial shape; horizontal scale-out is conditional on actual workload/platform limits.
+8. Cloudflare R2 is reserved for future large files/media.
+9. Existing legacy `berea-api-production.jbr01061981.workers.dev` remains untouched unless separately authorized.
+
+### Consequences
+Repository/domain boundaries must be compatible with the Workers runtime and D1 asynchronous API. Existing security and domain invariants remain authoritative during migration. ADR-012 is superseded for the production deployment direction, while its historical rationale remains preserved.
+
+---
+
+## ADR-016: Transactional Email as a First-Class Platform Capability
+
+### Status
+**ACCEPTED — ARCHITECTURAL CAPABILITY; IMPLEMENTATION PROGRESSIVE**
+
+### Decision
+Email is a first-class platform boundary. Initial transactional categories include registration, organization invitations when available, quiz participation/completion, result availability, and future resource-download notifications. Delivery is asynchronous, retryable, idempotent, and auditable. Email failure must not block authoritative user, quiz, session, or result transactions. Provider selection remains deferred pending deliverability, SPF/DKIM/DMARC, privacy, cost, limits, and Cloudflare compatibility review.
+
+---
+
+## ADR-017: Product Analytics and Technical Observability Boundary
+
+### Status
+**ACCEPTED — ARCHITECTURAL CAPABILITY; IMPLEMENTATION PROGRESSIVE**
+
+### Decision
+Product analytics is a first-class capability based on server-authoritative business events. Analytics is never an authorization mechanism and cannot establish authoritative quiz outcomes. Analytics failures must not block core transactions. Events must minimize PII and avoid unnecessary collection of child/student data. Product analytics remains distinct from technical observability and logging. Provider selection and detailed event implementation remain deferred.
+
+---
+
+## ADR-018: Advertising and Monetization Boundary
+
+### Status
+**ACCEPTED — FUTURE CAPABILITY**
+
+### Decision
+Advertising is a future monetization capability, not an MVP dependency. No ad provider or ad-serving subsystem is required now. Advertising must not participate in authoritative quiz/session state, interrupt synchronized live gameplay, or use unnecessary profiling of children/students. Future options may include suitable non-live placements, sponsorships, and premium/ad-free plans.
+
+---
+
+## ADR-019: Worship and Music Media — Future Capability
+
+### Status
+**ACCEPTED — FUTURE CAPABILITY**
+
+### Decision
+Future BAREA development may provide song lyrics, licensed sing-along lyric videos, downloadable lyric videos, and stem-based music tracks for church singing without live instruments. Publication/download requires appropriate copyright/licensing rights. Large video/audio assets will use Cloudflare R2 rather than D1, and private media access must remain server-authorized.
+
+---
+
 ## Open Technical Decisions
 
 The following technical selections remain intentionally deferred:
@@ -468,4 +537,4 @@ The following technical selections remain intentionally deferred:
 1. **Database & Data Layer for Distributed Environments**: **RESOLVED — ADR-014 Relational Database Architecture Freeze (Cloudflare D1 + Durable Objects edge architecture)**.
 2. **HTTP/API Contract**: Specific API style and validation/transport implementation.
 3. **Authentication/Authorization**: Teacher/host authentication implementation and authorization model.
-4. **Deployment/Hosting Target**: **RESOLVED — CLOUDFLARE EDGE + CLOUDFLARE TUNNEL (`cloudflared`)** (ADR-012). Physical provisioning in progress.
+4. **Deployment/Hosting Target**: **RESOLVED — CLOUDFLARE WORKERS + D1 + DURABLE OBJECTS** (ADR-015), with `growinfaith.app` as the production domain.

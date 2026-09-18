@@ -1,5 +1,24 @@
 # BAREA Conceptual System Architecture
 
+## Current Owner Architecture Baseline — September 2026
+
+The following owner decisions supersede earlier candidate-architecture notes in this document:
+
+- Production platform: **Cloudflare**.
+- Application runtime: **Cloudflare Workers**.
+- Primary relational database: **Cloudflare D1**.
+- Live quiz coordination: **Cloudflare Durable Objects**.
+- Production domain: **`growinfaith.app`**.
+- Production uses the Cloudflare Worker/custom-domain path; **Cloudflare Tunnel is not the production ingress architecture**.
+- No VPS, Windows PC production server, Neon/PostgreSQL, or direct `node:sqlite`/`barea.db` application persistence architecture.
+- Local development uses a Workers-compatible runtime with Wrangler and local D1; preview and production use separate D1 resources/bindings.
+- One D1 database is the initial deployment shape; horizontal scale-out is conditional on actual workload and platform limits.
+- Cloudflare R2 is reserved for future large files/media.
+- Email, analytics, advertising/monetization, and worship media are explicit future platform boundaries and are not current quiz-MVP dependencies.
+
+Earlier deployment material retained in ADR-012 is historical and is superseded by ADR-015 for the current production direction.
+
+
 ## 1. High-Level Architecture Overview
 
 BAREA is designed as a decoupled, multi-surface real-time web platform centered on a server-authoritative state machine.
@@ -57,9 +76,11 @@ The system exposes three distinct user experiences:
 
 ### 2.4 Data Persistence & Relational Schema Freeze (ADR-014)
 - **Persistence Architecture**:
-  - Development / CI: Native SQLite via `node:sqlite` (pure Promise-based repository contracts).
-  - Production Relational Storage: Cloudflare D1 (serverless relational database).
-  - Production Real-Time Coordination: Cloudflare Durable Objects (authoritative state machine, timers, live tick loops).
+  - Local development / CI: Workers-compatible local D1 through Wrangler; direct `node:sqlite`/`barea.db` is not the application persistence architecture going forward.
+  - Production Relational Storage: Cloudflare D1.
+  - Production Real-Time Coordination: Cloudflare Durable Objects.
+  - Production application runtime: Cloudflare Workers.
+  - Future large files/media: Cloudflare R2.
 - **Decoupled Architecture Ports**:
   - **Clock Port**: Dedicated injectable `Clock` (`nowMs()`, `nowIso()`) decoupling application timing from persistence layer. Persistence repositories never expose testing mutation methods (`setClockForTesting`) or timing getters (`getCurrentTimeMs`).
   - **Zero Transaction Leakage**: Public repository interfaces contain zero generic `transaction<T>()` callbacks; multi-statement workflows are encapsulated into domain-specific atomic repository methods (`createPendingReviewBatch`, `approveQuestionBatch`, `publishQuiz`, `finalizeSessionResults`). Repository transaction mechanics are private SQLite/D1 implementation details.
@@ -179,3 +200,25 @@ To ensure fairness, tamper resistance, and timing accuracy:
 - **Participant Simplicity**: Participants join with a room code and nickname; no personal account registration required for casual participation.
 - **Quiz Snapshot Integrity**: Live quiz sessions run from immutable frozen snapshots to prevent unexpected behavior during active gameplay.
 - **Input Sanitization**: Display names and user-authored content are sanitized against injection and inappropriate language.
+
+---
+
+## 6. Future Platform Capability Boundaries
+
+### 6.1 Transactional Email
+
+Email is a first-class platform capability. Transactional delivery is asynchronous, retryable, idempotent, auditable, and must never block authoritative user, quiz, session, or result transactions. Initial categories include registration, organization invitations when available, quiz participation/completion, result availability, and future resource-download notifications. Provider selection remains deferred.
+
+### 6.2 Product Analytics and Technical Observability
+
+Product analytics is a first-class capability based on server-authoritative business events. Analytics is never an authorization mechanism, cannot establish authoritative quiz outcomes, and must not block core transactions. Events must minimize PII and avoid unnecessary collection of child/student data. Product analytics remains distinct from technical observability and logs.
+
+### 6.3 Advertising and Monetization
+
+Advertising is a future monetization capability, not an MVP dependency. No advertising provider or ad-serving subsystem is required now. Advertising must not participate in authoritative quiz/session state, interrupt synchronized live gameplay, or use unnecessary profiling of children/students. Future options may include suitable non-live placements, sponsorships, and premium/ad-free plans.
+
+### 6.4 Worship and Music Content
+
+Future BAREA capabilities may include song lyrics, licensed sing-along lyric videos, downloadable lyric videos, and stem-based music tracks for church singing without live instruments. Publication/download requires appropriate copyright/licensing rights. Large media assets belong in R2 rather than D1, and private media access must remain server-authorized.
+
+These capabilities are deliberately future-facing and do not expand the current quiz MVP scope.

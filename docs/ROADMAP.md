@@ -255,7 +255,7 @@ Existing BAREA-008/008A homepage work is foundation, not a declaration that the 
 - Fix the highest-value problems.
 - Re-test with the church.
 
-## Infrastructure Validation — Cloudflare HTTPS
+## Infrastructure Validation — Cloudflare Production Path
 
 **Status: NEXT — DEPLOYMENT VALIDATION FOR `growinfaith.app`**
 
@@ -291,3 +291,13 @@ Deployment validation is the next operational step. A stable HTTPS/OAuth test wi
 6. Resolve open design/architecture decisions before implementing dependent screens when those decisions materially affect routes or contracts.
 7. Every completed milestone requires repository inspection, tests/build verification, and independent review; an agent completion report is not itself approval.
 8. **When implementation state and historical reports differ, the current `main` branch and the latest verified repository state take precedence; historical reports remain historical evidence and must not be rewritten to make them current.**
+
+
+## Future Platform Capabilities
+
+- **Transactional Email:** registration, invitations, quiz participation/completion, result availability, and future resource notifications; asynchronous and auditable.
+- **Product Analytics:** server-authoritative event boundary with privacy/data-minimization rules; separate from technical observability.
+- **Advertising/Monetization:** future; no dependency in quiz execution and no unnecessary profiling of children/students.
+- **Worship/Music Content:** lyrics, licensed sing-along lyric videos, downloadable video, and stem music tracks for church singing without live instruments; media stored in R2 when implemented.
+
+These capabilities are future directions and should be introduced through focused milestones only when product requirements justify implementation.

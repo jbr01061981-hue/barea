@@ -6,11 +6,16 @@
 
 This document is the database-focused reference for the BAREA relational persistence architecture. It complements, and does not replace, `docs/ARCHITECTURE.md` and `docs/DECISIONS.md`.
 
+**Runtime correction:** the earlier Node `node:sqlite` local-development path is superseded by the owner-selected Cloudflare-native development architecture. The frozen relational schema and repository/domain boundaries remain authoritative; local development should exercise D1-compatible behavior through Wrangler/local D1 rather than direct application SQLite.
+
 The current implementation baseline is:
 
-- Local development / CI: native SQLite through Node `node:sqlite`
+- Local development / CI: Workers-compatible local D1 through Wrangler
+- Production application runtime: Cloudflare Workers
 - Production relational storage target: Cloudflare D1
 - Production real-time coordination target: Cloudflare Durable Objects
+- Production domain: `growinfaith.app`
+- Future large files/media: Cloudflare R2
 - Tables: **17**
 - Explicit application-created indexes: **18**
   - 16 query-path indexes

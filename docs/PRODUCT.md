@@ -241,3 +241,26 @@ A creator may optionally configure a session start time.
 - **Resilience in Church Environments**: Graceful handling of variable cellular or church Wi-Fi conditions and shared NAT addresses.
 - **Respectful & Fellowship-Oriented**: Uplifting and encouraging atmosphere for biblical learning.
 - **Privacy & Security by Design**: Authentication, admission, identity, tenant isolation, and sensitive identity attributes are enforced server-side.
+
+
+---
+
+## 8. Future Platform Capabilities
+
+The following capabilities are deliberate future product directions and are not requirements for the current quiz MVP:
+
+### 8.1 Transactional Email
+
+BAREA will support transactional email as a first-class platform capability. Examples include registration, organization invitations when available, quiz participation/completion, result availability, and future resource-download notifications. Delivery will be asynchronous and must not block core application transactions. Provider selection remains deferred.
+
+### 8.2 Analytics
+
+BAREA will support product analytics based on server-authoritative events while keeping technical observability separate. Analytics will use data minimization, avoid unnecessary PII, and will not be used to establish authorization or authoritative quiz outcomes.
+
+### 8.3 Advertising / Monetization
+
+Advertising may be introduced later as a monetization option. It is not an MVP dependency. Ads must not interfere with synchronized live gameplay or become part of the authoritative quiz/session state. Future sponsorship and premium/ad-free options may also be evaluated.
+
+### 8.4 Worship / Music Content
+
+Future development may provide song lyrics and licensed sing-along lyric videos, including downloadable video assets and stem-based music tracks that allow church singing without live musical instruments. Copyright/licensing permissions are prerequisites to publication and download. Large media assets will use R2 rather than D1.
