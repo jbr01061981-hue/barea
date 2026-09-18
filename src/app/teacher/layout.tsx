@@ -8,10 +8,11 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
       <HistoryBfcacheGuard />
 
       <aside className="teacher-workspace-sidebar" aria-label="Teacher workspace navigation">
-        <a href="/teacher/quizzes" className="teacher-workspace-wordmark">BAREA</a>
+        <a href="/teacher" className="teacher-workspace-wordmark">BAREA</a>
         <p className="teacher-workspace-eyebrow">TEACHER WORKSPACE</p>
         <nav>
-          <a className="teacher-workspace-nav-active" href="/teacher/quizzes">Quiz Library</a>
+          <a href="/teacher">Workspace</a>
+          <a href="/teacher/quizzes">Quiz Library</a>
           <a href="/teacher/review">Question Review</a>
         </nav>
         <div className="teacher-workspace-sidebar-footer">

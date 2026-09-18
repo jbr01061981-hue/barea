@@ -63,7 +63,7 @@ PR #21 remains a branch/PR state and must not be described as part of `main` unt
 | BAREA-008 | Public homepage / landing foundation | **MERGED** | Present on `main` |
 | BAREA-008A | Public homepage visual redesign + public entry UX | **MERGED** | Present on `main` |
 | BAREA-008B | Public homepage refinement | **CURRENT / DESIGN REFINEMENT** | Dedicated 008B branches; not merged to `main` |
-| BAREA-009 | Teacher Workspace / Quiz Library redesign | **NEXT MAJOR** | Not started on `main` |
+| BAREA-009 | Teacher Workspace / Quiz Library redesign | **IMPLEMENTATION IN REVIEW** | `barea-009-teacher-workspace-mvp`; not merged to `main` |
 | BAREA-010 | Quiz Builder / Question UX | Planned | Not started |
 | BAREA-011 | Teacher Review / Question Bank UX | Planned | Not started |
 | BAREA-012 | Share Quiz / Join experience | Planned | Not started |
@@ -109,6 +109,25 @@ The merged implementation includes:
 - Google token exchange timeout protection.
 
 Local HTTPS browser verification completed successfully against `https://localhost:3000`, including Google login, callback, authenticated home, workspace navigation, logout, second login, and post-logout session invalidation.
+
+## BAREA-009 — Teacher Workspace / Quiz Library
+
+**Status: IMPLEMENTATION IN REVIEW**
+
+The MVP implementation introduces a server-authorized Teacher Workspace landing page at `/teacher` and makes it the entry point for the existing Create & Host capability.
+
+Implemented scope:
+- Server-side teacher authorization before any workspace data is loaded.
+- Workspace summary for draft quizzes, published quizzes, and questions awaiting teacher review.
+- Recent quiz list linked to the existing quiz editor/inspector routes.
+- Quick actions for quiz creation and question review.
+- Existing Quiz Library remains the authoritative quiz-management surface.
+- Existing Question Review remains the authoritative human-review surface.
+- Create & Host navigation now enters `/teacher` instead of bypassing the workspace.
+- No new database tables, APIs, authentication flows, authorization mechanisms, or live-session behavior were introduced.
+- No client-supplied organization or role data is used to establish authorization.
+
+The implementation is intentionally MVP-sized: it composes existing backend/domain capabilities rather than creating a new dashboard data layer.
 
 ## BAREA-008B — Public homepage refinement
 

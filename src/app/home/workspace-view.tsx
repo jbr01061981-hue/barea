@@ -96,7 +96,7 @@ export function WorkspaceView({
               aria-selected={workspace === 'create-host'}
               onClick={() => {
                 if (isTeacherAuthorized) {
-                  window.location.href = '/teacher/quizzes';
+                  window.location.href = '/teacher';
                 } else {
                   setWorkspace('create-host');
                 }
