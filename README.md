@@ -54,6 +54,7 @@ Conceptual architecture, product requirements, decisions, and roadmap are locate
 - `docs/PRODUCT.md` — product vision, personas, participation modes, admission policies, and core experiences.
 - `docs/REQUIREMENTS.md` — functional and non-functional requirements.
 - `docs/ARCHITECTURE.md` — conceptual system architecture, state machine, and server-authoritative models.
+- `docs/DATABASE.md` — frozen relational database schema, indexes, triggers, relationships, lifecycle, and SQLite/D1 boundary.
 - `docs/ROADMAP.md` — current phase roadmap, implementation status, and frontend milestone sequence.
 - `docs/DECISIONS.md` — architecture decision records.
 - `docs/FRONTEND_PROGRESS.md` — frontend implementation sequence, current status, and verification evidence.
