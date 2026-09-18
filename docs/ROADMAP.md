@@ -4,9 +4,9 @@ This roadmap reconciles the core product phases with the implementation mileston
 
 ## Current Development Status
 
-**Main branch baseline: PR #23 merged on 2026-09-17.**
+**Main branch baseline: PR #24 merged on 2026-09-18.**
 
-Merge commit: `935e5a767bf11b796e628e5e674739f51467734c`
+Merge commit: `3be71fd` (BAREA-002B database architecture freeze).
 
 PR #23 (`BAREA-002A — Async Repository Contract Modernization`) completed the repository contract modernization milestone and was merged into `main` with a standard merge commit. The approved final correction removed the public `AuthRepository.transaction<T>(...)` escape hatch while retaining transaction mechanics privately inside `SqliteAuthRepository` for atomic federated provisioning.
 
@@ -38,10 +38,10 @@ Established capabilities:
 - Zero generic `transaction<T>()` leaks in public repository contracts (`QuestionRepository`, `QuizRepository`, `SessionRepository`, `AuthRepository`).
 - Domain-specific atomic repository methods (`createPendingReviewBatch`, `approveQuestionBatch`, `publishQuiz`, `finalizeSessionResults`).
 - Injectable `Clock` port (`nowMs()`, `nowIso()`) decoupling time-sensitive logic from persistence abstractions.
-- 16 explicit indexes (14 regular + 2 partial unique indexes `uq_session_results_participant` and `uq_session_results_group`) and pruned redundant indexes.
+- 18 explicit physical indexes (16 query-path indexes + 2 partial unique indexes `uq_session_results_participant` and `uq_session_results_group`) and pruned redundant indexes.
 - 7 triggers enforcing curriculum snapshot immutability, tenant boundary integrity, quiz deletion prevention, and session result immutability.
 - Added `session_results` table with deterministic ranking: `final_score DESC`, `correct_count DESC`, `final_answer_submitted_at ASC`, `subject_id ASC`.
-- 270 unit, integration, and security tests pass locally.
+- 273 unit, integration, and security tests pass on the merged `main` branch after PR #24.
 
 ## Previous Authentication Milestones
 

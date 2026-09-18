@@ -448,7 +448,7 @@ In accordance with BAREA architectural constraints (church-scale usage, cost, op
      - `getCurrentTimeMs()` is removed from public repository contracts.
      - A dedicated `Clock` port (`nowMs(): number`, `nowIso(): string`) with default `SystemClock` is established in `src/service/clock.ts` and injected into services (`LiveQuizService`, `SqliteSessionRepository`).
   3. **Schema Specification & Freeze**:
-     - Exactly 17 relational tables, 16 explicit indexes (14 regular + 2 partial unique), 7 triggers, and 0 views.
+     - Exactly 17 relational tables, 18 explicit physical indexes (16 query-path + 2 partial unique), 7 triggers, and 0 views.
      - New `session_results` table stores immutable finalized results with partial unique indexes `uq_session_results_participant` and `uq_session_results_group`.
      - Deterministic podium ranking rule: `final_score DESC`, `correct_count DESC`, `final_answer_submitted_at ASC`, `subject_id ASC`.
      - Immutability triggers `prevent_session_result_update` and `prevent_session_result_delete` abort any direct modification to finalized scores.
