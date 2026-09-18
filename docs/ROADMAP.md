@@ -41,7 +41,7 @@ Established capabilities:
 - 18 explicit physical indexes (16 query-path indexes + 2 partial unique indexes `uq_session_results_participant` and `uq_session_results_group`) and pruned redundant indexes.
 - 7 triggers enforcing curriculum snapshot immutability, tenant boundary integrity, quiz deletion prevention, and session result immutability.
 - Added `session_results` table with deterministic ranking: `final_score DESC`, `correct_count DESC`, `final_answer_submitted_at ASC`, `subject_id ASC`.
-- 270 unit, integration, and security tests pass locally.
+- 273 unit, integration, and security tests pass on the merged `main` branch after PR #24.
 
 ## Previous Authentication Milestones
 
