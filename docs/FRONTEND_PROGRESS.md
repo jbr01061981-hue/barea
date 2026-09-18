@@ -4,9 +4,9 @@
 
 ## Current status
 
-**Main baseline:** PR #22 merged on 2026-09-16 as `345f72d0f86de61373a6ed080a42372492ab017b`.
+**Main baseline:** PR #26 merged on 2026-09-18 as `21450c3df9c3adfefd8bef7ef59a07c07f946f33`.
 
-PR #20 established the unified authenticated home, Google-only authentication, hardened OAuth flow, and server-authoritative session handling. PR #22 subsequently completed logout/browser-history/bfcache hardening and is now part of `main`.
+PR #20 established the unified authenticated home, Google-only authentication, hardened OAuth flow, and server-authoritative session handling. PR #22 completed logout/browser-history/bfcache hardening; PR #23 and PR #24 completed repository/database stabilization; PR #25 added the database architecture reference; and PR #26 completed the Teacher Workspace MVP.
 
 ### PR #22 — Logout / Browser History / bfcache Hardening
 
@@ -63,8 +63,8 @@ PR #21 remains a branch/PR state and must not be described as part of `main` unt
 | BAREA-008 | Public homepage / landing foundation | **MERGED** | Present on `main` |
 | BAREA-008A | Public homepage visual redesign + public entry UX | **MERGED** | Present on `main` |
 | BAREA-008B | Public homepage refinement | **CURRENT / DESIGN REFINEMENT** | Dedicated 008B branches; not merged to `main` |
-| BAREA-009 | Teacher Workspace / Quiz Library redesign | **IMPLEMENTATION IN REVIEW** | `barea-009-teacher-workspace-mvp`; not merged to `main` |
-| BAREA-010 | Quiz Builder / Question UX | Planned | Not started |
+| BAREA-009 | Teacher Workspace / Quiz Library redesign | **COMPLETE / REVIEWED / VERIFIED / MERGED** | PR #26 merged to `main` as `21450c3` |
+| BAREA-010 | Quiz Builder / Question UX | **NEXT** | Not started |
 | BAREA-011 | Teacher Review / Question Bank UX | Planned | Not started |
 | BAREA-012 | Share Quiz / Join experience | Planned | Not started |
 | BAREA-013 | Host Lobby | Planned | Not started |
@@ -112,7 +112,9 @@ Local HTTPS browser verification completed successfully against `https://localho
 
 ## BAREA-009 — Teacher Workspace / Quiz Library
 
-**Status: IMPLEMENTATION IN REVIEW**
+**Status: COMPLETE — REVIEWED / VERIFIED / MERGED**
+
+PR #26 was independently reviewed and merged to `main` on 2026-09-18 as `21450c3df9c3adfefd8bef7ef59a07c07f946f33`.
 
 The MVP implementation introduces a server-authorized Teacher Workspace landing page at `/teacher` and makes it the entry point for the existing Create & Host capability.
 
@@ -128,6 +130,10 @@ Implemented scope:
 - No client-supplied organization or role data is used to establish authorization.
 
 The implementation is intentionally MVP-sized: it composes existing backend/domain capabilities rather than creating a new dashboard data layer.
+
+Independent AGY review verified scope, authorization, tenant isolation, accessibility structure, tests, typechecks, build, and diff cleanliness. No correction was required.
+
+**Next frontend milestone: BAREA-010 — Quiz Builder / Question UX.**
 
 ## BAREA-008B — Public homepage refinement
 
@@ -182,9 +188,11 @@ Do not jump directly from the homepage to the live quiz console. Progressively e
 
 ## Infrastructure validation status
 
-Cloudflare public HTTPS validation is deferred because the current Cloudflare account has no active DNS zones/domains and no existing named tunnel. The existing `berea-api-production.jbr01061981.workers.dev` service is a separate backend/legacy Worker and remains untouched.
+Cloudflare public HTTPS validation is now the next operational step using the owner-designated domain `growinfaith.app`. Deployment has not yet been provisioned or modified by this documentation update.
 
-A future stable Cloudflare HTTPS test requires a suitable custom domain. Ephemeral Quick Tunnels may be used for non-OAuth connectivity smoke testing, but they are not the authoritative Google OAuth validation path.
+The intended deployment topology remains Cloudflare Edge → Cloudflare Tunnel → private Node.js Next.js origin. The existing `berea-api-production.jbr01061981.workers.dev` service is a separate backend/legacy Worker and remains untouched.
+
+A stable HTTPS/OAuth validation will use `growinfaith.app` after DNS and tunnel configuration is verified. Ephemeral Quick Tunnels remain suitable only for non-OAuth connectivity smoke testing.
 
 ## Open human/design decisions
 
