@@ -4,9 +4,9 @@ This roadmap reconciles the core product phases with the implementation mileston
 
 ## Current Development Status
 
-**Main branch baseline: PR #24 merged on 2026-09-18.**
+**Main branch baseline: PR #26 merged on 2026-09-18.**
 
-Merge commit: `3be71fd` (BAREA-002B database architecture freeze).
+Merge commit: `21450c3df9c3adfefd8bef7ef59a07c07f946f33` (BAREA-009 Teacher Workspace MVP).
 
 PR #23 (`BAREA-002A — Async Repository Contract Modernization`) completed the repository contract modernization milestone and was merged into `main` with a standard merge commit. The approved final correction removed the public `AuthRepository.transaction<T>(...)` escape hatch while retaining transaction mechanics privately inside `SqliteAuthRepository` for atomic federated provisioning.
 
@@ -82,7 +82,7 @@ Verified on the merged authentication branch:
 - Local HTTPS Google OAuth flow — **PASS**
 - Logout and server-side session invalidation — **PASS**
 
-Cloudflare public HTTPS testing is **not yet completed**. Discovery found no active Cloudflare DNS zone or suitable custom domain in the current Cloudflare account, so no Cloudflare tunnel or DNS infrastructure was provisioned. This does not block the completed application milestone.
+Cloudflare public HTTPS testing is **NEXT — DEPLOYMENT VALIDATION**. The owner-designated production test domain is `growinfaith.app`. No production DNS, tunnel, or deployment configuration has been changed by this documentation correction.
 
 ## Phase 1 — Unified Account & Access
 
@@ -166,8 +166,8 @@ The frontend track progresses through these purpose-built experiences:
 | BAREA-008 | Public homepage / landing foundation | **MERGED** |
 | BAREA-008A | Public homepage visual redesign + public entry UX | **MERGED** |
 | BAREA-008B | Public homepage refinement | **CURRENT / DESIGN REFINEMENT** |
-| BAREA-009 | Teacher Workspace / Quiz Library redesign | **NEXT MAJOR** |
-| BAREA-010 | Quiz Builder | Planned |
+| BAREA-009 | Teacher Workspace / Quiz Library redesign | **COMPLETE / REVIEWED / VERIFIED / MERGED** |
+| BAREA-010 | Quiz Builder | **NEXT** |
 | BAREA-011 | Teacher Review / Question Bank UX | Planned |
 | BAREA-012 | Share Quiz / Join experience | Planned |
 | BAREA-013 | Host Lobby | Planned |
@@ -178,7 +178,20 @@ The frontend track progresses through these purpose-built experiences:
 
 ### BAREA-009 — Teacher Workspace / Quiz Library redesign
 
-**Status: NEXT MAJOR FRONTEND MILESTONE**
+**Status: COMPLETE — REVIEWED / VERIFIED / MERGED**
+
+PR #26 was independently reviewed and merged to `main` on 2026-09-18 as `21450c3df9c3adfefd8bef7ef59a07c07f946f33`.
+
+Implemented MVP scope:
+- Server-authorized `/teacher` workspace route.
+- Organization-scoped quiz and pending-review queries using server-derived teacher context.
+- Draft, published, and pending-review summaries plus recent quiz access.
+- Quick actions into the existing Quiz Library and Question Review surfaces.
+- Create & Host now enters the Teacher Workspace.
+- No new database tables, backend APIs, authentication mechanisms, authorization mechanisms, or live-session behavior were introduced.
+- Existing Quiz Library and Question Review remain the authoritative working surfaces.
+
+Independent AGY review verified scope, authorization, tenant isolation, accessibility structure, tests, typechecks, build, and diff cleanliness. No correction was required.
 
 Target experience:
 - Authenticated, authorized teacher workspace.
@@ -260,14 +273,13 @@ PRIVATE BAREA ORIGIN
 Next.js App Router :3000
 ```
 
-Cloudflare discovery on 2026-09-14 confirmed:
-- Cloudflare account is accessible.
-- No active DNS zones/domains are currently present in the account.
-- No existing BAREA named tunnel exists.
-- `berea-api-production.jbr01061981.workers.dev` is a separate backend/legacy Worker and remains untouched.
-- No DNS, tunnel, Worker, or Google OAuth configuration was changed.
+Current deployment target:
+- Custom domain: `growinfaith.app` (owner-designated deployment target).
+- Intended topology remains Cloudflare Edge → Cloudflare Tunnel → private Node.js Next.js origin.
+- The existing `berea-api-production.jbr01061981.workers.dev` service is a separate backend/legacy Worker and remains untouched.
+- This documentation correction does not provision or modify DNS, tunnel, Worker, or OAuth configuration.
 
-A persistent public HTTPS/OAuth test should resume only when a suitable custom domain is available. A Quick Tunnel may be used later for non-OAuth connectivity smoke testing, but its ephemeral hostname is not the authoritative Google OAuth validation path.
+Deployment validation is the next operational step. A stable HTTPS/OAuth test will use `growinfaith.app` after Cloudflare DNS and tunnel configuration is verified and provisioned. A Quick Tunnel may be used only for non-OAuth connectivity smoke testing.
 
 ## Sequencing and scope rules
 
