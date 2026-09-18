@@ -190,10 +190,15 @@ Do not jump directly from the homepage to the live quiz console. Progressively e
 
 Cloudflare public HTTPS validation is now the next operational step using the owner-designated domain `growinfaith.app`. Deployment has not yet been provisioned or modified by this documentation update.
 
-The intended deployment topology remains Cloudflare Edge → Cloudflare Tunnel → private Node.js Next.js origin. The existing `berea-api-production.jbr01061981.workers.dev` service is a separate backend/legacy Worker and remains untouched.
+The current owner-selected topology is Cloudflare Edge → Cloudflare Worker, with D1 for relational persistence and Durable Objects for live coordination. Production Cloudflare Tunnel is not part of the selected architecture. The existing `berea-api-production.jbr01061981.workers.dev` service is a separate backend/legacy Worker and remains untouched.
 
-A stable HTTPS/OAuth validation will use `growinfaith.app` after DNS and tunnel configuration is verified. Ephemeral Quick Tunnels remain suitable only for non-OAuth connectivity smoke testing.
+A stable HTTPS/OAuth validation will use `growinfaith.app` after the Worker custom-domain and production configuration are verified.
 
 ## Open human/design decisions
 
 Before implementing the next major workspace redesign or generating new live-session screens, resolve any still-open design decisions documented in the applicable design sources, including the Teacher Workspace theme decision, Stitch project allocation, and formal live-session role-route convention. Do not silently convert an exploratory design proposal into an implementation contract.
+
+
+## Future platform capabilities
+
+Architecture-level future capabilities now reserved by the product decisions include transactional email, product analytics/observability, advertising/monetization, and worship/music media (lyrics, licensed sing-along video, downloadable video, and stem music tracks). These are not current frontend milestones and must not be introduced as frontend-only contracts without corresponding backend/domain authorization.
