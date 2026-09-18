@@ -74,19 +74,21 @@ function seedUser(sharedDb: DatabaseSync, id: string, name: string = id) {
 
 function setupTestEnvironment(rateLimiterOptions?: { maxLiveMutationsPer5Seconds?: number }) {
   const sharedDb = new DatabaseSync(':memory:');
+  let testClockFn: (() => number) | null = null;
+  const testClock: Clock = {
+    nowMs: () => (testClockFn ? testClockFn() : Date.now()),
+    nowIso: () => new Date(testClockFn ? testClockFn() : Date.now()).toISOString()
+  };
+
   const questionRepo = new SqliteQuestionRepository(sharedDb);
   const quizRepo = new SqliteQuizRepository(sharedDb);
-  const sessionRepo = new SqliteSessionRepository(sharedDb);
+  const sessionRepo = new SqliteSessionRepository(sharedDb, testClock);
 
   const bankService = new QuestionBankService(questionRepo);
   const quizService = new QuizService(quizRepo);
   const rateLimiter = new InMemoryRateLimiter(undefined, rateLimiterOptions);
   const sessionService = new SessionService(sessionRepo, rateLimiter);
   const realtimeTransport = new InMemoryRealtimeTransport();
-  const testClock: Clock = {
-    nowMs: () => sessionRepo.getCurrentTimeMs(),
-    nowIso: () => new Date(sessionRepo.getCurrentTimeMs()).toISOString()
-  };
   const liveQuizService = new LiveQuizService(sessionRepo, rateLimiter, realtimeTransport, testClock);
 
   setSessionRepository(sessionRepo);
@@ -127,7 +129,10 @@ function setupTestEnvironment(rateLimiterOptions?: { maxLiveMutationsPer5Seconds
     sessionService,
     rateLimiter,
     realtimeTransport,
-    liveQuizService
+    liveQuizService,
+    setTestClock: (fn: (() => number) | null) => {
+      testClockFn = fn;
+    }
   };
 }
 
@@ -1408,7 +1413,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     //        ↓
     //        submission MUST NOT be inserted
     let serviceCheckOccurred = false;
-    env.sessionRepo.setClockForTesting(() => {
+    env.setTestClock(() => {
       if (!serviceCheckOccurred) {
         // First clock query: service pre-check (10 seconds before deadline)
         serviceCheckOccurred = true;
@@ -1429,7 +1434,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
 
     // CRITICAL: Verify zero rows inserted even though service pre-check passed!
     assert.equal(getAnswerCount(), 0);
-    env.sessionRepo.setClockForTesting(null);
+    env.setTestClock(null);
 
     // 2. Teacher-Group Race-Boundary Regression Test:
     const groupSession = await env.sessionService.createSession({
@@ -1449,7 +1454,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     const groupDeadlineMs = new Date(groupLiveRow.answer_deadline_at).getTime();
 
     let groupServiceCheckOccurred = false;
-    env.sessionRepo.setClockForTesting(() => {
+    env.setTestClock(() => {
       if (!groupServiceCheckOccurred) {
         groupServiceCheckOccurred = true;
         return groupDeadlineMs - 5_000; // Open at service check
@@ -1474,11 +1479,11 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       return row.count;
     };
     assert.equal(getGroupAnswerCount(), 0);
-    env.sessionRepo.setClockForTesting(null);
+    env.setTestClock(null);
 
     // 3. Stale caller-supplied submittedAt or clientTimestamp cannot bypass deadline at persistence
     // Even if caller passes a fake past timestamp, the repository derives fresh server time
-    env.sessionRepo.setClockForTesting(() => deadlineMs + 5_000);
+    env.setTestClock(() => deadlineMs + 5_000);
     await assert.rejects(async () => {
       await env.sessionRepo.recordAnswerSubmission({
         sessionId: session.id,
@@ -1491,11 +1496,11 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
       });
     }, AnswerDeadlineExpiredError);
     assert.equal(getAnswerCount(), 0);
-    env.sessionRepo.setClockForTesting(null);
+    env.setTestClock(null);
 
     // 4. Concurrency / First-Write-Wins Verification:
     // Set clock before deadline so submissions are in valid window
-    env.sessionRepo.setClockForTesting(() => deadlineMs - 5_000);
+    env.setTestClock(() => deadlineMs - 5_000);
 
     const firstSub = await env.liveQuizService.submitParticipantAnswer({
       sessionId: session.id,
@@ -1530,7 +1535,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     assert.equal(getAnswerCount(), 2);
 
     // 5. No late submission can be persisted after authoritative deadline
-    env.sessionRepo.setClockForTesting(() => deadlineMs + 1_000);
+    env.setTestClock(() => deadlineMs + 1_000);
     const participant3Token = await env.sessionService.joinSession(session.id, {
       userId: 'pupil_race_3',
       providerType: 'GOOGLE',
@@ -1550,7 +1555,7 @@ test('BAREA-007: Live Quiz Authoritative State Machine, Transport & Adversarial 
     }, AnswerDeadlineExpiredError);
     // Count remains 2
     assert.equal(getAnswerCount(), 2);
-    env.sessionRepo.setClockForTesting(null);
+    env.setTestClock(null);
   });
 
 });

@@ -231,26 +231,6 @@ export class SqliteSessionRepository implements SessionRepository {
     this.init();
   }
 
-  setClockForTesting(clock: Clock | (() => number) | null): void {
-    if (process.env.NODE_ENV === 'production' || (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'development')) {
-      throw new Error('Forbidden: test clock overrides cannot be executed in production or unauthorized environments.');
-    }
-    if (clock === null) {
-      this.clock = new SystemClock();
-    } else if (typeof clock === 'function') {
-      this.clock = {
-        nowMs: clock,
-        nowIso: () => new Date(clock()).toISOString()
-      };
-    } else {
-      this.clock = clock;
-    }
-  }
-
-  getCurrentTimeMs(): number {
-    return this.clock.nowMs();
-  }
-
   getDatabase(): DatabaseSync {
     return this.db;
   }
@@ -344,9 +324,6 @@ export class SqliteSessionRepository implements SessionRepository {
         CONSTRAINT uq_session_participant_provider UNIQUE (session_id, provider_type, provider_sub)
       );
 
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_token_hash
-      ON session_participants(token_hash);
-
       CREATE INDEX IF NOT EXISTS idx_participants_session
       ON session_participants(session_id);
 
@@ -360,9 +337,6 @@ export class SqliteSessionRepository implements SessionRepository {
         CONSTRAINT uq_session_group_name UNIQUE (session_id, group_name)
       );
 
-      CREATE INDEX IF NOT EXISTS idx_session_groups_session
-      ON session_groups(session_id);
-
       CREATE TABLE IF NOT EXISTS session_group_pupils (
         id TEXT PRIMARY KEY,
         session_group_id TEXT NOT NULL,
@@ -373,12 +347,6 @@ export class SqliteSessionRepository implements SessionRepository {
         FOREIGN KEY (session_id) REFERENCES quiz_sessions(id) ON DELETE CASCADE,
         CONSTRAINT uq_group_pupil_name UNIQUE (session_group_id, pupil_name)
       );
-
-      CREATE INDEX IF NOT EXISTS idx_group_pupils_group
-      ON session_group_pupils(session_group_id);
-
-      CREATE INDEX IF NOT EXISTS idx_group_pupils_session
-      ON session_group_pupils(session_id);
 
       CREATE TABLE IF NOT EXISTS session_invitations (
         id TEXT PRIMARY KEY,
@@ -392,9 +360,6 @@ export class SqliteSessionRepository implements SessionRepository {
         FOREIGN KEY (claimed_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
         CONSTRAINT uq_session_invitation_target UNIQUE (session_id, invitation_type, normalized_identifier)
       );
-
-      CREATE INDEX IF NOT EXISTS idx_invitations_lookup
-      ON session_invitations(session_id, normalized_identifier);
 
       CREATE TABLE IF NOT EXISTS session_live_states (
         session_id TEXT PRIMARY KEY,
@@ -429,7 +394,7 @@ export class SqliteSessionRepository implements SessionRepository {
         CONSTRAINT chk_answer_subject_validity CHECK (
           (participant_id IS NOT NULL AND user_id IS NOT NULL AND session_group_id IS NULL AND session_group_pupil_id IS NULL)
           OR
-          (participant_id IS NULL AND user_id IS NULL AND session_group_id IS NOT NULL)
+          (participant_id IS NULL AND user_id IS NULL AND session_group_id IS NOT NULL AND session_group_pupil_id IS NULL)
         ),
         CONSTRAINT uq_session_question_user UNIQUE (session_id, question_position, user_id),
         CONSTRAINT uq_session_question_group UNIQUE (session_id, question_position, session_group_id)
@@ -486,7 +451,7 @@ export class SqliteSessionRepository implements SessionRepository {
     `);
   }
 
-  transaction<T>(action: () => T): T {
+  private transaction<T>(action: () => T): T {
     this.db.exec('BEGIN IMMEDIATE;');
     try {
       const result = action();
@@ -1465,7 +1430,7 @@ export class SqliteSessionRepository implements SessionRepository {
       }
 
       // Authoritative deadline check at persistence boundary using fresh server time
-      const serverNowMs = this.getCurrentTimeMs();
+      const serverNowMs = this.clock.nowMs();
       const deadlineMs = new Date(liveRow.answer_deadline_at).getTime();
       if (serverNowMs > deadlineMs) {
         throw new AnswerDeadlineExpiredError();
@@ -1626,6 +1591,34 @@ export class SqliteSessionRepository implements SessionRepository {
       `).get(sessionId);
       if (existingRows) {
         throw new InvalidLiveStateTransitionError(`Session results for session '${sessionId}' are already finalized.`);
+      }
+
+      // Enforce cross-session ownership integrity: every participant and group must belong to sessionId
+      const checkParticipantStmt = this.db.prepare(`
+        SELECT 1 FROM session_participants WHERE id = ? AND session_id = ?
+      `);
+      const checkGroupStmt = this.db.prepare(`
+        SELECT 1 FROM session_groups WHERE id = ? AND session_id = ?
+      `);
+
+      for (const item of results) {
+        if (item.subjectType === 'PARTICIPANT') {
+          if (!item.participantId) {
+            throw new InvalidLiveStateTransitionError('Participant result must specify participantId.');
+          }
+          const valid = checkParticipantStmt.get(item.participantId, sessionId);
+          if (!valid) {
+            throw new SessionAccessDeniedError(`Participant '${item.participantId}' does not belong to session '${sessionId}'.`);
+          }
+        } else if (item.subjectType === 'GROUP') {
+          if (!item.sessionGroupId) {
+            throw new InvalidLiveStateTransitionError('Group result must specify sessionGroupId.');
+          }
+          const valid = checkGroupStmt.get(item.sessionGroupId, sessionId);
+          if (!valid) {
+            throw new SessionAccessDeniedError(`Group '${item.sessionGroupId}' does not belong to session '${sessionId}'.`);
+          }
+        }
       }
 
       // Sort results deterministically:

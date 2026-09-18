@@ -84,7 +84,7 @@ export class SqliteQuestionRepository implements QuestionRepository {
     `);
   }
 
-  transaction<T>(action: () => T): T {
+  private transaction<T>(action: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const result = action();
