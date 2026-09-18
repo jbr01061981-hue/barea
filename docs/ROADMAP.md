@@ -4,9 +4,9 @@ This roadmap reconciles the core product phases with the implementation mileston
 
 ## Current Development Status
 
-**Main branch baseline: PR #23 merged on 2026-09-17.**
+**Main branch baseline: PR #24 merged on 2026-09-18.**
 
-Merge commit: `935e5a767bf11b796e628e5e674739f51467734c`
+Merge commit: `3be71fd` (BAREA-002B database architecture freeze).
 
 PR #23 (`BAREA-002A — Async Repository Contract Modernization`) completed the repository contract modernization milestone and was merged into `main` with a standard merge commit. The approved final correction removed the public `AuthRepository.transaction<T>(...)` escape hatch while retaining transaction mechanics privately inside `SqliteAuthRepository` for atomic federated provisioning.
 
