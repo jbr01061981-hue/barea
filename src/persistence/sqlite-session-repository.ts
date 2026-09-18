@@ -14,6 +14,12 @@ import {
   assertValidModeAdmissionCompatibility
 } from '../domain/session';
 import {
+  type SessionResult,
+  type FinalizeResultPayload,
+  ResultSubjectType
+} from '../domain/session-result';
+import { type Clock, SystemClock } from '../service/clock';
+import {
   RoomCode,
   ParticipantToken,
   normalizeAndValidateRoomCode,
@@ -112,13 +118,14 @@ export interface SessionRepository {
     clientTimestamp?: string;
     isWithinDeadline?: boolean;
   }): Promise<ParticipantSubmission>;
-  getCurrentTimeMs?(): number;
-  setClockForTesting?(clock: (() => number) | null): void;
   getParticipantSubmission(sessionId: string, questionPosition: number, participantIdOrUserId: string): Promise<ParticipantSubmission | null>;
   getGroupSubmission(sessionId: string, questionPosition: number, groupId: string): Promise<ParticipantSubmission | null>;
   getSubmissionCountForQuestion(sessionId: string, questionPosition: number): Promise<number>;
 
-  transaction<T>(action: () => T): T;
+  // Session Results Finalization (BAREA-002B)
+  finalizeSessionResults(sessionId: string, hostUserId: string, results: readonly FinalizeResultPayload[]): Promise<readonly SessionResult[]>;
+  listSessionResults(sessionId: string): Promise<readonly SessionResult[]>;
+
   close(): void;
 }
 
@@ -181,12 +188,27 @@ export interface InvitationRow {
   claimed_at: string | null;
 }
 
+export interface SessionResultRow {
+  id: string;
+  session_id: string;
+  subject_type: string;
+  participant_id: string | null;
+  session_group_id: string | null;
+  display_name: string;
+  final_score: number;
+  correct_count: number;
+  total_questions: number;
+  rank: number;
+  final_answer_submitted_at: string;
+  completed_at: string;
+}
+
 export class SqliteSessionRepository implements SessionRepository {
   private db: DatabaseSync;
   private ownsDb: boolean;
-  private testClock: (() => number) | null = null;
+  private clock: Clock;
 
-  constructor(dbOrPath: DatabaseSync | string = ':memory:', clock?: () => number) {
+  constructor(dbOrPath: DatabaseSync | string = ':memory:', clock?: Clock | (() => number)) {
     if (typeof dbOrPath === 'string') {
       this.db = new DatabaseSync(dbOrPath);
       this.ownsDb = true;
@@ -195,26 +217,18 @@ export class SqliteSessionRepository implements SessionRepository {
       this.ownsDb = false;
     }
     if (clock) {
-      this.setClockForTesting(clock);
+      if (typeof clock === 'function') {
+        this.clock = {
+          nowMs: clock,
+          nowIso: () => new Date(clock()).toISOString()
+        };
+      } else {
+        this.clock = clock;
+      }
+    } else {
+      this.clock = new SystemClock();
     }
     this.init();
-  }
-
-  setClockForTesting(clock: (() => number) | null): void {
-    if (process.env.NODE_ENV === 'production' || (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'development')) {
-      throw new Error('Forbidden: test clock overrides cannot be executed in production or unauthorized environments.');
-    }
-    this.testClock = clock;
-  }
-
-  getCurrentTimeMs(): number {
-    if (this.testClock !== null) {
-      if (process.env.NODE_ENV === 'production' || (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'development')) {
-        throw new Error('Forbidden: test clock overrides are disabled in production.');
-      }
-      return this.testClock();
-    }
-    return Date.now();
   }
 
   getDatabase(): DatabaseSync {
@@ -224,6 +238,15 @@ export class SqliteSessionRepository implements SessionRepository {
   init(): void {
     this.db.exec('PRAGMA foreign_keys = ON;');
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE,
+        email_verified INTEGER NOT NULL DEFAULT 0 CHECK(email_verified IN (0, 1)),
+        password_hash TEXT,
+        display_name TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS quiz_sessions (
         id TEXT PRIMARY KEY,
         tenant_type TEXT NOT NULL CHECK(tenant_type IN ('ORGANIZATION', 'PERSONAL')),
@@ -242,6 +265,7 @@ export class SqliteSessionRepository implements SessionRepository {
         expires_at TEXT NOT NULL,
         closed_at TEXT,
         FOREIGN KEY (published_quiz_snapshot_id) REFERENCES published_quiz_snapshots(id) ON DELETE RESTRICT,
+        FOREIGN KEY (host_user_id) REFERENCES users(id) ON DELETE RESTRICT,
         CONSTRAINT chk_mode_admission_compatibility CHECK (
           (participation_mode = 'TEACHER_GROUP' AND admission_policy = 'TEACHER_ASSIGNED') OR
           (participation_mode = 'INDIVIDUAL_AUTHENTICATED' AND admission_policy IN ('OPEN', 'RESTRICTED'))
@@ -295,12 +319,10 @@ export class SqliteSessionRepository implements SessionRepository {
         last_active_at TEXT NOT NULL,
         token_hash TEXT NOT NULL,
         FOREIGN KEY (session_id) REFERENCES quiz_sessions(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
         CONSTRAINT uq_session_participant_user UNIQUE (session_id, user_id),
         CONSTRAINT uq_session_participant_provider UNIQUE (session_id, provider_type, provider_sub)
       );
-
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_token_hash
-      ON session_participants(token_hash);
 
       CREATE INDEX IF NOT EXISTS idx_participants_session
       ON session_participants(session_id);
@@ -315,9 +337,6 @@ export class SqliteSessionRepository implements SessionRepository {
         CONSTRAINT uq_session_group_name UNIQUE (session_id, group_name)
       );
 
-      CREATE INDEX IF NOT EXISTS idx_session_groups_session
-      ON session_groups(session_id);
-
       CREATE TABLE IF NOT EXISTS session_group_pupils (
         id TEXT PRIMARY KEY,
         session_group_id TEXT NOT NULL,
@@ -329,12 +348,6 @@ export class SqliteSessionRepository implements SessionRepository {
         CONSTRAINT uq_group_pupil_name UNIQUE (session_group_id, pupil_name)
       );
 
-      CREATE INDEX IF NOT EXISTS idx_group_pupils_group
-      ON session_group_pupils(session_group_id);
-
-      CREATE INDEX IF NOT EXISTS idx_group_pupils_session
-      ON session_group_pupils(session_id);
-
       CREATE TABLE IF NOT EXISTS session_invitations (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -344,11 +357,9 @@ export class SqliteSessionRepository implements SessionRepository {
         claimed_by_user_id TEXT,
         claimed_at TEXT,
         FOREIGN KEY (session_id) REFERENCES quiz_sessions(id) ON DELETE CASCADE,
+        FOREIGN KEY (claimed_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
         CONSTRAINT uq_session_invitation_target UNIQUE (session_id, invitation_type, normalized_identifier)
       );
-
-      CREATE INDEX IF NOT EXISTS idx_invitations_lookup
-      ON session_invitations(session_id, normalized_identifier);
 
       CREATE TABLE IF NOT EXISTS session_live_states (
         session_id TEXT PRIMARY KEY,
@@ -377,17 +388,70 @@ export class SqliteSessionRepository implements SessionRepository {
         is_within_deadline INTEGER NOT NULL CHECK(is_within_deadline IN (0, 1)),
         FOREIGN KEY (session_id) REFERENCES quiz_sessions(id) ON DELETE CASCADE,
         FOREIGN KEY (participant_id) REFERENCES session_participants(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
         FOREIGN KEY (session_group_id) REFERENCES session_groups(id) ON DELETE CASCADE,
+        FOREIGN KEY (session_group_pupil_id) REFERENCES session_group_pupils(id) ON DELETE SET NULL,
+        CONSTRAINT chk_answer_subject_validity CHECK (
+          (participant_id IS NOT NULL AND user_id IS NOT NULL AND session_group_id IS NULL AND session_group_pupil_id IS NULL)
+          OR
+          (participant_id IS NULL AND user_id IS NULL AND session_group_id IS NOT NULL AND session_group_pupil_id IS NULL)
+        ),
         CONSTRAINT uq_session_question_user UNIQUE (session_id, question_position, user_id),
         CONSTRAINT uq_session_question_group UNIQUE (session_id, question_position, session_group_id)
       );
 
       CREATE INDEX IF NOT EXISTS idx_answers_session_pos
       ON session_answers(session_id, question_position);
+
+      CREATE TABLE IF NOT EXISTS session_results (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        subject_type TEXT NOT NULL CHECK(subject_type IN ('PARTICIPANT', 'GROUP')),
+        participant_id TEXT,
+        session_group_id TEXT,
+        display_name TEXT NOT NULL,
+        final_score INTEGER NOT NULL DEFAULT 0,
+        correct_count INTEGER NOT NULL DEFAULT 0,
+        total_questions INTEGER NOT NULL,
+        rank INTEGER NOT NULL CHECK(rank >= 1),
+        final_answer_submitted_at TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES quiz_sessions(id) ON DELETE RESTRICT,
+        FOREIGN KEY (participant_id) REFERENCES session_participants(id) ON DELETE RESTRICT,
+        FOREIGN KEY (session_group_id) REFERENCES session_groups(id) ON DELETE RESTRICT,
+        CONSTRAINT chk_result_subject CHECK (
+          (subject_type = 'PARTICIPANT' AND participant_id IS NOT NULL AND session_group_id IS NULL)
+          OR
+          (subject_type = 'GROUP' AND session_group_id IS NOT NULL AND participant_id IS NULL)
+        ),
+        CONSTRAINT uq_session_rank UNIQUE (session_id, rank)
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_session_results_participant
+      ON session_results(session_id, participant_id)
+      WHERE subject_type = 'PARTICIPANT';
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_session_results_group
+      ON session_results(session_id, session_group_id)
+      WHERE subject_type = 'GROUP';
+
+      -- Trigger: Immutability on UPDATE for session_results
+      CREATE TRIGGER IF NOT EXISTS prevent_session_result_update
+      BEFORE UPDATE ON session_results
+      BEGIN
+        SELECT RAISE(ABORT, 'IMMUTABILITY_VIOLATION: Finalized session results are immutable and cannot be updated');
+      END;
+
+      -- Trigger: Immutability on DELETE for session_results
+      CREATE TRIGGER IF NOT EXISTS prevent_session_result_delete
+      BEFORE DELETE ON session_results
+      BEGIN
+        SELECT RAISE(ABORT, 'IMMUTABILITY_VIOLATION: Finalized session results are immutable and cannot be deleted');
+      END;
     `);
   }
 
-  transaction<T>(action: () => T): T {
+  private transaction<T>(action: () => T): T {
     this.db.exec('BEGIN IMMEDIATE;');
     try {
       const result = action();
@@ -1366,7 +1430,7 @@ export class SqliteSessionRepository implements SessionRepository {
       }
 
       // Authoritative deadline check at persistence boundary using fresh server time
-      const serverNowMs = this.getCurrentTimeMs();
+      const serverNowMs = this.clock.nowMs();
       const deadlineMs = new Date(liveRow.answer_deadline_at).getTime();
       if (serverNowMs > deadlineMs) {
         throw new AnswerDeadlineExpiredError();
@@ -1505,5 +1569,149 @@ export class SqliteSessionRepository implements SessionRepository {
       WHERE session_id = ? AND question_position = ?
     `).get(sessionId, questionPosition) as { count: number } | undefined;
     return row ? row.count : 0;
+  }
+
+  async finalizeSessionResults(
+    sessionId: string,
+    hostUserId: string,
+    results: readonly FinalizeResultPayload[]
+  ): Promise<readonly SessionResult[]> {
+    return this.transaction(() => {
+      const session = this._findSessionByIdSync(sessionId);
+      if (!session) {
+        throw new SessionNotFoundError(sessionId);
+      }
+      if (session.hostUserId !== hostUserId) {
+        throw new NotSessionHostError();
+      }
+
+      // Check if results were already finalized
+      const existingRows = this.db.prepare(`
+        SELECT id FROM session_results WHERE session_id = ? LIMIT 1
+      `).get(sessionId);
+      if (existingRows) {
+        throw new InvalidLiveStateTransitionError(`Session results for session '${sessionId}' are already finalized.`);
+      }
+
+      // Enforce cross-session ownership integrity: every participant and group must belong to sessionId
+      const checkParticipantStmt = this.db.prepare(`
+        SELECT 1 FROM session_participants WHERE id = ? AND session_id = ?
+      `);
+      const checkGroupStmt = this.db.prepare(`
+        SELECT 1 FROM session_groups WHERE id = ? AND session_id = ?
+      `);
+
+      for (const item of results) {
+        if (item.subjectType === 'PARTICIPANT') {
+          if (!item.participantId) {
+            throw new InvalidLiveStateTransitionError('Participant result must specify participantId.');
+          }
+          const valid = checkParticipantStmt.get(item.participantId, sessionId);
+          if (!valid) {
+            throw new SessionAccessDeniedError(`Participant '${item.participantId}' does not belong to session '${sessionId}'.`);
+          }
+        } else if (item.subjectType === 'GROUP') {
+          if (!item.sessionGroupId) {
+            throw new InvalidLiveStateTransitionError('Group result must specify sessionGroupId.');
+          }
+          const valid = checkGroupStmt.get(item.sessionGroupId, sessionId);
+          if (!valid) {
+            throw new SessionAccessDeniedError(`Group '${item.sessionGroupId}' does not belong to session '${sessionId}'.`);
+          }
+        }
+      }
+
+      // Sort results deterministically:
+      // 1. finalScore DESC
+      // 2. correctCount DESC
+      // 3. finalAnswerSubmittedAt ASC
+      // 4. stable subjectId ASC
+      const sorted = [...results].sort((a, b) => {
+        if (b.finalScore !== a.finalScore) {
+          return b.finalScore - a.finalScore;
+        }
+        if (b.correctCount !== a.correctCount) {
+          return b.correctCount - a.correctCount;
+        }
+        const timeDiff = a.finalAnswerSubmittedAt.localeCompare(b.finalAnswerSubmittedAt);
+        if (timeDiff !== 0) {
+          return timeDiff;
+        }
+        const aId = a.participantId || a.sessionGroupId || '';
+        const bId = b.participantId || b.sessionGroupId || '';
+        return aId.localeCompare(bId);
+      });
+
+      const nowIso = new Date().toISOString();
+      const insertStmt = this.db.prepare(`
+        INSERT INTO session_results (
+          id, session_id, subject_type, participant_id, session_group_id,
+          display_name, final_score, correct_count, total_questions,
+          rank, final_answer_submitted_at, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      const persisted: SessionResult[] = [];
+      let rank = 1;
+      for (const item of sorted) {
+        const id = 'res_' + crypto.randomUUID();
+        insertStmt.run(
+          id,
+          sessionId,
+          item.subjectType,
+          item.participantId ?? null,
+          item.sessionGroupId ?? null,
+          item.displayName,
+          item.finalScore,
+          item.correctCount,
+          item.totalQuestions,
+          rank,
+          item.finalAnswerSubmittedAt,
+          nowIso
+        );
+
+        persisted.push({
+          id,
+          sessionId,
+          subjectType: item.subjectType,
+          participantId: item.participantId ?? null,
+          sessionGroupId: item.sessionGroupId ?? null,
+          displayName: item.displayName,
+          finalScore: item.finalScore,
+          correctCount: item.correctCount,
+          totalQuestions: item.totalQuestions,
+          rank,
+          finalAnswerSubmittedAt: item.finalAnswerSubmittedAt,
+          completedAt: nowIso
+        });
+
+        rank++;
+      }
+
+      return persisted;
+    });
+  }
+
+  async listSessionResults(sessionId: string): Promise<readonly SessionResult[]> {
+    const rows = this.db.prepare(`
+      SELECT * FROM session_results
+      WHERE session_id = ?
+      ORDER BY rank ASC
+    `).all(sessionId) as unknown as SessionResultRow[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      sessionId: r.session_id,
+      subjectType: r.subject_type as ResultSubjectType,
+      participantId: r.participant_id,
+      sessionGroupId: r.session_group_id,
+      displayName: r.display_name,
+      finalScore: r.final_score,
+      correctCount: r.correct_count,
+      totalQuestions: r.total_questions,
+      rank: r.rank,
+      finalAnswerSubmittedAt: r.final_answer_submitted_at,
+      completedAt: r.completed_at
+    }));
   }
 }

@@ -42,6 +42,14 @@ export class QuestionBankService {
     return this.repo.transitionStatus(organizationId, id, QuestionStatus.ARCHIVED);
   }
 
+  async createPendingReviewBatch(payloads: readonly CreateQuestionPayload[]): Promise<Question[]> {
+    return this.repo.createPendingReviewBatch(payloads);
+  }
+
+  async approveQuestionBatch(organizationId: string, questionIds: readonly string[]): Promise<void> {
+    return this.repo.approveQuestionBatch(organizationId, questionIds);
+  }
+
   createQuestionSync(data: CreateQuestionPayload): Question {
     const r = this.repo as any;
     if (typeof r.createSync === 'function') {
@@ -56,9 +64,5 @@ export class QuestionBankService {
       return r.transitionStatusSync(organizationId, id, nextStatus);
     }
     throw new Error('transitionStatusSync not supported by underlying repository');
-  }
-
-  transaction<T>(action: () => T): T {
-    return this.repo.transaction(action);
   }
 }
