@@ -82,7 +82,7 @@ The system exposes three distinct user experiences:
     15. `session_live_states` (`session_id` TEXT PK FK->`quiz_sessions.id` ON DELETE CASCADE, `current_question_position` INTEGER, `current_question_id` TEXT, `question_state` TEXT CHECK('NOT_STARTED','PREVIEW','ANSWERING','LOCKED','COMPLETED'), `question_opened_at` TEXT, `answer_deadline_at` TEXT, `time_limit_seconds` INTEGER, `updated_at` TEXT)
     16. `session_answers` (`id` TEXT PK, `session_id` TEXT FK->`quiz_sessions.id` ON DELETE CASCADE, `question_position` INTEGER, `question_id` TEXT, `participant_id` TEXT FK->`session_participants.id` ON DELETE CASCADE, `user_id` TEXT FK->`users.id` ON DELETE CASCADE, `session_group_id` TEXT FK->`session_groups.id` ON DELETE CASCADE, `session_group_pupil_id` TEXT FK->`session_group_pupils.id` ON DELETE SET NULL, `selected_option_indices` TEXT, `submitted_at` TEXT, `client_submitted_at` TEXT, `is_within_deadline` INTEGER CHECK(0,1), CHECK `chk_answer_subject_validity`, UNIQUE(`session_id`,`question_position`,`user_id`), UNIQUE(`session_id`,`question_position`,`session_group_id`))
     17. `session_results` (`id` TEXT PK, `session_id` TEXT FK->`quiz_sessions.id` ON DELETE RESTRICT, `subject_type` TEXT CHECK('PARTICIPANT','GROUP'), `participant_id` TEXT FK->`session_participants.id` ON DELETE RESTRICT, `session_group_id` TEXT FK->`session_groups.id` ON DELETE RESTRICT, `display_name` TEXT, `final_score` INTEGER, `correct_count` INTEGER, `total_questions` INTEGER, `rank` INTEGER CHECK(rank >= 1), `final_answer_submitted_at` TEXT, `completed_at` TEXT, CHECK `chk_result_subject`, UNIQUE(`session_id`, `rank`))
-  - **16 Explicit Indexes & Supported Queries**:
+  - **18 Explicit Physical Indexes (16 Query-Path + 2 Partial Unique Invariant Indexes)**:
     1. `idx_answers_session_pos`: `session_answers(session_id, question_position)` -> submission count and answer lookup per question.
     2. `idx_federated_identities_sub`: `federated_identities(provider_type, provider_sub)` -> OIDC federated login lookup.
     3. `idx_oauth_transactions_expires_at`: `oauth_transactions(expires_at)` -> OAuth TTL pruning.
@@ -99,7 +99,8 @@ The system exposes three distinct user experiences:
     14. `idx_snapshots_org`: `published_quiz_snapshots(organization_id)` -> Curriculum snapshot tenant validation.
     15. `idx_user_sessions_user_id`: `user_sessions(user_id)` -> User session lifecycle and revocation.
     16. `idx_users_email`: `users(email)` -> User lookup by email and collision defense.
-    (Plus 2 partial unique indexes on `session_results`: `uq_session_results_participant` on `session_results(session_id, participant_id)` WHERE `subject_type = 'PARTICIPANT'` and `uq_session_results_group` on `session_results(session_id, session_group_id)` WHERE `subject_type = 'GROUP'`).
+    17. `uq_session_results_participant`: `session_results(session_id, participant_id)` WHERE `subject_type = 'PARTICIPANT'` -> Invariant: single result per participant per session.
+    18. `uq_session_results_group`: `session_results(session_id, session_group_id)` WHERE `subject_type = 'GROUP'` -> Invariant: single result per group per session.
   - **7 Immutability & Tenant Triggers**:
     1. `prevent_published_quiz_delete`: Aborts physical deletion of published or historically snapshotted quizzes.
     2. `prevent_session_result_delete`: Aborts deletion of finalized session results.

@@ -640,12 +640,29 @@ test('BAREA-002B: Phase 2 Database Freeze & Architectural Invariants Suite', asy
       'uq_session_results_participant'
     ].sort();
 
-    // Check if expected 16 explicit indexes match exactly
-    // Note: If partial unique indexes uq_session_results_* are counted in the explicit index register, verify exact list:
-    assert.ok(
-      indexNames.length === 16 || indexNames.length === 18,
-      `Explicit indexes count is ${indexNames.length}: ${JSON.stringify(indexNames)}`
+    // Verify exact 18 explicit physical indexes (16 query-path indexes + 2 partial unique indexes)
+    assert.equal(
+      indexNames.length,
+      18,
+      `Explicit physical indexes count is ${indexNames.length}: ${JSON.stringify(indexNames)}`
     );
+    assert.deepEqual(indexNames, expectedIndexes);
+
+    // Verify the two partial unique indexes exist
+    assert.ok(indexNames.includes('uq_session_results_participant'));
+    assert.ok(indexNames.includes('uq_session_results_group'));
+
+    // Verify 5 pruned redundant indexes remain absent
+    const prunedIndexes = [
+      'idx_participants_token_hash',
+      'idx_session_groups_session',
+      'idx_group_pupils_group',
+      'idx_group_pupils_session',
+      'idx_invitations_lookup'
+    ];
+    for (const pruned of prunedIndexes) {
+      assert.equal(indexNames.includes(pruned), false, `Redundant index '${pruned}' must remain absent`);
+    }
 
     // 3. Trigger inventory
     const triggers = db.prepare(
@@ -671,5 +688,15 @@ test('BAREA-002B: Phase 2 Database Freeze & Architectural Invariants Suite', asy
       "SELECT name FROM sqlite_master WHERE type='view' ORDER BY name"
     ).all() as Array<{ name: string }>;
     assert.equal(views.length, 0, `Expected 0 views, found ${views.length}`);
+
+    // 5. Schema drift protection for session_groups, session_group_pupils, session_invitations
+    const groupCols = (db.prepare("PRAGMA table_info('session_groups')").all() as Array<{ name: string }>).map((c) => c.name);
+    assert.deepEqual(groupCols, ['id', 'session_id', 'group_name', 'sort_order', 'created_at']);
+
+    const pupilCols = (db.prepare("PRAGMA table_info('session_group_pupils')").all() as Array<{ name: string }>).map((c) => c.name);
+    assert.deepEqual(pupilCols, ['id', 'session_group_id', 'session_id', 'pupil_name', 'assigned_at']);
+
+    const inviteCols = (db.prepare("PRAGMA table_info('session_invitations')").all() as Array<{ name: string }>).map((c) => c.name);
+    assert.deepEqual(inviteCols, ['id', 'session_id', 'invitation_type', 'normalized_identifier', 'invited_at', 'claimed_by_user_id', 'claimed_at']);
   });
 });
